@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iras-agent"
+version = "2.1.0"
+description = "IRAS - permissioned voice-first local AI agent"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "rich>=13.7",
+  "httpx>=0.27",
+  "fastapi>=0.115",
+  "uvicorn>=0.30",
+  "pillow>=10.4",
+  "edge-tts>=7.2.8",
+]
+
+[project.optional-dependencies]
+voice = ["sounddevice>=0.5", "soundfile>=0.12", "faster-whisper>=1.1"]
+browser = ["playwright>=1.49"]
+cloud = ["psycopg[binary]>=3.2"]
+packaging = ["pyinstaller>=6.11"]
+dev = ["pytest>=8.2"]
+all = [
+  "sounddevice>=0.5", "soundfile>=0.12", "faster-whisper>=1.1",
+  "playwright>=1.49", "pytest>=8.2"
+]
+
+[project.scripts]
+iras = "iras.cli:main"
+iras-desktop = "iras.desktop:main"
+iras-api = "iras.api:main"
+iras-node = "iras.nodes.server:main"
+iras-scheduler = "iras.automations.scheduler:main"
+iras-cloud = "iras.cloud_api:main"
+iras-remote = "iras.remote_desktop:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

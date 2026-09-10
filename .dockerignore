@@ -1,0 +1,10 @@
+.venv
+.git
+__pycache__
+.pytest_cache
+data
+logs
+*.zip
+.env
+clients/android/.gradle
+clients/android/app/build

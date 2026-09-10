@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: iras-cloud
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: IRAS_PROVIDER
+        value: openrouter
+      - key: IRAS_MODEL
+        value: openrouter/free
+      - key: IRAS_ADAPTIVE_PERSONALITY
+        value: "true"
+      - key: IRAS_VOICE_PROFILE
+        value: anime_soft
+      - key: IRAS_CORS_ORIGINS
+        value: "*"
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: IRAS_API_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        sync: false

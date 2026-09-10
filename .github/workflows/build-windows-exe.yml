@@ -1,0 +1,27 @@
+name: Build Windows EXE
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+jobs:
+  exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --upgrade pip
+      - run: pip install ".[voice,packaging]"
+      - name: Build EXE
+        shell: pwsh
+        run: >
+          pyinstaller --noconfirm --clean --onefile --windowed
+          --name IRAS
+          --collect-all edge_tts
+          src/iras/remote_desktop.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IRAS-Windows-EXE
+          path: dist/IRAS.exe
+          retention-days: 30

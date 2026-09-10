@@ -1,0 +1,9 @@
+{
+  "name": "IRAS",
+  "short_name": "IRAS",
+  "start_url": "/app/",
+  "display": "standalone",
+  "background_color": "#0b0d12",
+  "theme_color": "#11131a",
+  "icons": []
+}

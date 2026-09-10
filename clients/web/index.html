@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#11131a">
+  <title>IRAS</title>
+  <link rel="manifest" href="/app/manifest.webmanifest">
+  <style>
+    :root{font-family:Inter,Segoe UI,system-ui,sans-serif;color-scheme:dark}
+    *{box-sizing:border-box}body{margin:0;background:#0b0d12;color:#f5f7ff;min-height:100vh}
+    .app{max-width:900px;margin:auto;min-height:100vh;display:flex;flex-direction:column;padding:16px}
+    header{display:flex;align-items:center;justify-content:space-between;padding:6px 2px 14px}
+    h1{margin:0;font-size:22px}.sub{opacity:.6;font-size:12px}
+    #chat{flex:1;overflow:auto;display:flex;flex-direction:column;gap:10px;padding:10px 0 18px}
+    .m{max-width:84%;padding:11px 13px;border-radius:16px;line-height:1.42;white-space:pre-wrap}
+    .you{align-self:flex-end;background:#252a38}.iras{align-self:flex-start;background:#161a24;border:1px solid #292f40}
+    .bar{position:sticky;bottom:0;background:#0b0d12;padding-top:8px;display:flex;gap:8px}
+    input,button{border:1px solid #313749;background:#121621;color:#fff;border-radius:12px;padding:12px}
+    #msg{flex:1;font-size:16px}button{cursor:pointer}.primary{background:#eef2ff;color:#0b0d12;font-weight:700}
+    dialog{background:#11151f;color:#fff;border:1px solid #353c50;border-radius:14px;max-width:520px;width:calc(100% - 24px)}
+    dialog input{width:100%;margin:5px 0 12px}.row{display:flex;gap:8px;justify-content:flex-end}
+    .status{font-size:12px;opacity:.65;margin-top:8px}
+  </style>
+</head>
+<body>
+<div class="app">
+  <header><div><h1>IRAS</h1><div class="sub">Online assistant</div></div><button id="settings">Server</button></header>
+  <main id="chat"></main>
+  <div class="bar">
+    <button id="mic" title="Speech input">Mic</button>
+    <input id="msg" placeholder="Talk to IRAS..." autocomplete="off">
+    <button class="primary" id="send">Send</button>
+  </div>
+  <div class="status" id="status">Ready</div>
+</div>
+<dialog id="cfg">
+  <h3>IRAS connection</h3>
+  <label>Server URL</label>
+  <input id="server" placeholder="https://your-app.koyeb.app">
+  <label>IRAS access token</label>
+  <input id="token" type="password" placeholder="Your IRAS_API_TOKEN">
+  <div class="row"><button id="cancelCfg">Cancel</button><button class="primary" id="saveCfg">Save</button></div>
+</dialog>
+<script>
+const $=s=>document.querySelector(s), chat=$("#chat"), msg=$("#msg"), status=$("#status");
+const cfg=$("#cfg"), server=$("#server"), token=$("#token");
+const local=JSON.parse(localStorage.getItem("iras-config")||"{}");
+server.value=local.server||location.origin; token.value=local.token||"";
+function add(who,text){const d=document.createElement("div");d.className="m "+(who==="You"?"you":"iras");d.textContent=text;chat.appendChild(d);chat.scrollTop=chat.scrollHeight}
+function config(){return JSON.parse(localStorage.getItem("iras-config")||"{}")}
+function save(){localStorage.setItem("iras-config",JSON.stringify({server:server.value.trim().replace(/\/$/,""),token:token.value.trim()}));cfg.close()}
+$("#settings").onclick=()=>cfg.showModal();$("#cancelCfg").onclick=()=>cfg.close();$("#saveCfg").onclick=save;
+async function send(){
+ const text=msg.value.trim(); if(!text)return; const c=config();
+ if(!c.token){cfg.showModal();return}
+ msg.value=""; add("You",text); status.textContent="IRAS is thinking...";
+ try{
+  const r=await fetch((c.server||location.origin)+"/v1/chat",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+c.token,"X-Device-ID":"web"},body:JSON.stringify({message:text,device_id:"web"})});
+  if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
+  const data=await r.json(); add("IRAS",data.response); status.textContent="Ready";
+  if("speechSynthesis"in window){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(data.response.replace(/https?:\/\/\S+/g,""));u.rate=.97;u.pitch=1.02;speechSynthesis.speak(u)}
+ }catch(e){add("IRAS","Connection error: "+e.message);status.textContent="Offline"}
+}
+$("#send").onclick=send;msg.addEventListener("keydown",e=>{if(e.key==="Enter")send()});
+$("#mic").onclick=()=>{
+ const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+ if(!SR){status.textContent="Speech recognition is not available in this browser.";return}
+ const r=new SR();r.lang="en-US";r.interimResults=false;r.onstart=()=>status.textContent="Listening...";
+ r.onresult=e=>{msg.value=e.results[0][0].transcript;status.textContent="Heard you.";send()};
+ r.onerror=e=>status.textContent="Mic error: "+e.error;r.start();
+};
+if("serviceWorker"in navigator)navigator.serviceWorker.register("/app/sw.js").catch(()=>{});
+if(!localStorage.getItem("iras-config"))cfg.showModal();
+</script>
+</body></html>

@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+import os
+import threading
+import time
+import uuid
+from pathlib import Path
+
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+import uvicorn
+
+from iras import __version__
+from iras.cloud_bootstrap import build_cloud_runtime
+from iras.config import Settings
+
+
+settings = Settings.load()
+runtime = build_cloud_runtime(settings)
+agent_lock = threading.RLock()
+started_at = time.time()
+
+app = FastAPI(
+    title="IRAS Cloud",
+    version=__version__,
+    description="Online IRAS brain shared by web, Android, and Windows clients.",
+)
+
+origins = ["*"] if settings.cors_origins == "*" else [
+    x.strip() for x in settings.cors_origins.split(",") if x.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=False if origins == ["*"] else True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Device-ID"],
+)
+
+
+class ChatIn(BaseModel):
+    message: str = Field(min_length=1, max_length=12000)
+    device_id: str = Field(default="unknown", max_length=128)
+
+
+class ChatOut(BaseModel):
+    response: str
+    request_id: str
+    model: str
+
+
+def _authorized(authorization: str | None) -> None:
+    token = settings.api_token
+    if not token or token == "change-me-before-remote-use":
+        raise HTTPException(
+            503,
+            "IRAS_API_TOKEN is not configured on the server.",
+        )
+    if authorization != f"Bearer {token}":
+        raise HTTPException(401, "Invalid IRAS access token.")
+
+
+@app.get("/health")
+def health():
+    return {
+        "ok": True,
+        "service": "IRAS Cloud",
+        "version": __version__,
+        "provider": settings.provider,
+        "model": settings.model,
+        "database": "postgres" if settings.database_url else "sqlite-local",
+        "uptime_seconds": int(time.time() - started_at),
+    }
+
+
+@app.post("/v1/chat", response_model=ChatOut)
+def chat(
+    body: ChatIn,
+    authorization: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None),
+):
+    _authorized(authorization)
+    request_id = uuid.uuid4().hex[:16]
+    device_id = (x_device_id or body.device_id or "unknown")[:128]
+    runtime.audit.record(
+        "cloud_chat_request",
+        {"request_id": request_id, "device_id": device_id},
+    )
+    try:
+        with agent_lock:
+            response = runtime.agent.handle(body.message)
+    except Exception as exc:
+        runtime.audit.record(
+            "cloud_chat_error",
+            {"request_id": request_id, "error": repr(exc)},
+        )
+        raise HTTPException(500, "IRAS could not complete this request.") from exc
+
+    return ChatOut(
+        response=response,
+        request_id=request_id,
+        model=settings.model,
+    )
+
+
+@app.get("/v1/personality")
+def personality(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return runtime.personality.status()
+
+
+@app.post("/v1/personality/reset")
+def personality_reset(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"ok": True, "state": runtime.personality.reset()}
+
+
+@app.get("/v1/tools")
+def tools(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return runtime.registry.describe()
+
+
+# Serve the browser/PWA client from the same free service.
+_web_candidates = [
+    Path(__file__).resolve().parents[3] / "clients" / "web",
+    Path.cwd() / "clients" / "web",
+]
+web_dir = next((p for p in _web_candidates if p.exists()), None)
+
+if web_dir:
+    app.mount("/app", StaticFiles(directory=web_dir, html=True), name="webapp")
+
+    @app.get("/")
+    def home():
+        return FileResponse(web_dir / "index.html")
+else:
+    @app.get("/")
+    def home():
+        return JSONResponse({
+            "service": "IRAS Cloud",
+            "version": __version__,
+            "app": "/app/",
+            "health": "/health",
+        })
+
+
+def main():
+    port = int(os.getenv("PORT", "8765"))
+    uvicorn.run(
+        "iras.cloud_api:app",
+        host="0.0.0.0",
+        port=port,
+        proxy_headers=True,
+        forwarded_allow_ips="*",
+    )
+
+
+if __name__ == "__main__":
+    main()
