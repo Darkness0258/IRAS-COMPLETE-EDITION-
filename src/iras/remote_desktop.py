@@ -4,12 +4,18 @@ import json
 import os
 import queue
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, simpledialog
 
 from iras.config import Settings
 from iras.remote_client import IRASRemoteClient
+from iras.voice.conversation import (
+    extract_wake_command,
+    is_probable_echo,
+    pop_complete_sentences,
+)
 from iras.voice.stt import Listener
 from iras.voice.tts import Speaker
 
@@ -38,7 +44,6 @@ def load_client_config():
             DEFAULT_SERVER,
         ),
     )
-
     data.setdefault(
         "token",
         os.getenv(
@@ -46,7 +51,14 @@ def load_client_config():
             "",
         ),
     )
-
+    data.setdefault(
+        "hands_free",
+        True,
+    )
+    data.setdefault(
+        "wake_word",
+        "iras",
+    )
     return data
 
 
@@ -64,14 +76,36 @@ class IRASRemoteDesktop:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("IRAS")
-        self.root.geometry("860x650")
-        self.root.minsize(640, 440)
+        self.root.geometry("900x680")
+        self.root.minsize(680, 460)
 
         self.config = load_client_config()
         self.client = None
         self.outbox = queue.Queue()
-        self.listening = False
+        self.voice_queue = queue.Queue()
+
+        self.manual_listening = False
         self.request_active = False
+        self.request_generation = 0
+        self.closing = threading.Event()
+
+        self.hands_free = bool(
+            self.config.get(
+                "hands_free",
+                True,
+            )
+        )
+        self.wake_word = str(
+            self.config.get(
+                "wake_word",
+                "iras",
+            )
+            or "iras"
+        ).strip()
+
+        self.conversation_until = 0.0
+        self.last_spoken_text = ""
+        self.voice_on = True
 
         settings = Settings.load()
 
@@ -85,8 +119,6 @@ class IRASRemoteDesktop:
             settings.whisper_model,
             settings.listen_seconds,
         )
-
-        self.voice_on = True
 
         self.chat = tk.Text(
             self.root,
@@ -154,6 +186,17 @@ class IRASRemoteDesktop:
             padx=(6, 0),
         )
 
+        self.hands_button = tk.Button(
+            row,
+            text="Hands-free",
+            command=self.toggle_hands_free,
+            width=12,
+        )
+        self.hands_button.pack(
+            side="left",
+            padx=(6, 0),
+        )
+
         tk.Button(
             row,
             text="Server",
@@ -182,18 +225,25 @@ class IRASRemoteDesktop:
             80,
             self.poll,
         )
-
         self.root.protocol(
             "WM_DELETE_WINDOW",
             self.close,
         )
 
         self.ensure_config()
+        self._update_hands_button()
 
-    def _chat_write(
-        self,
-        text,
-    ):
+        threading.Thread(
+            target=self._voice_worker,
+            daemon=True,
+        ).start()
+
+        threading.Thread(
+            target=self._handsfree_worker,
+            daemon=True,
+        ).start()
+
+    def _chat_write(self, text):
         self.chat.configure(
             state="normal"
         )
@@ -216,13 +266,8 @@ class IRASRemoteDesktop:
             "IRAS: "
         )
 
-    def append_stream(
-        self,
-        text,
-    ):
-        self._chat_write(
-            text
-        )
+    def append_stream(self, text):
+        self._chat_write(text)
 
     def end_stream(self):
         self._chat_write(
@@ -230,9 +275,10 @@ class IRASRemoteDesktop:
         )
 
     def ensure_config(self):
-        if not self.config.get("token"):
+        if not self.config.get(
+            "token"
+        ):
             self.configure()
-
         self.rebuild_client()
 
     def configure(self):
@@ -249,7 +295,6 @@ class IRASRemoteDesktop:
             ),
             parent=self.root,
         )
-
         if url is None:
             return
 
@@ -263,7 +308,6 @@ class IRASRemoteDesktop:
             show="*",
             parent=self.root,
         )
-
         if token is None:
             return
 
@@ -272,15 +316,17 @@ class IRASRemoteDesktop:
             or DEFAULT_SERVER
         )
 
-        self.config = {
-            "server_url": clean_url,
-            "token": token.strip(),
-        }
-
+        self.config.update(
+            {
+                "server_url": clean_url,
+                "token": token.strip(),
+                "hands_free": self.hands_free,
+                "wake_word": self.wake_word,
+            }
+        )
         save_client_config(
             self.config
         )
-
         self.rebuild_client()
 
     def rebuild_client(self):
@@ -298,32 +344,60 @@ class IRASRemoteDesktop:
                 self.config["server_url"],
                 self.config["token"],
             )
-
-            self.status.set(
-                "Ready · streaming · "
-                f"{self.speaker.profile.label}"
-            )
+            self._ready_status()
         else:
             self.client = None
             self.status.set(
                 "Server/token not configured"
             )
 
-    def toggle_voice(self):
-        self.voice_on = not self.voice_on
+    def _ready_status(self):
+        if self.hands_free:
+            self.status.set(
+                "Hands-free · "
+                f'say "{self.wake_word}"'
+            )
+        else:
+            self.status.set(
+                "Ready · streaming · "
+                f"{self.speaker.profile.label}"
+            )
 
+    def _update_hands_button(self):
+        self.hands_button.configure(
+            text=(
+                "Hands-free On"
+                if self.hands_free
+                else "Hands-free Off"
+            )
+        )
+
+    def toggle_hands_free(self):
+        self.hands_free = (
+            not self.hands_free
+        )
+        self.config[
+            "hands_free"
+        ] = self.hands_free
+        save_client_config(
+            self.config
+        )
+        self._update_hands_button()
+        self._ready_status()
+
+    def toggle_voice(self):
+        self.voice_on = (
+            not self.voice_on
+        )
+        if not self.voice_on:
+            self._clear_voice()
         self.status.set(
             "Voice "
-            f"{'on' if self.voice_on else 'off'} "
-            "· "
-            f"{self.speaker.profile.label}"
+            f"{'on' if self.voice_on else 'off'}"
         )
 
     def listen(self):
-        if (
-            self.listening
-            or self.request_active
-        ):
+        if self.manual_listening:
             return
 
         if not self.client:
@@ -333,7 +407,7 @@ class IRASRemoteDesktop:
             )
             return
 
-        self.listening = True
+        self.manual_listening = True
         self.mic_button.configure(
             state="disabled",
             text="Listening",
@@ -341,6 +415,7 @@ class IRASRemoteDesktop:
         self.status.set(
             "Listening..."
         )
+        self._clear_voice()
 
         threading.Thread(
             target=self._listen_worker,
@@ -349,30 +424,48 @@ class IRASRemoteDesktop:
 
     def _listen_worker(self):
         try:
-            text = self.listener.listen_once()
-
+            text = (
+                self.listener
+                .listen_once()
+            )
             if not text:
                 self.outbox.put(
                     ("mic_empty", "")
                 )
                 return
-
             self.outbox.put(
                 ("heard", text)
             )
-
         except Exception as exc:
             self.outbox.put(
                 ("mic_error", str(exc))
             )
 
     def send(self):
-        text = self.entry.get().strip()
+        text = (
+            self.entry.get()
+            .strip()
+        )
+        if not text:
+            return
+        self.entry.delete(
+            0,
+            "end",
+        )
+        self.send_text(text)
 
-        if (
-            not text
-            or self.request_active
-        ):
+    def send_text(
+        self,
+        text: str,
+        *,
+        interrupt: bool = False,
+    ):
+        text = str(
+            text
+            or ""
+        ).strip()
+
+        if not text:
             return
 
         if not self.client:
@@ -382,75 +475,120 @@ class IRASRemoteDesktop:
             )
             return
 
+        if (
+            self.request_active
+            and not interrupt
+        ):
+            return
+
+        if interrupt:
+            self.request_generation += 1
+            self.request_active = False
+            self._clear_voice()
+
+        self.request_generation += 1
+        generation = (
+            self.request_generation
+        )
+
         self.request_active = True
         self.send_button.configure(
             state="disabled"
         )
-
-        self.entry.delete(
-            0,
-            "end",
-        )
-
         self.add(
             "You",
             text,
         )
-
         self.status.set(
             "IRAS is thinking..."
         )
 
         threading.Thread(
             target=self._request,
-            args=(text,),
+            args=(text, generation),
             daemon=True,
         ).start()
 
-    def _request(self, text):
+    def _request(
+        self,
+        text: str,
+        generation: int,
+    ):
         parts = []
+        speech_buffer = ""
 
         try:
             self.outbox.put(
-                ("stream_start", "")
+                ("stream_start", generation)
             )
 
             for item in (
                 self.client
                 .chat_stream(text)
             ):
+                if (
+                    generation
+                    != self.request_generation
+                ):
+                    return
+
                 event = item.get(
                     "event"
                 )
-                data = item.get(
-                    "data"
-                ) or {}
+                data = (
+                    item.get("data")
+                    or {}
+                )
 
                 if event == "token":
                     chunk = (
                         data.get("text")
                         or ""
                     )
-
                     if chunk:
                         parts.append(chunk)
                         self.outbox.put(
                             (
                                 "stream_token",
-                                chunk,
+                                (
+                                    generation,
+                                    chunk,
+                                ),
                             )
                         )
+                        speech_buffer += chunk
+                        (
+                            sentences,
+                            speech_buffer,
+                        ) = pop_complete_sentences(
+                            speech_buffer
+                        )
+                        for sentence in sentences:
+                            self._enqueue_voice(
+                                sentence,
+                                generation,
+                            )
 
                 elif event == "done":
+                    (
+                        sentences,
+                        speech_buffer,
+                    ) = pop_complete_sentences(
+                        speech_buffer,
+                        force=True,
+                    )
+                    for sentence in sentences:
+                        self._enqueue_voice(
+                            sentence,
+                            generation,
+                        )
+
                     self.outbox.put(
                         (
                             "stream_done",
                             {
-                                "text": (
-                                    "".join(
-                                        parts
-                                    )
-                                ),
+                                "generation": generation,
+                                "text": "".join(parts),
                                 "meta": data,
                             },
                         )
@@ -458,45 +596,228 @@ class IRASRemoteDesktop:
 
                 elif event == "error":
                     raise RuntimeError(
-                        data.get(
-                            "message"
-                        )
-                        or (
-                            "Streaming "
-                            "failed."
-                        )
+                        data.get("message")
+                        or "Streaming failed."
                     )
 
         except Exception as exc:
-            self.outbox.put(
-                ("error", str(exc))
+            if (
+                generation
+                == self.request_generation
+            ):
+                self.outbox.put(
+                    (
+                        "error",
+                        (
+                            generation,
+                            str(exc),
+                        ),
+                    )
+                )
+
+    def _enqueue_voice(
+        self,
+        text: str,
+        generation: int | None = None,
+    ):
+        if (
+            not self.voice_on
+            or not text.strip()
+        ):
+            return
+        self.voice_queue.put(
+            (
+                generation,
+                text.strip(),
             )
+        )
+
+    def _clear_voice(self):
+        self.speaker.stop()
+        try:
+            while True:
+                self.voice_queue.get_nowait()
+                self.voice_queue.task_done()
+        except queue.Empty:
+            pass
+
+    def _voice_worker(self):
+        while (
+            not self.closing.is_set()
+        ):
+            try:
+                generation, text = (
+                    self.voice_queue.get(
+                        timeout=0.3
+                    )
+                )
+            except queue.Empty:
+                continue
+
+            try:
+                if (
+                    generation is not None
+                    and generation
+                    != self.request_generation
+                ):
+                    continue
+
+                self.last_spoken_text = (
+                    text
+                )
+                self.outbox.put(
+                    ("speaking", text)
+                )
+
+                backend = (
+                    self.speaker
+                    .speak(text)
+                )
+                self.outbox.put(
+                    ("spoken", backend)
+                )
+            except Exception as exc:
+                self.outbox.put(
+                    ("voice_error", str(exc))
+                )
+            finally:
+                self.voice_queue.task_done()
+
+    def _handsfree_worker(self):
+        while (
+            not self.closing.is_set()
+        ):
+            if (
+                not self.hands_free
+                or self.manual_listening
+                or not self.client
+            ):
+                time.sleep(0.25)
+                continue
+
+            try:
+                text = (
+                    self.listener
+                    .listen_phrase(
+                        start_timeout=2.0,
+                        max_seconds=10.0,
+                        silence_seconds=0.70,
+                    )
+                )
+
+                if not text:
+                    continue
+
+                if is_probable_echo(
+                    text,
+                    self.last_spoken_text,
+                    wake_word=self.wake_word,
+                ):
+                    continue
+
+                armed = (
+                    time.monotonic()
+                    < self.conversation_until
+                )
+
+                (
+                    accepted,
+                    command,
+                ) = extract_wake_command(
+                    text,
+                    self.wake_word,
+                    armed=armed,
+                )
+
+                if not accepted:
+                    continue
+
+                self._clear_voice()
+
+                if not command:
+                    self.conversation_until = (
+                        time.monotonic()
+                        + 8.0
+                    )
+                    self.outbox.put(
+                        ("wake_only", "")
+                    )
+                    continue
+
+                self.conversation_until = (
+                    time.monotonic()
+                    + 20.0
+                )
+                self.outbox.put(
+                    (
+                        "handsfree_command",
+                        command,
+                    )
+                )
+
+            except Exception as exc:
+                self.outbox.put(
+                    (
+                        "handsfree_error",
+                        str(exc),
+                    )
+                )
+                time.sleep(1.0)
 
     def poll(self):
         try:
             while True:
-                kind, value = (
+                (
+                    kind,
+                    value,
+                ) = (
                     self.outbox
                     .get_nowait()
                 )
 
                 if kind == "stream_start":
+                    if (
+                        value
+                        != self.request_generation
+                    ):
+                        continue
                     self.begin_stream()
                     self.status.set(
                         "IRAS is replying..."
                     )
 
                 elif kind == "stream_token":
-                    self.append_stream(
-                        value
-                    )
+                    (
+                        generation,
+                        chunk,
+                    ) = value
+                    if (
+                        generation
+                        != self.request_generation
+                    ):
+                        continue
+                    self.append_stream(chunk)
 
                 elif kind == "stream_done":
-                    self.end_stream()
+                    generation = (
+                        value.get(
+                            "generation"
+                        )
+                    )
+                    if (
+                        generation
+                        != self.request_generation
+                    ):
+                        continue
 
+                    self.end_stream()
                     self.request_active = False
                     self.send_button.configure(
                         state="normal"
+                    )
+                    self.conversation_until = (
+                        time.monotonic()
+                        + 20.0
                     )
 
                     meta = (
@@ -511,81 +832,104 @@ class IRASRemoteDesktop:
                         or 0
                     )
 
-                    if first:
+                    if self.hands_free:
+                        self.status.set(
+                            "Listening for your "
+                            "next sentence..."
+                        )
+                    elif first:
                         self.status.set(
                             "Ready · first token "
                             f"{first / 1000:.2f}s"
                         )
                     else:
-                        self.status.set(
-                            "Ready"
-                        )
+                        self._ready_status()
 
-                    text = (
-                        value.get("text")
-                        or ""
+                elif kind == "handsfree_command":
+                    self.send_text(
+                        value,
+                        interrupt=True,
                     )
 
-                    if (
-                        self.voice_on
-                        and text
-                    ):
-                        threading.Thread(
-                            target=self._speak,
-                            args=(text,),
-                            daemon=True,
-                        ).start()
+                elif kind == "wake_only":
+                    self.status.set(
+                        "Yeah? I'm listening."
+                    )
+                    self._enqueue_voice(
+                        "Yeah?",
+                        None,
+                    )
 
                 elif kind == "heard":
-                    self.listening = False
+                    self.manual_listening = False
                     self.mic_button.configure(
                         state="normal",
                         text="Mic",
                     )
-
-                    self.entry.delete(
-                        0,
-                        "end",
-                    )
-                    self.entry.insert(
-                        0,
+                    self.send_text(
                         value,
+                        interrupt=self.request_active,
                     )
-
-                    self.status.set(
-                        f"Heard: {value}"
-                    )
-
-                    self.send()
 
                 elif kind == "mic_empty":
-                    self.listening = False
+                    self.manual_listening = False
                     self.mic_button.configure(
                         state="normal",
                         text="Mic",
                     )
-
-                    self.status.set(
-                        "I didn't catch that."
-                    )
+                    self._ready_status()
 
                 elif kind == "mic_error":
-                    self.listening = False
+                    self.manual_listening = False
                     self.mic_button.configure(
                         state="normal",
                         text="Mic",
                     )
-
                     self.status.set(
                         "Microphone unavailable"
                     )
-
                     messagebox.showerror(
                         "IRAS Microphone",
                         value,
                     )
 
+                elif kind == "speaking":
+                    self.status.set(
+                        "IRAS is speaking · "
+                        "say IRAS to interrupt"
+                    )
+
+                elif kind == "spoken":
+                    if (
+                        self.hands_free
+                        and not self.request_active
+                    ):
+                        self.status.set(
+                            "Listening..."
+                        )
+
+                elif kind == "voice_error":
+                    self.status.set(
+                        "Voice unavailable"
+                    )
+
+                elif kind == "handsfree_error":
+                    self.status.set(
+                        "Hands-free microphone "
+                        "temporarily unavailable"
+                    )
+
                 elif kind == "error":
+                    (
+                        generation,
+                        message,
+                    ) = value
+                    if (
+                        generation
+                        != self.request_generation
+                    ):
+                        continue
+
                     if self.request_active:
                         self.end_stream()
 
@@ -593,14 +937,12 @@ class IRASRemoteDesktop:
                     self.send_button.configure(
                         state="normal"
                     )
-
                     self.add(
                         "Error",
-                        value,
+                        message,
                     )
-
                     self.status.set(
-                        "Connection failed"
+                        "AI provider unavailable"
                     )
 
         except queue.Empty:
@@ -611,38 +953,10 @@ class IRASRemoteDesktop:
             self.poll,
         )
 
-    def _speak(self, text):
-        try:
-            self.root.after(
-                0,
-                lambda: self.status.set(
-                    "IRAS is speaking..."
-                ),
-            )
-
-            backend = (
-                self.speaker
-                .speak(text)
-            )
-
-            self.root.after(
-                0,
-                lambda: self.status.set(
-                    "Ready · "
-                    f"{self.speaker.profile.label} · "
-                    f"{backend}"
-                ),
-            )
-
-        except Exception:
-            self.root.after(
-                0,
-                lambda: self.status.set(
-                    "Voice unavailable"
-                ),
-            )
-
     def close(self):
+        self.closing.set()
+        self._clear_voice()
+
         if self.client is not None:
             try:
                 self.client.close()

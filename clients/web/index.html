@@ -8,7 +8,8 @@
   <link rel="manifest" href="/app/manifest.webmanifest">
   <style>
     :root{font-family:Inter,Segoe UI,system-ui,sans-serif;color-scheme:dark}
-    *{box-sizing:border-box}body{margin:0;background:#0b0d12;color:#f5f7ff;min-height:100vh}
+    *{box-sizing:border-box}
+    body{margin:0;background:#0b0d12;color:#f5f7ff;min-height:100vh}
     .app{max-width:900px;margin:auto;min-height:100vh;display:flex;flex-direction:column;padding:16px}
     header{display:flex;align-items:center;justify-content:space-between;padding:6px 2px 14px}
     h1{margin:0;font-size:22px}.sub{opacity:.6;font-size:12px}
@@ -17,7 +18,9 @@
     .you{align-self:flex-end;background:#252a38}.iras{align-self:flex-start;background:#161a24;border:1px solid #292f40}
     .bar{position:sticky;bottom:0;background:#0b0d12;padding-top:8px;display:flex;gap:8px}
     input,button{border:1px solid #313749;background:#121621;color:#fff;border-radius:12px;padding:12px}
-    #msg{flex:1;font-size:16px}button{cursor:pointer}.primary{background:#eef2ff;color:#0b0d12;font-weight:700}
+    #msg{flex:1;font-size:16px}button{cursor:pointer}
+    .primary{background:#eef2ff;color:#0b0d12;font-weight:700}
+    .active{border-color:#8fa5ff;background:#1e263e}
     dialog{background:#11151f;color:#fff;border:1px solid #353c50;border-radius:14px;max-width:520px;width:calc(100% - 24px)}
     dialog input{width:100%;margin:5px 0 12px}.row{display:flex;gap:8px;justify-content:flex-end}
     .status{font-size:12px;opacity:.65;margin-top:8px}
@@ -27,10 +30,16 @@
 </head>
 <body>
 <div class="app">
-  <header><div><h1>IRAS</h1><div class="sub">Online assistant · streaming</div></div><button id="settings">Server</button></header>
+  <header>
+    <div><h1>IRAS</h1><div class="sub">Online assistant · continuous voice</div></div>
+    <button id="settings">Server</button>
+  </header>
+
   <main id="chat"></main>
+
   <div class="bar">
-    <button id="mic" title="Speech input">Mic</button>
+    <button id="handsfree" title="Wake word: IRAS">Hands-free</button>
+    <button id="mic" title="One-shot speech input">Mic</button>
     <input id="msg" placeholder="Talk to IRAS..." autocomplete="off">
     <button class="primary" id="send">Send</button>
   </div>
@@ -43,20 +52,31 @@
   <input id="server" placeholder="https://iras-cloud.onrender.com">
   <label>IRAS access token</label>
   <input id="token" type="password" placeholder="Your IRAS_API_TOKEN">
-  <div class="row"><button id="cancelCfg">Cancel</button><button class="primary" id="saveCfg">Save</button></div>
+  <label>Wake word</label>
+  <input id="wake" placeholder="IRAS">
+  <div class="row">
+    <button id="cancelCfg">Cancel</button>
+    <button class="primary" id="saveCfg">Save</button>
+  </div>
 </dialog>
 
 <script>
-const $=s=>document.querySelector(s), chat=$("#chat"), msg=$("#msg"), status=$("#status");
-const cfg=$("#cfg"), server=$("#server"), token=$("#token");
+const $=s=>document.querySelector(s);
+const chat=$("#chat"),msg=$("#msg"),status=$("#status");
+const cfg=$("#cfg"),server=$("#server"),token=$("#token"),wake=$("#wake");
+const handsButton=$("#handsfree");
 
-let currentAudio=null, currentAudioUrl=null;
-let voiceQueue=[], voicePumping=false, voiceSession=0, voiceBuffer="";
-let sending=false;
+let currentAudio=null,currentAudioUrl=null,currentChatAbort=null;
+let voiceQueue=[],voicePumping=false,voiceSession=0,voiceBuffer="",lastSpokenText="";
+let sending=false,chatGeneration=0;
+let handsFree=false,recognition=null,restartTimer=null,manualRecognition=null;
+let conversationUntil=0;
 
 const local=JSON.parse(localStorage.getItem("iras-config")||"{}");
 server.value=local.server||location.origin;
 token.value=local.token||"";
+wake.value=local.wakeWord||"IRAS";
+handsFree=!!local.handsFree;
 
 function add(who,text){
   const d=document.createElement("div");
@@ -69,12 +89,39 @@ function add(who,text){
 
 function config(){return JSON.parse(localStorage.getItem("iras-config")||"{}")}
 
-function save(){
+function saveConfig(){
   localStorage.setItem("iras-config",JSON.stringify({
     server:server.value.trim().replace(/\/$/,""),
-    token:token.value.trim()
+    token:token.value.trim(),
+    wakeWord:(wake.value.trim()||"IRAS"),
+    handsFree
   }));
   cfg.close();
+}
+
+function wakeWord(){return (config().wakeWord||"IRAS").trim()}
+
+function words(text){return (text.toLowerCase().match(/[a-z0-9']+/g)||[])}
+
+function probableEcho(heard,spoken){
+  const h=words(heard),s=words(spoken);
+  if(!h.length||!s.length)return false;
+  if(h.length===1&&h[0]===wakeWord().toLowerCase())return false;
+  const hs=new Set(h),ss=new Set(s);
+  let overlap=0;
+  for(const word of hs)if(ss.has(word))overlap++;
+  return overlap/Math.max(1,hs.size)>=0.68;
+}
+
+function parseWake(text){
+  const raw=(text||"").trim();
+  if(!raw)return {accepted:false,command:""};
+  const w=wakeWord().replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  const re=new RegExp("\\b(?:(?:hey|okay|ok)\\s+)?"+w+"\\b[\\s,.:;!?-]*(.*)$","i");
+  const match=raw.match(re);
+  if(match)return {accepted:true,command:(match[1]||"").trim()};
+  if(Date.now()<conversationUntil)return {accepted:true,command:raw};
+  return {accepted:false,command:""};
 }
 
 function stopCurrentAudio(){
@@ -96,6 +143,17 @@ function resetVoice(){
   stopCurrentAudio();
 }
 
+function interruptCurrentTurn(){
+  chatGeneration++;
+  if(currentChatAbort){
+    try{currentChatAbort.abort()}catch(_){}
+    currentChatAbort=null;
+  }
+  sending=false;
+  $("#send").disabled=false;
+  resetVoice();
+}
+
 async function fetchVoice(text,session){
   const c=config();
   const base=c.server||location.origin;
@@ -110,16 +168,17 @@ async function fetchVoice(text,session){
     body:JSON.stringify({text})
   });
 
-  if(!r.ok) throw new Error((await r.text())||("HTTP "+r.status));
-  if(session!==voiceSession) return;
+  if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
+  if(session!==voiceSession)return;
 
   const blob=await r.blob();
-  if(session!==voiceSession) return;
+  if(session!==voiceSession)return;
 
   const url=URL.createObjectURL(blob);
   const audio=new Audio(url);
   currentAudio=audio;
   currentAudioUrl=url;
+  lastSpokenText=text;
 
   await new Promise((resolve,reject)=>{
     audio.onended=resolve;
@@ -127,8 +186,8 @@ async function fetchVoice(text,session){
     audio.play().catch(reject);
   });
 
-  if(currentAudio===audio) currentAudio=null;
-  if(currentAudioUrl===url) currentAudioUrl=null;
+  if(currentAudio===audio)currentAudio=null;
+  if(currentAudioUrl===url)currentAudioUrl=null;
   URL.revokeObjectURL(url);
 }
 
@@ -139,23 +198,23 @@ async function pumpVoice(session){
   try{
     while(voiceQueue.length&&session===voiceSession){
       const sentence=voiceQueue.shift();
-      status.textContent="IRAS is speaking...";
+      status.textContent="IRAS is speaking · say "+wakeWord()+" to interrupt";
       try{
         await fetchVoice(sentence,session);
       }catch(e){
-        console.error("IRAS voice error:",e);
+        if(session===voiceSession)console.error("IRAS voice error:",e);
       }
     }
   }finally{
     if(session===voiceSession){
       voicePumping=false;
-      if(!sending) status.textContent="Ready";
+      if(!sending)status.textContent=handsFree?"Hands-free · say "+wakeWord():"Ready";
     }
   }
 }
 
 function enqueueVoice(text,session){
-  const clean=text.trim();
+  const clean=(text||"").trim();
   if(!clean||session!==voiceSession)return;
   voiceQueue.push(clean);
   pumpVoice(session);
@@ -170,8 +229,7 @@ function drainVoiceBuffer(session,force=false){
 
     const sentence=match[1].trim();
     voiceBuffer=voiceBuffer.slice(match[0].length).trimStart();
-
-    if(sentence) enqueueVoice(sentence,session);
+    if(sentence)enqueueVoice(sentence,session);
   }
 
   if(force&&voiceBuffer.trim()){
@@ -185,25 +243,19 @@ function parseFrame(frame){
   const data=[];
 
   for(const line of frame.split("\n")){
-    if(line.startsWith("event:")){
-      event=line.slice(6).trim();
-    }else if(line.startsWith("data:")){
-      data.push(line.slice(5).trimStart());
-    }
+    if(line.startsWith("event:"))event=line.slice(6).trim();
+    else if(line.startsWith("data:"))data.push(line.slice(5).trimStart());
   }
 
   if(!data.length)return null;
-
-  try{
-    return {event,data:JSON.parse(data.join("\n"))};
-  }catch(_){
-    return null;
-  }
+  try{return {event,data:JSON.parse(data.join("\n"))}}
+  catch(_){return null}
 }
 
-async function legacyReply(base,c,text,bubble,session){
+async function legacyReply(base,c,text,bubble,session,signal){
   const r=await fetch(base+"/v1/chat",{
     method:"POST",
+    signal,
     headers:{
       "Content-Type":"application/json",
       "Authorization":"Bearer "+c.token,
@@ -214,15 +266,15 @@ async function legacyReply(base,c,text,bubble,session){
 
   if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
   const data=await r.json();
-
   bubble.textContent=data.response;
   voiceBuffer=data.response;
   drainVoiceBuffer(session,true);
 }
 
-async function streamReply(base,c,text,bubble,session){
+async function streamReply(base,c,text,bubble,session,signal){
   const r=await fetch(base+"/v1/chat/stream",{
     method:"POST",
+    signal,
     headers:{
       "Content-Type":"application/json",
       "Accept":"text/event-stream",
@@ -233,7 +285,7 @@ async function streamReply(base,c,text,bubble,session){
   });
 
   if(r.status===404){
-    await legacyReply(base,c,text,bubble,session);
+    await legacyReply(base,c,text,bubble,session,signal);
     return;
   }
 
@@ -242,8 +294,7 @@ async function streamReply(base,c,text,bubble,session){
 
   const reader=r.body.getReader();
   const decoder=new TextDecoder();
-  let buffer="";
-  let gotToken=false;
+  let buffer="",gotToken=false;
 
   while(true){
     const {value,done}=await reader.read();
@@ -278,13 +329,14 @@ async function streamReply(base,c,text,bubble,session){
       }else if(event==="done"){
         bubble.classList.remove("cursor");
         drainVoiceBuffer(session,true);
+        conversationUntil=Date.now()+20000;
 
-        const first=data.first_token_ms||0;
-        const total=data.timing_ms||0;
-        status.textContent=
-          first>0
-            ? `Reply started in ${(first/1000).toFixed(2)}s · total ${(total/1000).toFixed(2)}s`
-            : `Completed in ${(total/1000).toFixed(2)}s`;
+        const first=data.first_token_ms||0,total=data.timing_ms||0;
+        status.textContent=handsFree
+          ?"Listening for your next sentence..."
+          :(first>0
+            ?`Reply started in ${(first/1000).toFixed(2)}s · total ${(total/1000).toFixed(2)}s`
+            :`Completed in ${(total/1000).toFixed(2)}s`);
       }else if(event==="error"){
         bubble.classList.remove("cursor");
         throw new Error(data.message||"Streaming failed.");
@@ -295,17 +347,17 @@ async function streamReply(base,c,text,bubble,session){
   }
 }
 
-$("#settings").onclick=()=>cfg.showModal();
-$("#cancelCfg").onclick=()=>cfg.close();
-$("#saveCfg").onclick=save;
-
-async function send(){
-  const text=msg.value.trim();
-  if(!text||sending)return;
+async function sendText(text,{interrupt=false}={}){
+  text=(text||"").trim();
+  if(!text)return;
 
   const c=config();
   if(!c.token){cfg.showModal();return}
 
+  if(sending&&!interrupt)return;
+  if(interrupt)interruptCurrentTurn();
+
+  const generation=++chatGeneration;
   const session=++voiceSession;
   voiceQueue=[];
   voiceBuffer="";
@@ -320,60 +372,217 @@ async function send(){
   const bubble=add("IRAS","");
   status.textContent="IRAS is thinking...";
 
+  const controller=new AbortController();
+  currentChatAbort=controller;
+
   try{
     const base=c.server||location.origin;
-    await streamReply(base,c,text,bubble,session);
+    await streamReply(base,c,text,bubble,session,controller.signal);
+
+    if(generation!==chatGeneration)return;
 
     if(!bubble.textContent.trim()){
-      bubble.textContent="Done.";
+      bubble.textContent="I lost that response. Try that again.";
     }
   }catch(e){
-    bubble.classList.remove("cursor");
-    if(!bubble.textContent.trim()){
-      bubble.textContent="Connection error: "+e.message;
-    }else{
-      bubble.textContent+="\n\n[Connection interrupted]";
-    }
-    status.textContent="Offline";
-  }finally{
-    sending=false;
-    $("#send").disabled=false;
+    if(generation!==chatGeneration||e.name==="AbortError")return;
 
-    if(!voicePumping&&voiceQueue.length===0&&status.textContent!=="Offline"){
-      setTimeout(()=>{
-        if(!voicePumping&&!sending)status.textContent="Ready";
-      },1600);
+    bubble.classList.remove("cursor");
+    if(!bubble.textContent.trim())bubble.textContent="Connection error: "+e.message;
+    else bubble.textContent+="\n\n[Connection interrupted]";
+    status.textContent="AI provider unavailable";
+  }finally{
+    if(generation===chatGeneration){
+      sending=false;
+      $("#send").disabled=false;
+      currentChatAbort=null;
+
+      if(!voicePumping&&voiceQueue.length===0&&status.textContent!=="AI provider unavailable"){
+        setTimeout(()=>{
+          if(generation===chatGeneration&&!voicePumping&&!sending){
+            status.textContent=handsFree?"Hands-free · say "+wakeWord():"Ready";
+          }
+        },1200);
+      }
     }
   }
 }
 
+function send(){sendText(msg.value)}
+
+function handleTranscript(transcript){
+  const text=(transcript||"").trim();
+  if(!text)return;
+
+  if(probableEcho(text,lastSpokenText))return;
+
+  const {accepted,command}=parseWake(text);
+  if(!accepted){
+    status.textContent="Hands-free · say "+wakeWord();
+    return;
+  }
+
+  if(currentAudio||voicePumping||sending){
+    interruptCurrentTurn();
+  }
+
+  if(!command){
+    conversationUntil=Date.now()+8000;
+    status.textContent="Yeah? I'm listening.";
+    return;
+  }
+
+  conversationUntil=Date.now()+20000;
+  sendText(command,{interrupt:true});
+}
+
+function recognitionCtor(){
+  return window.SpeechRecognition||window.webkitSpeechRecognition;
+}
+
+function stopHandsRecognition(){
+  if(restartTimer){clearTimeout(restartTimer);restartTimer=null}
+  if(recognition){
+    recognition.onend=null;
+    try{recognition.stop()}catch(_){}
+    recognition=null;
+  }
+}
+
+function startHandsRecognition(){
+  const SR=recognitionCtor();
+
+  if(!SR){
+    handsFree=false;
+    updateHandsButton();
+    status.textContent="Continuous speech recognition is not available in this browser.";
+    return;
+  }
+
+  stopHandsRecognition();
+
+  const r=new SR();
+  recognition=r;
+  r.lang="en-US";
+  r.continuous=true;
+  r.interimResults=true;
+
+  r.onstart=()=>{
+    status.textContent="Hands-free · say "+wakeWord();
+  };
+
+  r.onresult=e=>{
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      if(!e.results[i].isFinal)continue;
+      handleTranscript(e.results[i][0].transcript);
+    }
+  };
+
+  r.onerror=e=>{
+    if(e.error==="not-allowed"||e.error==="service-not-allowed"){
+      handsFree=false;
+      updateHandsButton();
+      persistHandsFree();
+      status.textContent="Microphone permission is required for hands-free mode.";
+    }
+  };
+
+  r.onend=()=>{
+    if(recognition===r)recognition=null;
+    if(handsFree){
+      restartTimer=setTimeout(()=>{
+        if(handsFree)startHandsRecognition();
+      },350);
+    }
+  };
+
+  try{r.start()}
+  catch(e){status.textContent="Hands-free could not start: "+e.message}
+}
+
+function persistHandsFree(){
+  const c=config();
+
+  localStorage.setItem("iras-config",JSON.stringify({
+    ...c,
+    server:c.server||server.value.trim().replace(/\/$/,""),
+    token:c.token||token.value.trim(),
+    wakeWord:wakeWord(),
+    handsFree
+  }));
+}
+
+function updateHandsButton(){
+  handsButton.textContent=handsFree?"Hands-free On":"Hands-free Off";
+  handsButton.classList.toggle("active",handsFree);
+}
+
+function toggleHandsFree(){
+  handsFree=!handsFree;
+  persistHandsFree();
+  updateHandsButton();
+
+  if(handsFree)startHandsRecognition();
+  else{
+    stopHandsRecognition();
+    status.textContent="Hands-free off";
+  }
+}
+
+$("#settings").onclick=()=>cfg.showModal();
+$("#cancelCfg").onclick=()=>cfg.close();
+$("#saveCfg").onclick=()=>{
+  saveConfig();
+  if(handsFree)startHandsRecognition();
+};
+
 $("#send").onclick=send;
 msg.addEventListener("keydown",e=>{if(e.key==="Enter")send()});
+handsButton.onclick=toggleHandsFree;
 
 $("#mic").onclick=()=>{
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){status.textContent="Speech recognition is not available in this browser.";return}
+  if(handsFree){
+    status.textContent="Hands-free is already listening.";
+    return;
+  }
+
+  const SR=recognitionCtor();
+
+  if(!SR){
+    status.textContent="Speech recognition is not available in this browser.";
+    return;
+  }
 
   resetVoice();
 
+  if(manualRecognition){
+    try{manualRecognition.stop()}catch(_){}
+  }
+
   const r=new SR();
+  manualRecognition=r;
   r.lang="en-US";
   r.interimResults=false;
 
   r.onstart=()=>status.textContent="Listening...";
-
-  r.onresult=e=>{
-    msg.value=e.results[0][0].transcript;
-    status.textContent="Heard you.";
-    send();
-  };
-
+  r.onresult=e=>sendText(e.results[0][0].transcript,{interrupt:true});
   r.onerror=e=>status.textContent="Mic error: "+e.error;
+  r.onend=()=>{if(manualRecognition===r)manualRecognition=null};
+
   r.start();
 };
 
-if("serviceWorker" in navigator)navigator.serviceWorker.register("/app/sw.js").catch(()=>{});
-if(!localStorage.getItem("iras-config"))cfg.showModal();
+updateHandsButton();
+
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("/app/sw.js").catch(()=>{});
+}
+
+if(!localStorage.getItem("iras-config")){
+  cfg.showModal();
+}else if(handsFree){
+  setTimeout(startHandsRecognition,600);
+}
 </script>
 </body>
 </html>
