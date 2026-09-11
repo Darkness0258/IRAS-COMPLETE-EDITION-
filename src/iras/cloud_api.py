@@ -115,14 +115,11 @@ def chat(
             response = runtime.agent.handle(body.message)
 
     except Exception as exc:
-        # Send the real exception + traceback to Render logs.
-        # Secrets are not intentionally logged here; provider errors should
-        # contain only status/error text, not the API key itself.
-        logger.exception(
-            "[IRAS CHAT ERROR] request_id=%s type=%s message=%s",
-            request_id,
-            type(exc).__name__,
-            exc,
+        error_text = f"{type(exc).__name__}: {exc}"
+
+        print(
+            f"[IRAS CHAT ERROR] {error_text}",
+            flush=True,
         )
 
         runtime.audit.record(
@@ -135,7 +132,7 @@ def chat(
 
         raise HTTPException(
             status_code=500,
-            detail="IRAS could not complete this request.",
+            detail=error_text,
         ) from exc
 
     return ChatOut(
