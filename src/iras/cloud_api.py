@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -17,6 +18,8 @@ from iras import __version__
 from iras.cloud_bootstrap import build_cloud_runtime
 from iras.config import Settings
 
+
+logger = logging.getLogger("iras.cloud")
 
 settings = Settings.load()
 runtime = build_cloud_runtime(settings)
@@ -112,11 +115,28 @@ def chat(
             response = runtime.agent.handle(body.message)
 
     except Exception as exc:
+        # Send the real exception + traceback to Render logs.
+        # Secrets are not intentionally logged here; provider errors should
+        # contain only status/error text, not the API key itself.
+        logger.exception(
+            "[IRAS CHAT ERROR] request_id=%s type=%s message=%s",
+            request_id,
+            type(exc).__name__,
+            exc,
+        )
+
         runtime.audit.record(
             "cloud_chat_error",
-            {"request_id": request_id, "error": repr(exc)},
+            {
+                "request_id": request_id,
+                "error": repr(exc),
+            },
         )
-        raise HTTPException(500, "IRAS could not complete this request.") from exc
+
+        raise HTTPException(
+            status_code=500,
+            detail="IRAS could not complete this request.",
+        ) from exc
 
     return ChatOut(
         response=response,
@@ -175,9 +195,7 @@ if web_dir:
 
     @app.get("/")
     def home():
-        return FileResponse(
-            web_dir / "index.html"
-        )
+        return FileResponse(web_dir / "index.html")
 
 else:
 
@@ -194,12 +212,7 @@ else:
 
 
 def main():
-    port = int(
-        os.getenv(
-            "PORT",
-            "8765",
-        )
-    )
+    port = int(os.getenv("PORT", "8765"))
 
     uvicorn.run(
         "iras.cloud_api:app",
