@@ -102,27 +102,97 @@ function saveConfig(){
 
 function wakeWord(){return (config().wakeWord||"IRAS").trim()}
 
+function wakeAliases(){
+  const primary=wakeWord().trim();
+  if(primary.toLowerCase()!=="iras")return [primary];
+
+  return [
+    "IRAS",
+    "Iris",
+    "Eris",
+    "Eras",
+    "eye ris",
+    "eye-ris",
+    "eye ras",
+    "eye-rass",
+    "Ira's",
+    "I R A S",
+    "little girl",
+    "cute"
+  ];
+}
+
+function aliasRegex(alias){
+  const parts=(alias.toLowerCase().match(/[a-z0-9']+/g)||[]);
+  if(!parts.length)return alias.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  return parts
+    .map(part=>part.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"))
+    .join("[\\s-]*");
+}
+
+function wakeRegex(){
+  return "(?:"+wakeAliases()
+    .slice()
+    .sort((a,b)=>b.length-a.length)
+    .map(aliasRegex)
+    .join("|")+")";
+}
+
 function words(text){return (text.toLowerCase().match(/[a-z0-9']+/g)||[])}
+
+function parseWake(text,{ignoreConversation=false}={}){
+  const raw=(text||"").trim();
+  if(!raw)return {accepted:false,command:""};
+
+  const re=new RegExp(
+    "^\\s*(?:(?:hey|okay|ok)\\s+)?"
+      +wakeRegex()
+      +"\\b[\\s,.:;!?-]*(.*)$",
+    "i"
+  );
+
+  const match=raw.match(re);
+
+  if(match){
+    return {
+      accepted:true,
+      command:(match[1]||"").trim()
+    };
+  }
+
+  if(!ignoreConversation&&Date.now()<conversationUntil){
+    return {accepted:true,command:raw};
+  }
+
+  return {accepted:false,command:""};
+}
+
+function isWakeOnlyPhrase(text){
+  const parsed=parseWake(text,{ignoreConversation:true});
+  return parsed.accepted&&!parsed.command;
+}
 
 function probableEcho(heard,spoken){
   const h=words(heard),s=words(spoken);
   if(!h.length||!s.length)return false;
-  if(h.length===1&&h[0]===wakeWord().toLowerCase())return false;
+
+  if(isWakeOnlyPhrase(heard))return false;
+
   const hs=new Set(h),ss=new Set(s);
   let overlap=0;
   for(const word of hs)if(ss.has(word))overlap++;
   return overlap/Math.max(1,hs.size)>=0.68;
 }
 
-function parseWake(text){
-  const raw=(text||"").trim();
-  if(!raw)return {accepted:false,command:""};
-  const w=wakeWord().replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
-  const re=new RegExp("\\b(?:(?:hey|okay|ok)\\s+)?"+w+"\\b[\\s,.:;!?-]*(.*)$","i");
-  const match=raw.match(re);
-  if(match)return {accepted:true,command:(match[1]||"").trim()};
-  if(Date.now()<conversationUntil)return {accepted:true,command:raw};
-  return {accepted:false,command:""};
+function bestRecognitionTranscript(result){
+  if(!result||!result.length)return "";
+
+  for(let i=0;i<result.length;i++){
+    const candidate=(result[i]&&result[i].transcript||"").trim();
+    if(candidate&&parseWake(candidate).accepted)return candidate;
+  }
+
+  return (result[0]&&result[0].transcript||"").trim();
 }
 
 function stopCurrentAudio(){
@@ -543,7 +613,7 @@ async function startHandsRecognition(){
     let interimText="";
 
     for(let i=e.resultIndex;i<e.results.length;i++){
-      const part=(e.results[i][0]&&e.results[i][0].transcript||"").trim();
+      const part=bestRecognitionTranscript(e.results[i]);
       if(!part)continue;
 
       if(e.results[i].isFinal){

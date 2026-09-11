@@ -1384,6 +1384,21 @@ public class MainActivity extends Activity {
                                 results.get(0);
 
                             if (continuousMode) {
+                                for (
+                                    String candidate :
+                                    results
+                                ) {
+                                    if (
+                                        extractWakeCommand(
+                                            candidate
+                                        ).accepted
+                                    ) {
+                                        heard =
+                                            candidate;
+                                        break;
+                                    }
+                                }
+
                                 handleHandsFreeTranscript(
                                     heard
                                 );
@@ -1539,6 +1554,95 @@ public class MainActivity extends Activity {
         }
     }
 
+    private List<String> wakeAliases() {
+        if (
+            !wakeWord()
+                .equalsIgnoreCase(
+                    "IRAS"
+                )
+        ) {
+            return Collections.singletonList(
+                wakeWord()
+            );
+        }
+
+        return Arrays.asList(
+            "IRAS",
+            "Iris",
+            "Eris",
+            "Eras",
+            "eye ris",
+            "eye-ris",
+            "eye ras",
+            "eye-rass",
+            "Ira's",
+            "I R A S",
+            "little girl",
+            "cute"
+        );
+    }
+
+    private String wakeAliasRegex(
+        String alias
+    ) {
+        Matcher words =
+            Pattern
+                .compile(
+                    "[a-z0-9']+",
+                    Pattern.CASE_INSENSITIVE
+                )
+                .matcher(alias);
+
+        List<String> parts =
+            new ArrayList<>();
+
+        while (
+            words.find()
+        ) {
+            parts.add(
+                Pattern.quote(
+                    words.group()
+                )
+            );
+        }
+
+        if (
+            parts.isEmpty()
+        ) {
+            return Pattern.quote(
+                alias
+            );
+        }
+
+        return String.join(
+            "[\\s-]*",
+            parts
+        );
+    }
+
+    private String wakePattern() {
+        List<String> patterns =
+            new ArrayList<>();
+
+        for (
+            String alias :
+            wakeAliases()
+        ) {
+            patterns.add(
+                wakeAliasRegex(
+                    alias
+                )
+            );
+        }
+
+        return "(?:"
+            + String.join(
+                "|",
+                patterns
+            )
+            + ")";
+    }
+
     private WakeResult extractWakeCommand(
         String text
     ) {
@@ -1547,10 +1651,8 @@ public class MainActivity extends Activity {
 
         Pattern p =
             Pattern.compile(
-                "\\b(?:(?:hey|okay|ok)\\s+)?"
-                + Pattern.quote(
-                    wakeWord()
-                )
+                "^\\s*(?:(?:hey|okay|ok)\\s+)?"
+                + wakePattern()
                 + "\\b[\\s,.:;!?-]*(.*)$",
                 Pattern.CASE_INSENSITIVE
             );
@@ -1605,15 +1707,14 @@ public class MainActivity extends Activity {
             return false;
         }
 
+        WakeResult wakeOnly =
+            extractWakeCommand(
+                heard
+            );
+
         if (
-            h.size()
-            == 1
-            && h.contains(
-                wakeWord()
-                    .toLowerCase(
-                        Locale.US
-                    )
-            )
+            wakeOnly.accepted
+            && wakeOnly.command.isEmpty()
         ) {
             return false;
         }
