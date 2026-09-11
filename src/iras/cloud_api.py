@@ -6,7 +6,7 @@ import time
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -30,14 +30,21 @@ app = FastAPI(
 )
 
 origins = ["*"] if settings.cors_origins == "*" else [
-    x.strip() for x in settings.cors_origins.split(",") if x.strip()
+    x.strip()
+    for x in settings.cors_origins.split(",")
+    if x.strip()
 ]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=False if origins == ["*"] else True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Device-ID"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-Device-ID",
+    ],
 )
 
 
@@ -54,13 +61,18 @@ class ChatOut(BaseModel):
 
 def _authorized(authorization: str | None) -> None:
     token = settings.api_token
+
     if not token or token == "change-me-before-remote-use":
         raise HTTPException(
-            503,
-            "IRAS_API_TOKEN is not configured on the server.",
+            status_code=503,
+            detail="IRAS_API_TOKEN is not configured on the server.",
         )
+
     if authorization != f"Bearer {token}":
-        raise HTTPException(401, "Invalid IRAS access token.")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid IRAS access token.",
+        )
 
 
 @app.get("/health")
@@ -83,21 +95,40 @@ def chat(
     x_device_id: str | None = Header(default=None),
 ):
     _authorized(authorization)
+
     request_id = uuid.uuid4().hex[:16]
     device_id = (x_device_id or body.device_id or "unknown")[:128]
+
     runtime.audit.record(
         "cloud_chat_request",
-        {"request_id": request_id, "device_id": device_id},
+        {
+            "request_id": request_id,
+            "device_id": device_id,
+        },
     )
+
     try:
         with agent_lock:
             response = runtime.agent.handle(body.message)
+
     except Exception as exc:
+        print(
+            f"[IRAS CHAT ERROR] {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+
         runtime.audit.record(
             "cloud_chat_error",
-            {"request_id": request_id, "error": repr(exc)},
+            {
+                "request_id": request_id,
+                "error": repr(exc),
+            },
         )
-        raise HTTPException(500, "IRAS could not complete this request.") from exc
+
+        raise HTTPException(
+            status_code=500,
+            detail="IRAS could not complete this request.",
+        ) from exc
 
     return ChatOut(
         response=response,
@@ -107,49 +138,81 @@ def chat(
 
 
 @app.get("/v1/personality")
-def personality(authorization: str | None = Header(default=None)):
+def personality(
+    authorization: str | None = Header(default=None),
+):
     _authorized(authorization)
     return runtime.personality.status()
 
 
 @app.post("/v1/personality/reset")
-def personality_reset(authorization: str | None = Header(default=None)):
+def personality_reset(
+    authorization: str | None = Header(default=None),
+):
     _authorized(authorization)
-    return {"ok": True, "state": runtime.personality.reset()}
+
+    return {
+        "ok": True,
+        "state": runtime.personality.reset(),
+    }
 
 
 @app.get("/v1/tools")
-def tools(authorization: str | None = Header(default=None)):
+def tools(
+    authorization: str | None = Header(default=None),
+):
     _authorized(authorization)
     return runtime.registry.describe()
 
 
-# Serve the browser/PWA client from the same free service.
 _web_candidates = [
     Path(__file__).resolve().parents[3] / "clients" / "web",
     Path.cwd() / "clients" / "web",
 ]
-web_dir = next((p for p in _web_candidates if p.exists()), None)
+
+web_dir = next(
+    (path for path in _web_candidates if path.exists()),
+    None,
+)
 
 if web_dir:
-    app.mount("/app", StaticFiles(directory=web_dir, html=True), name="webapp")
+    app.mount(
+        "/app",
+        StaticFiles(
+            directory=web_dir,
+            html=True,
+        ),
+        name="webapp",
+    )
 
     @app.get("/")
     def home():
-        return FileResponse(web_dir / "index.html")
+        return FileResponse(
+            web_dir / "index.html"
+        )
+
 else:
+
     @app.get("/")
     def home():
-        return JSONResponse({
-            "service": "IRAS Cloud",
-            "version": __version__,
-            "app": "/app/",
-            "health": "/health",
-        })
+        return JSONResponse(
+            {
+                "service": "IRAS Cloud",
+                "version": __version__,
+                "app": "/app/",
+                "health": "/health",
+            }
+        )
 
 
 def main():
-    port = int(os.getenv("PORT", "8765"))
+    port = int(
+        os.getenv(
+            "PORT",
+            "8765",
+        )
+    )
+
     uvicorn.run(
         "iras.cloud_api:app",
         host="0.0.0.0",
