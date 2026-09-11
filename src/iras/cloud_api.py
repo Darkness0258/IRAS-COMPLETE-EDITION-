@@ -300,6 +300,15 @@ def chat(
             },
         )
 
+        if "LLM HTTP 429" in str(exc):
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "The free AI models are rate-limited right now. "
+                    "Try again in a little while."
+                ),
+            ) from exc
+
         raise HTTPException(
             status_code=500,
             detail=(
@@ -497,16 +506,28 @@ def chat_stream(
                 },
             )
 
+            error_text = str(exc)
+
+            if "LLM HTTP 429" in error_text:
+                user_message = (
+                    "The free AI models are rate-limited right now. "
+                    "Try again in a little while."
+                )
+                error_code = "ai_rate_limited"
+            else:
+                user_message = (
+                    "IRAS could not complete this request."
+                )
+                error_code = "request_failed"
+
             yield _sse(
                 "error",
                 {
                     "request_id": (
                         request_id
                     ),
-                    "message": (
-                        "IRAS could not "
-                        "complete this request."
-                    ),
+                    "code": error_code,
+                    "message": user_message,
                 },
             )
 

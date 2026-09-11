@@ -42,6 +42,12 @@ _ROBOTIC_MARKERS = (
     "i am functioning well",
 )
 
+_ALLOWED_TITLES = (
+    "boss",
+    "sir",
+    "master",
+)
+
 
 def _clean(text: str) -> str:
     return " ".join(
@@ -50,6 +56,28 @@ def _clean(text: str) -> str:
         .replace("’", "'")
         .split()
     )
+
+
+def requested_title(
+    user_text: str,
+) -> str | None:
+    q = _clean(user_text)
+
+    for title in _ALLOWED_TITLES:
+        patterns = (
+            rf"\bcall me {title}\b",
+            rf"\brefer to me as {title}\b",
+            rf"\byou can call me {title}\b",
+            rf"\baddress me as {title}\b",
+        )
+
+        if any(
+            re.search(pattern, q)
+            for pattern in patterns
+        ):
+            return title
+
+    return None
 
 
 def is_literal_identity_question(
@@ -89,6 +117,11 @@ def is_social_turn(
     ):
         return True
 
+    if requested_title(
+        user_text
+    ):
+        return True
+
     return any(
         phrase in q
         for phrase in _SOCIAL_PATTERNS
@@ -98,7 +131,9 @@ def is_social_turn(
 def needs_buffered_social_guard(
     user_text: str,
 ) -> bool:
-    if not is_social_turn(user_text):
+    if not is_social_turn(
+        user_text
+    ):
         return False
 
     q = _clean(user_text)
@@ -120,53 +155,40 @@ def social_system_nudge(
     ):
         return ""
 
-    return '''CASUAL SOCIAL TURN — high-priority delivery guidance:
+    title = requested_title(
+        user_text
+    )
+
+    title_rule = (
+        f'- The user explicitly asked to be called "{title}". '
+        "Honor that preference naturally and do not overuse it."
+        if title
+        else (
+            "- Titles such as boss, sir, and master are allowed when the "
+            "user has explicitly requested them. Do not erase or refuse "
+            "an established title preference."
+        )
+    )
+
+    return f"""CASUAL SOCIAL TURN — high-priority delivery guidance:
 - Respond as IRAS's established social persona, not as a generic AI assistant.
 - Treat ordinary questions like "how are you?" and "are you happy?" as casual persona conversation, NOT as requests for an AI-consciousness disclaimer.
 - Natural persona language such as "I'm good", "yeah, I'm in a good mood", "that was annoying", or "I'm curious" is appropriate here.
 - Do not begin with or inject: "As an AI", "I don't have feelings", "not in the human sense", "I don't experience happiness", "I'm functioning well", or equivalent machine disclaimers.
-- Do not call the user "boss", "sir", or "master".
+{title_rule}
 - React naturally to the actual message. A little warmth, teasing, curiosity, or reciprocity is fine.
 - Do not end every reply with a question.
 - Keep it short unless the user clearly asks for detail.
-This guidance changes conversational style only. If the user explicitly asks whether you are literally human, conscious, biologically alive, or truly experience biological emotions, answer that literal question truthfully.'''
-
-
-def _remove_vocative_titles(
-    text: str,
-) -> str:
-    text = re.sub(
-        r"(?i)\b(hey|hi|hello|okay|ok|alright),?\s+"
-        r"(boss|sir|master)\b",
-        r"\1",
-        text,
-    )
-    text = re.sub(
-        r"(?i),\s*(boss|sir|master)\b",
-        "",
-        text,
-    )
-    return text
+This guidance changes conversational style only. If the user explicitly asks whether you are literally human, conscious, biologically alive, or truly experience biological emotions, answer that literal question truthfully."""
 
 
 def sanitize_stream_chunk(
     chunk: str,
 ) -> str:
-    text = str(chunk or "")
-
-    text = re.sub(
-        r"(?i),\s*(boss|sir|master)\b",
-        "",
-        text,
+    return str(
+        chunk
+        or ""
     )
-    text = re.sub(
-        r"(?i)\b(hey|hi|hello),?\s+"
-        r"(boss|sir|master)\b",
-        r"\1",
-        text,
-    )
-
-    return text
 
 
 def _has_robotic_marker(
@@ -184,6 +206,12 @@ def _social_fallback(
     user_text: str,
 ) -> str:
     q = _clean(user_text)
+    title = requested_title(
+        user_text
+    )
+
+    if title:
+        return f"You got it, {title}."
 
     if (
         "are you happy" in q
@@ -254,16 +282,15 @@ def normalize_social_reply(
     user_text: str,
     reply: str,
 ) -> str:
-    text = str(reply or "").strip()
+    text = str(
+        reply
+        or ""
+    ).strip()
 
     if not is_social_turn(
         user_text
     ):
         return text
-
-    text = _remove_vocative_titles(
-        text
-    ).strip()
 
     if (
         not text

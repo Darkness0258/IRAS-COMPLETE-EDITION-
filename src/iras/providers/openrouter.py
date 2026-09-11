@@ -113,7 +113,11 @@ class OpenRouterProvider(
         if fallback_models is None:
             raw = os.getenv(
                 "IRAS_FALLBACK_MODELS",
-                "openrouter/free",
+                (
+                    "inclusionai/ling-3.0-flash-vl:free,"
+                    "google/gemma-4-26b-a4b-it:free,"
+                    "openrouter/free"
+                ),
             )
 
             fallback_models = [

@@ -12,6 +12,7 @@ from iras.social_style import (
     is_social_turn,
     needs_buffered_social_guard,
     normalize_social_reply,
+    requested_title,
     sanitize_stream_chunk,
     social_system_nudge,
 )
@@ -194,6 +195,8 @@ class IRASAgent:
                 "recall",
                 "what did i",
                 "what do you remember",
+                "who am i",
+                "who am i?",
                 "save this",
                 "store this",
                 "forget",
@@ -296,6 +299,23 @@ class IRASAgent:
             "user",
             user_text,
         )
+
+        title = requested_title(
+            user_text
+        )
+
+        if title:
+            self.memory.remember(
+                "user.preferred_title",
+                title,
+            )
+
+            self.audit.record(
+                "preferred_title_updated",
+                {
+                    "title": title,
+                },
+            )
 
         self.audit.record(
             "user_message",
@@ -514,6 +534,23 @@ class IRASAgent:
             "user",
             user_text,
         )
+
+        title = requested_title(
+            user_text
+        )
+
+        if title:
+            self.memory.remember(
+                "user.preferred_title",
+                title,
+            )
+
+            self.audit.record(
+                "preferred_title_updated",
+                {
+                    "title": title,
+                },
+            )
 
         self.audit.record(
             "user_message",
