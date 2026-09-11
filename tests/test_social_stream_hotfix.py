@@ -47,11 +47,15 @@ def test_robotic_happy_reply_is_replaced():
         ),
     )
 
-    assert "human sense" not in cleaned.lower()
-    assert "don't have feelings" not in cleaned.lower()
+    assert "human sense" not in (
+        cleaned.lower()
+    )
+    assert "don't have feelings" not in (
+        cleaned.lower()
+    )
 
 
-def test_stream_chunk_removes_complete_boss_vocative():
+def test_stream_chunk_preserves_boss_vocative():
     assert sanitize_stream_chunk(
         "Hey, boss. "
-    ) == "Hey. "
+    ) == "Hey, boss. "
