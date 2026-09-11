@@ -10,13 +10,6 @@ from iras.providers.openai_compatible import (
 class _OpenRouterModelProvider(
     OpenAICompatibleProvider
 ):
-    """
-    Per-model OpenRouter connection.
-
-    For ordinary non-tool conversation we prioritize lowest time-to-first-token.
-    Tool requests intentionally keep OpenRouter's default tool-aware routing.
-    """
-
     def __init__(
         self,
         *args,
@@ -41,9 +34,6 @@ class _OpenRouterModelProvider(
             tools,
         )
 
-        # OpenRouter Auto Exacto already optimizes provider selection for
-        # tool-calling requests. Explicit latency sorting is most useful for
-        # normal conversation where TTFT matters most.
         if (
             self.provider_sort
             and not tools
@@ -142,14 +132,7 @@ class OpenRouterProvider(
                 )
 
         self.last_model = model
-
-        # Cache one provider object per model. Each object owns a persistent
-        # httpx.Client, so normal turns and fallback turns both reuse TLS
-        # connections instead of reconnecting every time.
-        self._model_providers: dict[
-            str,
-            _OpenRouterModelProvider,
-        ] = {}
+        self._model_providers = {}
 
     @staticmethod
     def _retryable_error(
@@ -237,14 +220,21 @@ class OpenRouterProvider(
                 )
 
                 self.last_model = (
-                    provider
-                    .last_response_model
+                    getattr(
+                        provider,
+                        "last_response_model",
+                        None,
+                    )
                     or model
                 )
 
-                self.last_request_ms = (
-                    provider
-                    .last_request_ms
+                self.last_request_ms = int(
+                    getattr(
+                        provider,
+                        "last_request_ms",
+                        0,
+                    )
+                    or 0
                 )
 
                 if index > 0:
@@ -259,9 +249,14 @@ class OpenRouterProvider(
 
             except RuntimeError as exc:
                 last_error = exc
-                self.last_request_ms = (
-                    provider
-                    .last_request_ms
+
+                self.last_request_ms = int(
+                    getattr(
+                        provider,
+                        "last_request_ms",
+                        0,
+                    )
+                    or 0
                 )
 
                 if (
@@ -297,6 +292,13 @@ class OpenRouterProvider(
             self._model_providers
             .values()
         ):
-            provider.close()
+            close = getattr(
+                provider,
+                "close",
+                None,
+            )
+
+            if callable(close):
+                close()
 
         super().close()
