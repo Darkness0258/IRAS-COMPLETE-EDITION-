@@ -71,6 +71,7 @@ let voiceQueue=[],voicePumping=false,voiceSession=0,voiceBuffer="",lastSpokenTex
 let sending=false,chatGeneration=0;
 let handsFree=false,recognition=null,restartTimer=null,manualRecognition=null;
 let conversationUntil=0;
+let recognitionHadAudio=false,recognitionHadSpeech=false;
 
 const local=JSON.parse(localStorage.getItem("iras-config")||"{}");
 server.value=local.server||location.origin;
@@ -440,64 +441,198 @@ function recognitionCtor(){
   return window.SpeechRecognition||window.webkitSpeechRecognition;
 }
 
-function stopHandsRecognition(){
-  if(restartTimer){clearTimeout(restartTimer);restartTimer=null}
-  if(recognition){
-    recognition.onend=null;
-    try{recognition.stop()}catch(_){}
-    recognition=null;
+async function ensureMicrophoneAccess(){
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+    return true;
+  }
+
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({
+      audio:{
+        echoCancellation:true,
+        noiseSuppression:true,
+        autoGainControl:true
+      }
+    });
+
+    for(const track of stream.getTracks())track.stop();
+    return true;
+  }catch(e){
+    const name=e&&e.name?e.name:"microphone error";
+    status.textContent="Microphone unavailable: "+name+". Check Chrome site permissions.";
+    return false;
   }
 }
 
-function startHandsRecognition(){
+function stopHandsRecognition(){
+  if(restartTimer){
+    clearTimeout(restartTimer);
+    restartTimer=null;
+  }
+
+  if(recognition){
+    const old=recognition;
+    recognition=null;
+    old.onend=null;
+    try{old.abort()}catch(_){
+      try{old.stop()}catch(__){}
+    }
+  }
+}
+
+function scheduleHandsRestart(delay=250){
+  if(!handsFree||document.hidden)return;
+
+  if(restartTimer)clearTimeout(restartTimer);
+
+  restartTimer=setTimeout(()=>{
+    restartTimer=null;
+    if(handsFree&&!document.hidden)startHandsRecognition();
+  },delay);
+}
+
+async function startHandsRecognition(){
+  if(!handsFree||document.hidden)return;
+
   const SR=recognitionCtor();
 
   if(!SR){
     handsFree=false;
     updateHandsButton();
-    status.textContent="Continuous speech recognition is not available in this browser.";
+    persistHandsFree();
+    status.textContent="Chrome speech recognition is unavailable in this browser.";
     return;
   }
 
   stopHandsRecognition();
 
+  recognitionHadAudio=false;
+  recognitionHadSpeech=false;
+
   const r=new SR();
   recognition=r;
   r.lang="en-US";
-  r.continuous=true;
+
+  // Chrome's true continuous mode can stay open without finalizing short
+  // wake-word utterances. One utterance per recognition session, followed by
+  // automatic restart, is much more reliable while still remaining hands-free.
+  r.continuous=false;
   r.interimResults=true;
+  r.maxAlternatives=3;
 
   r.onstart=()=>{
-    status.textContent="Hands-free · say "+wakeWord();
+    status.textContent="Hands-free · listening for "+wakeWord();
+  };
+
+  r.onaudiostart=()=>{
+    recognitionHadAudio=true;
+    status.textContent="Mic active · say "+wakeWord();
+  };
+
+  r.onspeechstart=()=>{
+    recognitionHadSpeech=true;
+    status.textContent="I hear you...";
+  };
+
+  r.onspeechend=()=>{
+    status.textContent="Processing what I heard...";
   };
 
   r.onresult=e=>{
+    let finalText="";
+    let interimText="";
+
     for(let i=e.resultIndex;i<e.results.length;i++){
-      if(!e.results[i].isFinal)continue;
-      handleTranscript(e.results[i][0].transcript);
+      const part=(e.results[i][0]&&e.results[i][0].transcript||"").trim();
+      if(!part)continue;
+
+      if(e.results[i].isFinal){
+        finalText+=(finalText?" ":"")+part;
+      }else{
+        interimText+=(interimText?" ":"")+part;
+      }
+    }
+
+    const live=(finalText||interimText).trim();
+
+    if(live){
+      const short=live.length>55?live.slice(0,52)+"...":live;
+      status.textContent='Heard: "'+short+'"';
+    }
+
+    // Arm immediately when the wake word appears in an interim result.
+    // This fixes the common Chrome case where a single "IRAS" is heard but
+    // takes too long to become a final result.
+    if(interimText){
+      const parsed=parseWake(interimText);
+      if(parsed.accepted&&!parsed.command){
+        conversationUntil=Date.now()+8000;
+        status.textContent="Wake word heard · keep talking...";
+      }
+    }
+
+    if(finalText){
+      handleTranscript(finalText);
     }
   };
 
   r.onerror=e=>{
-    if(e.error==="not-allowed"||e.error==="service-not-allowed"){
+    const code=e.error||"unknown";
+
+    if(code==="not-allowed"||code==="service-not-allowed"){
       handsFree=false;
       updateHandsButton();
       persistHandsFree();
-      status.textContent="Microphone permission is required for hands-free mode.";
+      status.textContent="Microphone permission is blocked. Allow Mic for this site in Chrome.";
+      return;
+    }
+
+    if(code==="audio-capture"){
+      handsFree=false;
+      updateHandsButton();
+      persistHandsFree();
+      status.textContent="Chrome cannot access a microphone. Check your Windows input device.";
+      return;
+    }
+
+    if(code==="network"){
+      status.textContent="Chrome speech service had a network error · retrying...";
+      return;
+    }
+
+    if(code==="no-speech"){
+      status.textContent=recognitionHadAudio
+        ?"No speech detected · listening again..."
+        :"Mic did not start · retrying...";
+      return;
+    }
+
+    if(code!=="aborted"){
+      status.textContent="Speech recognition error: "+code+" · retrying...";
     }
   };
 
   r.onend=()=>{
     if(recognition===r)recognition=null;
-    if(handsFree){
-      restartTimer=setTimeout(()=>{
-        if(handsFree)startHandsRecognition();
-      },350);
+
+    if(handsFree&&!document.hidden){
+      if(!recognitionHadAudio){
+        status.textContent="Mic session ended before audio started · restarting...";
+      }else if(!recognitionHadSpeech){
+        status.textContent="Listening...";
+      }
+
+      scheduleHandsRestart(250);
     }
   };
 
-  try{r.start()}
-  catch(e){status.textContent="Hands-free could not start: "+e.message}
+  try{
+    r.start();
+  }catch(e){
+    if(recognition===r)recognition=null;
+    status.textContent="Hands-free start failed · retrying...";
+    scheduleHandsRestart(600);
+  }
 }
 
 function persistHandsFree(){
@@ -517,16 +652,29 @@ function updateHandsButton(){
   handsButton.classList.toggle("active",handsFree);
 }
 
-function toggleHandsFree(){
-  handsFree=!handsFree;
+async function toggleHandsFree(){
+  if(!handsFree){
+    const allowed=await ensureMicrophoneAccess();
+
+    if(!allowed){
+      handsFree=false;
+      persistHandsFree();
+      updateHandsButton();
+      return;
+    }
+
+    handsFree=true;
+    persistHandsFree();
+    updateHandsButton();
+    startHandsRecognition();
+    return;
+  }
+
+  handsFree=false;
   persistHandsFree();
   updateHandsButton();
-
-  if(handsFree)startHandsRecognition();
-  else{
-    stopHandsRecognition();
-    status.textContent="Hands-free off";
-  }
+  stopHandsRecognition();
+  status.textContent="Hands-free off";
 }
 
 $("#settings").onclick=()=>cfg.showModal();
@@ -540,11 +688,13 @@ $("#send").onclick=send;
 msg.addEventListener("keydown",e=>{if(e.key==="Enter")send()});
 handsButton.onclick=toggleHandsFree;
 
-$("#mic").onclick=()=>{
+$("#mic").onclick=async()=>{
   if(handsFree){
     status.textContent="Hands-free is already listening.";
     return;
   }
+
+  if(!(await ensureMicrophoneAccess()))return;
 
   const SR=recognitionCtor();
 
@@ -556,23 +706,45 @@ $("#mic").onclick=()=>{
   resetVoice();
 
   if(manualRecognition){
-    try{manualRecognition.stop()}catch(_){}
+    try{manualRecognition.abort()}catch(_){}
   }
 
   const r=new SR();
   manualRecognition=r;
   r.lang="en-US";
-  r.interimResults=false;
+  r.continuous=false;
+  r.interimResults=true;
 
   r.onstart=()=>status.textContent="Listening...";
-  r.onresult=e=>sendText(e.results[0][0].transcript,{interrupt:true});
+  r.onaudiostart=()=>status.textContent="Mic active · speak now";
+  r.onspeechstart=()=>status.textContent="I hear you...";
+  r.onresult=e=>{
+    let finalText="";
+    for(let i=0;i<e.results.length;i++){
+      if(e.results[i].isFinal){
+        finalText+=(finalText?" ":"")+e.results[i][0].transcript;
+      }
+    }
+    if(finalText.trim())sendText(finalText.trim(),{interrupt:true});
+  };
   r.onerror=e=>status.textContent="Mic error: "+e.error;
-  r.onend=()=>{if(manualRecognition===r)manualRecognition=null};
+  r.onend=()=>{
+    if(manualRecognition===r)manualRecognition=null;
+    if(!sending)status.textContent="Ready";
+  };
 
   r.start();
 };
 
 updateHandsButton();
+
+document.addEventListener("visibilitychange",()=>{
+  if(document.hidden){
+    stopHandsRecognition();
+  }else if(handsFree){
+    scheduleHandsRestart(150);
+  }
+});
 
 if("serviceWorker" in navigator){
   navigator.serviceWorker.register("/app/sw.js").catch(()=>{});
@@ -581,7 +753,15 @@ if("serviceWorker" in navigator){
 if(!localStorage.getItem("iras-config")){
   cfg.showModal();
 }else if(handsFree){
-  setTimeout(startHandsRecognition,600);
+  setTimeout(async()=>{
+    const allowed=await ensureMicrophoneAccess();
+    if(allowed)startHandsRecognition();
+    else{
+      handsFree=false;
+      persistHandsFree();
+      updateHandsButton();
+    }
+  },600);
 }
 </script>
 </body>
