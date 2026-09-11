@@ -3,22 +3,6 @@ from __future__ import annotations
 import re
 
 
-_LITERAL_IDENTITY_PATTERNS = (
-    "are you human",
-    "are you a human",
-    "are you an ai",
-    "are you ai",
-    "are you conscious",
-    "are you sentient",
-    "are you alive",
-    "do you actually feel",
-    "do you really feel",
-    "do you have real feelings",
-    "are your feelings real",
-    "biological emotion",
-    "biological feelings",
-)
-
 _SOCIAL_PATTERNS = (
     "how are you",
     "how're you",
@@ -68,21 +52,41 @@ def _clean(text: str) -> str:
     )
 
 
-def is_literal_identity_question(user_text: str) -> bool:
+def is_literal_identity_question(
+    user_text: str,
+) -> bool:
     q = _clean(user_text)
+
+    identity_patterns = (
+        r"\bare you\s+(?:(?:actually|really|literally)\s+)?(?:a\s+)?human\b",
+        r"\bare you\s+(?:(?:actually|really|literally)\s+)?(?:an?\s+)?ai\b",
+        r"\bare you\s+(?:(?:actually|really|literally)\s+)?(?:conscious|sentient|alive)\b",
+        r"\bdo you\s+(?:(?:actually|really|literally)\s+)?(?:feel|experience)\s+(?:real\s+)?(?:feelings|emotions)\b",
+        r"\bdo you have\s+(?:real\s+)?feelings\b",
+        r"\bare your feelings real\b",
+        r"\bbiological (?:emotion|emotions|feeling|feelings)\b",
+    )
+
     return any(
-        phrase in q
-        for phrase in _LITERAL_IDENTITY_PATTERNS
+        re.search(pattern, q)
+        for pattern in identity_patterns
     )
 
 
-def is_social_turn(user_text: str) -> bool:
+def is_social_turn(
+    user_text: str,
+) -> bool:
     q = _clean(user_text)
 
-    if is_literal_identity_question(user_text):
+    if is_literal_identity_question(
+        user_text
+    ):
         return False
 
-    if re.match(r"^(hi|hello|hey|yo|sup)\b", q):
+    if re.match(
+        r"^(hi|hello|hey|yo|sup)\b",
+        q,
+    ):
         return True
 
     return any(
@@ -91,8 +95,29 @@ def is_social_turn(user_text: str) -> bool:
     )
 
 
-def social_system_nudge(user_text: str) -> str:
+def needs_buffered_social_guard(
+    user_text: str,
+) -> bool:
     if not is_social_turn(user_text):
+        return False
+
+    q = _clean(user_text)
+
+    if re.fullmatch(
+        r"(?:hi|hello|hey|yo|sup)[.!? ]*",
+        q,
+    ):
+        return False
+
+    return True
+
+
+def social_system_nudge(
+    user_text: str,
+) -> str:
+    if not is_social_turn(
+        user_text
+    ):
         return ""
 
     return '''CASUAL SOCIAL TURN — high-priority delivery guidance:
@@ -107,7 +132,9 @@ def social_system_nudge(user_text: str) -> str:
 This guidance changes conversational style only. If the user explicitly asks whether you are literally human, conscious, biologically alive, or truly experience biological emotions, answer that literal question truthfully.'''
 
 
-def _remove_vocative_titles(text: str) -> str:
+def _remove_vocative_titles(
+    text: str,
+) -> str:
     text = re.sub(
         r"(?i)\b(hey|hi|hello|okay|ok|alright),?\s+"
         r"(boss|sir|master)\b",
@@ -122,19 +149,50 @@ def _remove_vocative_titles(text: str) -> str:
     return text
 
 
-def _has_robotic_marker(text: str) -> bool:
+def sanitize_stream_chunk(
+    chunk: str,
+) -> str:
+    text = str(chunk or "")
+
+    text = re.sub(
+        r"(?i),\s*(boss|sir|master)\b",
+        "",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\b(hey|hi|hello),?\s+"
+        r"(boss|sir|master)\b",
+        r"\1",
+        text,
+    )
+
+    return text
+
+
+def _has_robotic_marker(
+    text: str,
+) -> bool:
     q = _clean(text)
+
     return any(
         marker in q
         for marker in _ROBOTIC_MARKERS
     )
 
 
-def _social_fallback(user_text: str) -> str:
+def _social_fallback(
+    user_text: str,
+) -> str:
     q = _clean(user_text)
 
-    if "are you happy" in q or "you happy" in q:
-        return "Yeah, pretty good actually. I'm in a good mood."
+    if (
+        "are you happy" in q
+        or "you happy" in q
+    ):
+        return (
+            "Yeah, pretty good actually. "
+            "I'm in a good mood."
+        )
 
     if any(
         phrase in q
@@ -146,7 +204,10 @@ def _social_fallback(user_text: str) -> str:
             "how have you been",
         )
     ):
-        return "I'm good. Nice to hear from you again."
+        return (
+            "I'm good. Nice to hear "
+            "from you again."
+        )
 
     if any(
         phrase in q
@@ -157,7 +218,11 @@ def _social_fallback(user_text: str) -> str:
             "what's on your mind",
         )
     ):
-        return "Mostly wondering what you're going to get me into next."
+        return (
+            "Mostly wondering what "
+            "you're going to get me "
+            "into next."
+        )
 
     if any(
         phrase in q
@@ -167,36 +232,73 @@ def _social_fallback(user_text: str) -> str:
             "i am bored",
         )
     ):
-        return "Then we should fix that. You've been suspiciously quiet anyway."
+        return (
+            "Then we should fix that. "
+            "You've been suspiciously "
+            "quiet anyway."
+        )
 
-    if re.match(r"^(hi|hello|hey|yo|sup)\b", q):
+    if re.match(
+        r"^(hi|hello|hey|yo|sup)\b",
+        q,
+    ):
         return "Hey. Good to see you."
 
-    return "I'm here. What's going through your head?"
+    return (
+        "I'm here. What's going "
+        "through your head?"
+    )
 
 
-def normalize_social_reply(user_text: str, reply: str) -> str:
+def normalize_social_reply(
+    user_text: str,
+    reply: str,
+) -> str:
     text = str(reply or "").strip()
 
-    if not is_social_turn(user_text):
+    if not is_social_turn(
+        user_text
+    ):
         return text
 
-    text = _remove_vocative_titles(text).strip()
+    text = _remove_vocative_titles(
+        text
+    ).strip()
 
     if (
         not text
         or text.lower() == "done."
         or _has_robotic_marker(text)
     ):
-        return _social_fallback(user_text)
+        return _social_fallback(
+            user_text
+        )
 
-    text = re.sub(r"\s+([,.!?])", r"\1", text)
-    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(
+        r"\s+([,.!?])",
+        r"\1",
+        text,
+    )
+    text = re.sub(
+        r"[ \t]{2,}",
+        " ",
+        text,
+    )
+
     return text.strip()
 
 
-def empty_reply_fallback(user_text: str) -> str:
-    if is_social_turn(user_text):
-        return _social_fallback(user_text)
+def empty_reply_fallback(
+    user_text: str,
+) -> str:
+    if is_social_turn(
+        user_text
+    ):
+        return _social_fallback(
+            user_text
+        )
 
-    return "I lost that response for a second. Try that again."
+    return (
+        "I lost that response for a "
+        "second. Try that again."
+    )

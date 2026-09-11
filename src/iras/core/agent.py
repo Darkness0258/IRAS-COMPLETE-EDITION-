@@ -10,7 +10,9 @@ from iras.persona import (
 from iras.social_style import (
     empty_reply_fallback,
     is_social_turn,
+    needs_buffered_social_guard,
     normalize_social_reply,
+    sanitize_stream_chunk,
     social_system_nudge,
 )
 
@@ -541,33 +543,43 @@ class IRASAgent:
             time.perf_counter()
         )
 
-        if is_social_turn(
+        if needs_buffered_social_guard(
             user_text
         ):
-            reply = self.provider.complete(
-                messages,
-                [],
-            )
+            raw_pieces = []
 
-            raw_final = (
-                reply.text
-                or empty_reply_fallback(
-                    user_text
+            for text_chunk in (
+                self.provider.stream_text(
+                    messages,
+                    [],
                 )
-            )
+            ):
+                if not first_token_ms:
+                    first_token_ms = int(
+                        (
+                            time.perf_counter()
+                            - started
+                        )
+                        * 1000
+                    )
+
+                raw_pieces.append(
+                    text_chunk
+                )
+
+            raw_final = "".join(
+                raw_pieces
+            ).strip()
 
             final = normalize_social_reply(
                 user_text,
                 raw_final,
             )
 
-            first_token_ms = int(
-                (
-                    time.perf_counter()
-                    - started
+            if not final:
+                final = empty_reply_fallback(
+                    user_text
                 )
-                * 1000
-            )
 
             pieces.append(final)
             yield final
@@ -588,6 +600,16 @@ class IRASAgent:
                         * 1000
                     )
 
+                if is_social_turn(
+                    user_text
+                ):
+                    text_chunk = sanitize_stream_chunk(
+                        text_chunk
+                    )
+
+                if not text_chunk:
+                    continue
+
                 pieces.append(text_chunk)
                 yield text_chunk
 
@@ -596,17 +618,24 @@ class IRASAgent:
             ).strip()
 
             if not final:
-                retry = self.provider.complete(
-                    messages,
-                    [],
-                )
-
-                final = (
-                    retry.text
-                    or empty_reply_fallback(
+                if is_social_turn(
+                    user_text
+                ):
+                    final = empty_reply_fallback(
                         user_text
                     )
-                )
+                else:
+                    retry = self.provider.complete(
+                        messages,
+                        [],
+                    )
+
+                    final = (
+                        retry.text
+                        or empty_reply_fallback(
+                            user_text
+                        )
+                    )
 
                 if not first_token_ms:
                     first_token_ms = int(
