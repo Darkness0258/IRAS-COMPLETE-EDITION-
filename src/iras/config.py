@@ -60,6 +60,16 @@ class Settings:
             default_base = 'https://openrouter.ai/api/v1'
             default_model = 'openrouter/free'
             api_key = os.getenv('OPENROUTER_API_KEY', os.getenv('IRAS_API_KEY', ''))
+        elif provider == 'multi':
+            default_base = 'https://openrouter.ai/api/v1'
+            default_model = os.getenv(
+                'IRAS_OPENROUTER_MODEL',
+                'nex-agi/nex-n2.5-mini:free',
+            )
+            api_key = os.getenv(
+                'OPENROUTER_API_KEY',
+                os.getenv('IRAS_API_KEY', ''),
+            )
         else:
             default_base = 'https://openrouter.ai/api/v1'
             default_model = 'openrouter/free'

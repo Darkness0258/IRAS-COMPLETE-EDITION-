@@ -191,7 +191,37 @@ def health():
         "provider": (
             settings.provider
         ),
-        "model": settings.model,
+        "model": (
+            getattr(
+                runtime.agent.provider,
+                "last_model",
+                None,
+            )
+            or settings.model
+        ),
+        "active_ai_provider": getattr(
+            runtime.agent.provider,
+            "last_provider",
+            settings.provider,
+        ),
+        "ai_providers": (
+            runtime.agent.provider.status()
+            if callable(
+                getattr(
+                    runtime.agent.provider,
+                    "status",
+                    None,
+                )
+            )
+            else [
+                {
+                    "name": settings.provider,
+                    "model": settings.model,
+                    "ready": True,
+                    "cooldown_seconds": 0,
+                }
+            ]
+        ),
         "database": (
             "postgres"
             if settings.database_url
@@ -300,12 +330,16 @@ def chat(
             },
         )
 
-        if "LLM HTTP 429" in str(exc):
+        if (
+            "LLM HTTP 429" in str(exc)
+            or "ALL_PROVIDERS_UNAVAILABLE" in str(exc)
+        ):
             raise HTTPException(
                 status_code=429,
                 detail=(
-                    "The free AI models are rate-limited right now. "
-                    "Try again in a little while."
+                    "All configured AI providers are temporarily "
+                    "unavailable or rate-limited. IRAS will automatically "
+                    "try them again on your next message."
                 ),
             ) from exc
 
@@ -508,10 +542,14 @@ def chat_stream(
 
             error_text = str(exc)
 
-            if "LLM HTTP 429" in error_text:
+            if (
+                "LLM HTTP 429" in error_text
+                or "ALL_PROVIDERS_UNAVAILABLE" in error_text
+            ):
                 user_message = (
-                    "The free AI models are rate-limited right now. "
-                    "Try again in a little while."
+                    "All configured AI providers are temporarily "
+                    "unavailable or rate-limited. IRAS will automatically "
+                    "try them again on your next message."
                 )
                 error_code = "ai_rate_limited"
             else:

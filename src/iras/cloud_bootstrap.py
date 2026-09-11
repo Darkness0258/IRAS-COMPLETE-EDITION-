@@ -22,6 +22,9 @@ from iras.personality import (
 from iras.providers.openrouter import (
     OpenRouterProvider,
 )
+from iras.providers.provider_factory import (
+    build_multi_provider,
+)
 from iras.security.audit import (
     AuditLogger,
 )
@@ -107,11 +110,14 @@ def build_cloud_runtime(
         or Settings.load()
     )
 
-    if s.provider != "openrouter":
+    if s.provider not in {
+        "openrouter",
+        "multi",
+    }:
         raise ValueError(
-            "The hosted IRAS server "
-            "currently requires "
-            "IRAS_PROVIDER=openrouter."
+            "The hosted IRAS server requires "
+            "IRAS_PROVIDER=openrouter or "
+            "IRAS_PROVIDER=multi."
         )
 
     audit = AuditLogger(
@@ -169,13 +175,18 @@ def build_cloud_runtime(
     ]:
         registry.register(tool)
 
-    provider = OpenRouterProvider(
-        api_key=s.api_key,
-        model=s.model,
-        timeout=s.request_timeout,
-        base_url=s.base_url,
-        app_name=s.system_name,
-    )
+    if s.provider == "multi":
+        provider = build_multi_provider(
+            s
+        )
+    else:
+        provider = OpenRouterProvider(
+            api_key=s.api_key,
+            model=s.model,
+            timeout=s.request_timeout,
+            base_url=s.base_url,
+            app_name=s.system_name,
+        )
 
     agent = IRASAgent(
         provider,
