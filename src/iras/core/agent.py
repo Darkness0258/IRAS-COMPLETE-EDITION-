@@ -7,6 +7,12 @@ from iras.persona import (
     SYSTEM_PROMPT,
     build_system_prompt,
 )
+from iras.social_style import (
+    empty_reply_fallback,
+    is_social_turn,
+    normalize_social_reply,
+    social_system_nudge,
+)
 
 
 class IRASAgent:
@@ -79,7 +85,10 @@ class IRASAgent:
             ),
         )
 
-    def _base_messages(self):
+    def _base_messages(
+        self,
+        user_text: str = "",
+    ):
         msgs = [
             {
                 "role": "system",
@@ -126,6 +135,18 @@ class IRASAgent:
                             ),
                         )
                     ),
+                }
+            )
+
+        social_nudge = social_system_nudge(
+            user_text
+        )
+
+        if social_nudge:
+            msgs.append(
+                {
+                    "role": "system",
+                    "content": social_nudge,
                 }
             )
 
@@ -290,7 +311,9 @@ class IRASAgent:
             )
 
         messages = (
-            self._base_messages()
+            self._base_messages(
+                user_text
+            )
         )
 
         tool_names = (
@@ -348,7 +371,13 @@ class IRASAgent:
             if not reply.tool_calls:
                 final = (
                     reply.text
-                    or "Done."
+                    or empty_reply_fallback(
+                        user_text
+                    )
+                )
+                final = normalize_social_reply(
+                    user_text,
+                    final,
                 )
                 break
 
@@ -501,7 +530,9 @@ class IRASAgent:
             )
 
         messages = (
-            self._base_messages()
+            self._base_messages(
+                user_text
+            )
         )
 
         pieces = []
@@ -510,23 +541,84 @@ class IRASAgent:
             time.perf_counter()
         )
 
-        for text in (
-            self.provider.stream_text(
+        if is_social_turn(
+            user_text
+        ):
+            reply = self.provider.complete(
                 messages,
                 [],
             )
-        ):
-            if not first_token_ms:
-                first_token_ms = int(
-                    (
-                        time.perf_counter()
-                        - started
+
+            raw_final = (
+                reply.text
+                or empty_reply_fallback(
+                    user_text
+                )
+            )
+
+            final = normalize_social_reply(
+                user_text,
+                raw_final,
+            )
+
+            first_token_ms = int(
+                (
+                    time.perf_counter()
+                    - started
+                )
+                * 1000
+            )
+
+            pieces.append(final)
+            yield final
+
+        else:
+            for text_chunk in (
+                self.provider.stream_text(
+                    messages,
+                    [],
+                )
+            ):
+                if not first_token_ms:
+                    first_token_ms = int(
+                        (
+                            time.perf_counter()
+                            - started
+                        )
+                        * 1000
                     )
-                    * 1000
+
+                pieces.append(text_chunk)
+                yield text_chunk
+
+            final = "".join(
+                pieces
+            ).strip()
+
+            if not final:
+                retry = self.provider.complete(
+                    messages,
+                    [],
                 )
 
-            pieces.append(text)
-            yield text
+                final = (
+                    retry.text
+                    or empty_reply_fallback(
+                        user_text
+                    )
+                )
+
+                if not first_token_ms:
+                    first_token_ms = int(
+                        (
+                            time.perf_counter()
+                            - started
+                        )
+                        * 1000
+                    )
+
+                pieces.append(final)
+                yield final
 
         model_ms = int(
             (
@@ -540,8 +632,18 @@ class IRASAgent:
             pieces
         ).strip()
 
+        if is_social_turn(
+            user_text
+        ):
+            final = normalize_social_reply(
+                user_text,
+                final,
+            )
+
         if not final:
-            final = "Done."
+            final = empty_reply_fallback(
+                user_text
+            )
             yield final
 
         self.memory.add_message(
@@ -577,6 +679,9 @@ class IRASAgent:
                 len(messages)
             ),
             "streamed": True,
+            "social_guard": is_social_turn(
+                user_text
+            ),
             "model": getattr(
                 self.provider,
                 "last_model",
