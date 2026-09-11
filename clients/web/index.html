@@ -34,43 +34,157 @@
   </div>
   <div class="status" id="status">Ready</div>
 </div>
+
 <dialog id="cfg">
   <h3>IRAS connection</h3>
   <label>Server URL</label>
-  <input id="server" placeholder="https://your-app.koyeb.app">
+  <input id="server" placeholder="https://iras-cloud.onrender.com">
   <label>IRAS access token</label>
   <input id="token" type="password" placeholder="Your IRAS_API_TOKEN">
   <div class="row"><button id="cancelCfg">Cancel</button><button class="primary" id="saveCfg">Save</button></div>
 </dialog>
+
 <script>
 const $=s=>document.querySelector(s), chat=$("#chat"), msg=$("#msg"), status=$("#status");
 const cfg=$("#cfg"), server=$("#server"), token=$("#token");
+let currentAudio=null, currentAudioUrl=null;
+
 const local=JSON.parse(localStorage.getItem("iras-config")||"{}");
-server.value=local.server||location.origin; token.value=local.token||"";
-function add(who,text){const d=document.createElement("div");d.className="m "+(who==="You"?"you":"iras");d.textContent=text;chat.appendChild(d);chat.scrollTop=chat.scrollHeight}
-function config(){return JSON.parse(localStorage.getItem("iras-config")||"{}")}
-function save(){localStorage.setItem("iras-config",JSON.stringify({server:server.value.trim().replace(/\/$/,""),token:token.value.trim()}));cfg.close()}
-$("#settings").onclick=()=>cfg.showModal();$("#cancelCfg").onclick=()=>cfg.close();$("#saveCfg").onclick=save;
-async function send(){
- const text=msg.value.trim(); if(!text)return; const c=config();
- if(!c.token){cfg.showModal();return}
- msg.value=""; add("You",text); status.textContent="IRAS is thinking...";
- try{
-  const r=await fetch((c.server||location.origin)+"/v1/chat",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+c.token,"X-Device-ID":"web"},body:JSON.stringify({message:text,device_id:"web"})});
-  if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
-  const data=await r.json(); add("IRAS",data.response); status.textContent="Ready";
-  if("speechSynthesis"in window){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(data.response.replace(/https?:\/\/\S+/g,""));u.rate=.97;u.pitch=1.02;speechSynthesis.speak(u)}
- }catch(e){add("IRAS","Connection error: "+e.message);status.textContent="Offline"}
+server.value=local.server||location.origin;
+token.value=local.token||"";
+
+function add(who,text){
+  const d=document.createElement("div");
+  d.className="m "+(who==="You"?"you":"iras");
+  d.textContent=text;
+  chat.appendChild(d);
+  chat.scrollTop=chat.scrollHeight;
 }
-$("#send").onclick=send;msg.addEventListener("keydown",e=>{if(e.key==="Enter")send()});
+
+function config(){return JSON.parse(localStorage.getItem("iras-config")||"{}")}
+
+function save(){
+  localStorage.setItem("iras-config",JSON.stringify({
+    server:server.value.trim().replace(/\/$/,""),
+    token:token.value.trim()
+  }));
+  cfg.close();
+}
+
+function stopVoice(){
+  if(currentAudio){currentAudio.pause();currentAudio.currentTime=0;currentAudio=null}
+  if(currentAudioUrl){URL.revokeObjectURL(currentAudioUrl);currentAudioUrl=null}
+  if("speechSynthesis" in window) speechSynthesis.cancel();
+}
+
+async function speakWithIRASVoice(text){
+  const c=config();
+  const base=c.server||location.origin;
+  stopVoice();
+
+  try{
+    status.textContent="IRAS is speaking...";
+
+    const r=await fetch(base+"/v1/tts",{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "Authorization":"Bearer "+c.token,
+        "X-Device-ID":"web"
+      },
+      body:JSON.stringify({text})
+    });
+
+    if(!r.ok) throw new Error((await r.text())||("HTTP "+r.status));
+
+    const blob=await r.blob();
+    currentAudioUrl=URL.createObjectURL(blob);
+    currentAudio=new Audio(currentAudioUrl);
+
+    currentAudio.onended=()=>{
+      if(currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
+      currentAudioUrl=null;
+      currentAudio=null;
+      status.textContent="Ready";
+    };
+
+    currentAudio.onerror=()=>status.textContent="Voice playback failed";
+    await currentAudio.play();
+
+  }catch(e){
+    console.error("IRAS voice error:",e);
+    status.textContent="Ready";
+  }
+}
+
+$("#settings").onclick=()=>cfg.showModal();
+$("#cancelCfg").onclick=()=>cfg.close();
+$("#saveCfg").onclick=save;
+
+async function send(){
+  const text=msg.value.trim();
+  if(!text)return;
+
+  const c=config();
+  if(!c.token){cfg.showModal();return}
+
+  msg.value="";
+  add("You",text);
+  status.textContent="IRAS is thinking...";
+
+  try{
+    const base=c.server||location.origin;
+
+    const r=await fetch(base+"/v1/chat",{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "Authorization":"Bearer "+c.token,
+        "X-Device-ID":"web"
+      },
+      body:JSON.stringify({message:text,device_id:"web"})
+    });
+
+    if(!r.ok) throw new Error((await r.text())||("HTTP "+r.status));
+
+    const data=await r.json();
+    add("IRAS",data.response);
+    await speakWithIRASVoice(data.response);
+
+  }catch(e){
+    add("IRAS","Connection error: "+e.message);
+    status.textContent="Offline";
+  }
+}
+
+$("#send").onclick=send;
+msg.addEventListener("keydown",e=>{if(e.key==="Enter")send()});
+
 $("#mic").onclick=()=>{
- const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
- if(!SR){status.textContent="Speech recognition is not available in this browser.";return}
- const r=new SR();r.lang="en-US";r.interimResults=false;r.onstart=()=>status.textContent="Listening...";
- r.onresult=e=>{msg.value=e.results[0][0].transcript;status.textContent="Heard you.";send()};
- r.onerror=e=>status.textContent="Mic error: "+e.error;r.start();
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){status.textContent="Speech recognition is not available in this browser.";return}
+
+  const r=new SR();
+  r.lang="en-US";
+  r.interimResults=false;
+
+  r.onstart=()=>{
+    stopVoice();
+    status.textContent="Listening...";
+  };
+
+  r.onresult=e=>{
+    msg.value=e.results[0][0].transcript;
+    status.textContent="Heard you.";
+    send();
+  };
+
+  r.onerror=e=>status.textContent="Mic error: "+e.error;
+  r.start();
 };
-if("serviceWorker"in navigator)navigator.serviceWorker.register("/app/sw.js").catch(()=>{});
-if(!localStorage.getItem("iras-config"))cfg.showModal();
+
+if("serviceWorker" in navigator) navigator.serviceWorker.register("/app/sw.js").catch(()=>{});
+if(!localStorage.getItem("iras-config")) cfg.showModal();
 </script>
-</body></html>
+</body>
+</html>
