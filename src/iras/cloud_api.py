@@ -528,18 +528,25 @@ else:
 
 @app.on_event("shutdown")
 def shutdown_event():
-    provider = (
-        runtime.agent.provider
-    )
+    provider = runtime.agent.provider
 
-    close = getattr(
+    provider_close = getattr(
         provider,
         "close",
         None,
     )
 
-    if callable(close):
-        close()
+    if callable(provider_close):
+        provider_close()
+
+    memory_close = getattr(
+        runtime.memory,
+        "close",
+        None,
+    )
+
+    if callable(memory_close):
+        memory_close()
 
 
 def main():
@@ -550,8 +557,12 @@ def main():
         )
     )
 
+    # Run the already-created FastAPI app object directly.
+    # Using "iras.cloud_api:app" here causes this module to be imported
+    # a second time when launched with `python -m iras.cloud_api`.
+    # That duplicated the cloud runtime and persistent Supabase connection.
     uvicorn.run(
-        "iras.cloud_api:app",
+        app,
         host="0.0.0.0",
         port=port,
         proxy_headers=True,
