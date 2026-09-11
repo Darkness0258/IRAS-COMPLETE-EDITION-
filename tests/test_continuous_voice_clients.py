@@ -15,7 +15,9 @@ def test_web_has_continuous_wake_word_mode():
     )
 
     assert "Hands-free On" in text
-    assert "r.continuous=true" in text
+    assert "r.continuous=false" in text
+    assert "ensureMicrophoneAccess" in text
+    assert "scheduleHandsRestart" in text
     assert "conversationUntil" in text
     assert "probableEcho" in text
 
