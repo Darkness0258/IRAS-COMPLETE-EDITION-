@@ -10,6 +10,7 @@ from tkinter import messagebox, simpledialog
 
 from iras.config import Settings
 from iras.remote_client import IRASRemoteClient
+from iras.voice.stt import Listener
 from iras.voice.tts import Speaker
 
 
@@ -63,22 +64,25 @@ class IRASRemoteDesktop:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("IRAS")
-        self.root.geometry("820x650")
-        self.root.minsize(600, 440)
+        self.root.geometry("860x650")
+        self.root.minsize(640, 440)
 
         self.config = load_client_config()
         self.client = None
         self.outbox = queue.Queue()
+        self.listening = False
 
-        voice_settings = Settings.load()
+        settings = Settings.load()
 
-        # Important: Speaker expects provider/voice/profile values,
-        # not the Settings object itself. Passing the Settings object
-        # caused the old remote EXE to fall back to Windows SAPI.
         self.speaker = Speaker(
-            voice_settings.tts_provider,
-            voice_settings.voice,
-            voice_settings.voice_profile,
+            settings.tts_provider,
+            settings.voice,
+            settings.voice_profile,
+        )
+
+        self.listener = Listener(
+            settings.whisper_model,
+            settings.listen_seconds,
         )
 
         self.voice_on = True
@@ -117,11 +121,22 @@ class IRASRemoteDesktop:
             lambda _e: self.send(),
         )
 
+        self.mic_button = tk.Button(
+            row,
+            text="Mic",
+            command=self.listen,
+            width=8,
+        )
+        self.mic_button.pack(
+            side="left",
+            padx=(6, 0),
+        )
+
         tk.Button(
             row,
             text="Send",
             command=self.send,
-            width=9,
+            width=8,
         ).pack(
             side="left",
             padx=(6, 0),
@@ -131,7 +146,7 @@ class IRASRemoteDesktop:
             row,
             text="Voice",
             command=self.toggle_voice,
-            width=9,
+            width=8,
         ).pack(
             side="left",
             padx=(6, 0),
@@ -141,7 +156,7 @@ class IRASRemoteDesktop:
             row,
             text="Server",
             command=self.configure,
-            width=9,
+            width=8,
         ).pack(
             side="left",
             padx=(6, 0),
@@ -185,9 +200,7 @@ class IRASRemoteDesktop:
         )
 
     def ensure_config(self):
-        if (
-            not self.config.get("token")
-        ):
+        if not self.config.get("token"):
             self.configure()
 
         self.rebuild_client()
@@ -252,7 +265,6 @@ class IRASRemoteDesktop:
 
             self.status.set(
                 "Ready · "
-                f"{self.config['server_url']} · "
                 f"{self.speaker.profile.label}"
             )
         else:
@@ -270,6 +282,50 @@ class IRASRemoteDesktop:
             "· "
             f"{self.speaker.profile.label}"
         )
+
+    def listen(self):
+        if self.listening:
+            return
+
+        if not self.client:
+            messagebox.showerror(
+                "IRAS",
+                "Configure the server first.",
+            )
+            return
+
+        self.listening = True
+        self.mic_button.configure(
+            state="disabled",
+            text="Listening",
+        )
+        self.status.set(
+            "Listening..."
+        )
+
+        threading.Thread(
+            target=self._listen_worker,
+            daemon=True,
+        ).start()
+
+    def _listen_worker(self):
+        try:
+            text = self.listener.listen_once()
+
+            if not text:
+                self.outbox.put(
+                    ("mic_empty", "")
+                )
+                return
+
+            self.outbox.put(
+                ("heard", text)
+            )
+
+        except Exception as exc:
+            self.outbox.put(
+                ("mic_error", str(exc))
+            )
 
     def send(self):
         text = self.entry.get().strip()
@@ -342,6 +398,56 @@ class IRASRemoteDesktop:
                             daemon=True,
                         ).start()
 
+                elif kind == "heard":
+                    self.listening = False
+                    self.mic_button.configure(
+                        state="normal",
+                        text="Mic",
+                    )
+
+                    self.entry.delete(
+                        0,
+                        "end",
+                    )
+                    self.entry.insert(
+                        0,
+                        value,
+                    )
+
+                    self.status.set(
+                        f"Heard: {value}"
+                    )
+
+                    # Same behavior as Android: transcribe and send.
+                    self.send()
+
+                elif kind == "mic_empty":
+                    self.listening = False
+                    self.mic_button.configure(
+                        state="normal",
+                        text="Mic",
+                    )
+
+                    self.status.set(
+                        "I didn't catch that."
+                    )
+
+                elif kind == "mic_error":
+                    self.listening = False
+                    self.mic_button.configure(
+                        state="normal",
+                        text="Mic",
+                    )
+
+                    self.status.set(
+                        "Microphone unavailable"
+                    )
+
+                    messagebox.showerror(
+                        "IRAS Microphone",
+                        value,
+                    )
+
                 else:
                     self.add(
                         "Error",
@@ -362,8 +468,11 @@ class IRASRemoteDesktop:
 
     def _speak(self, text):
         try:
-            self.status.set(
-                "IRAS is speaking..."
+            self.root.after(
+                0,
+                lambda: self.status.set(
+                    "IRAS is speaking..."
+                ),
             )
 
             backend = (
@@ -380,7 +489,7 @@ class IRASRemoteDesktop:
                 ),
             )
 
-        except Exception as exc:
+        except Exception:
             self.root.after(
                 0,
                 lambda: self.status.set(
