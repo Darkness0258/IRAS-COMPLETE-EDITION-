@@ -2,26 +2,110 @@ from __future__ import annotations
 
 import os
 
-from iras.providers.openai_compatible import OpenAICompatibleProvider
+from iras.providers.openai_compatible import (
+    OpenAICompatibleProvider,
+)
 
 
-class OpenRouterProvider(OpenAICompatibleProvider):
-    """OpenRouter provider with automatic fallback for transient model failures."""
+class _OpenRouterModelProvider(
+    OpenAICompatibleProvider
+):
+    """
+    Per-model OpenRouter connection.
+
+    For ordinary non-tool conversation we prioritize lowest time-to-first-token.
+    Tool requests intentionally keep OpenRouter's default tool-aware routing.
+    """
+
+    def __init__(
+        self,
+        *args,
+        provider_sort: str = "latency",
+        **kwargs,
+    ):
+        super().__init__(
+            *args,
+            **kwargs,
+        )
+        self.provider_sort = (
+            provider_sort.strip()
+        )
+
+    def _payload(
+        self,
+        messages,
+        tools,
+    ):
+        payload = super()._payload(
+            messages,
+            tools,
+        )
+
+        # OpenRouter Auto Exacto already optimizes provider selection for
+        # tool-calling requests. Explicit latency sorting is most useful for
+        # normal conversation where TTFT matters most.
+        if (
+            self.provider_sort
+            and not tools
+        ):
+            payload["provider"] = {
+                "sort": self.provider_sort,
+                "allow_fallbacks": True,
+            }
+
+        return payload
+
+
+class OpenRouterProvider(
+    OpenAICompatibleProvider
+):
+    """
+    OpenRouter provider with:
+    - automatic model fallback
+    - persistent HTTP connections
+    - latency-prioritized routing for normal chat
+    """
 
     def __init__(
         self,
         api_key: str,
         model: str,
         timeout: float = 90,
-        base_url: str = "https://openrouter.ai/api/v1",
-        app_url: str = "https://github.com/Darkness0258/IRAS-COMPLETE-EDITION-",
+        base_url: str = (
+            "https://openrouter.ai/api/v1"
+        ),
+        app_url: str = (
+            "https://github.com/"
+            "Darkness0258/"
+            "IRAS-COMPLETE-EDITION-"
+        ),
         app_name: str = "IRAS",
         fallback_models: list[str] | None = None,
     ):
         if not api_key:
             raise ValueError(
-                "OpenRouter API key is missing. Set OPENROUTER_API_KEY in your .env file."
+                "OpenRouter API key is missing. "
+                "Set OPENROUTER_API_KEY in "
+                "your .env file."
             )
+
+        max_tokens_raw = os.getenv(
+            "IRAS_MAX_OUTPUT_TOKENS",
+            "360",
+        ).strip()
+
+        try:
+            max_tokens = max(
+                64,
+                int(max_tokens_raw),
+            )
+        except ValueError:
+            max_tokens = 360
+
+        self.provider_sort = os.getenv(
+            "IRAS_PROVIDER_SORT",
+            "latency",
+        ).strip()
 
         super().__init__(
             base_url=base_url,
@@ -32,6 +116,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
                 "HTTP-Referer": app_url,
                 "X-Title": app_name,
             },
+            max_tokens=max_tokens,
         )
 
         if fallback_models is None:
@@ -39,6 +124,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
                 "IRAS_FALLBACK_MODELS",
                 "openrouter/free",
             )
+
             fallback_models = [
                 item.strip()
                 for item in raw.split(",")
@@ -46,17 +132,29 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             ]
 
         seen = {model}
-        self.fallback_models: list[str] = []
+        self.fallback_models = []
 
         for candidate in fallback_models:
             if candidate not in seen:
                 seen.add(candidate)
-                self.fallback_models.append(candidate)
+                self.fallback_models.append(
+                    candidate
+                )
 
         self.last_model = model
 
+        # Cache one provider object per model. Each object owns a persistent
+        # httpx.Client, so normal turns and fallback turns both reuse TLS
+        # connections instead of reconnecting every time.
+        self._model_providers: dict[
+            str,
+            _OpenRouterModelProvider,
+        ] = {}
+
     @staticmethod
-    def _retryable_error(exc: RuntimeError) -> bool:
+    def _retryable_error(
+        exc: RuntimeError,
+    ) -> bool:
         text = str(exc)
 
         if "LLM HTTP 401" in text:
@@ -84,37 +182,76 @@ class OpenRouterProvider(OpenAICompatibleProvider):
     def _provider_for_model(
         self,
         model: str,
-    ) -> OpenAICompatibleProvider:
-        return OpenAICompatibleProvider(
-            base_url=self.base_url,
-            api_key=self.api_key,
-            model=model,
-            timeout=self.timeout,
-            extra_headers=self.extra_headers,
+    ) -> _OpenRouterModelProvider:
+        provider = (
+            self._model_providers
+            .get(model)
         )
 
-    def complete(self, messages, tools):
+        if provider is None:
+            provider = (
+                _OpenRouterModelProvider(
+                    base_url=self.base_url,
+                    api_key=self.api_key,
+                    model=model,
+                    timeout=self.timeout,
+                    extra_headers=self.extra_headers,
+                    max_tokens=self.max_tokens,
+                    provider_sort=(
+                        self.provider_sort
+                    ),
+                )
+            )
+
+            self._model_providers[
+                model
+            ] = provider
+
+        return provider
+
+    def complete(
+        self,
+        messages,
+        tools,
+    ):
         models = [
             self.model,
             *self.fallback_models,
         ]
 
-        last_error: RuntimeError | None = None
+        last_error = None
 
-        for index, model in enumerate(models):
+        for index, model in enumerate(
+            models
+        ):
+            provider = (
+                self._provider_for_model(
+                    model
+                )
+            )
+
             try:
-                reply = (
-                    self
-                    ._provider_for_model(model)
-                    .complete(messages, tools)
+                reply = provider.complete(
+                    messages,
+                    tools,
                 )
 
-                self.last_model = model
+                self.last_model = (
+                    provider
+                    .last_response_model
+                    or model
+                )
+
+                self.last_request_ms = (
+                    provider
+                    .last_request_ms
+                )
 
                 if index > 0:
                     print(
                         "[IRAS MODEL FALLBACK] "
-                        f"recovered with {model}",
+                        "recovered with "
+                        f"{self.last_model}",
                         flush=True,
                     )
 
@@ -122,19 +259,28 @@ class OpenRouterProvider(OpenAICompatibleProvider):
 
             except RuntimeError as exc:
                 last_error = exc
+                self.last_request_ms = (
+                    provider
+                    .last_request_ms
+                )
 
                 if (
-                    index >= len(models) - 1
-                    or not self._retryable_error(exc)
+                    index
+                    >= len(models) - 1
+                    or not self
+                    ._retryable_error(exc)
                 ):
                     raise
 
-                next_model = models[index + 1]
+                next_model = (
+                    models[index + 1]
+                )
 
                 print(
                     "[IRAS MODEL FALLBACK] "
-                    f"{model} failed: {exc} "
-                    f"-> trying {next_model}",
+                    f"{model} failed: "
+                    f"{exc} -> trying "
+                    f"{next_model}",
                     flush=True,
                 )
 
@@ -142,5 +288,15 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             raise last_error
 
         raise RuntimeError(
-            "No OpenRouter model was available."
+            "No OpenRouter model "
+            "was available."
         )
+
+    def close(self) -> None:
+        for provider in (
+            self._model_providers
+            .values()
+        ):
+            provider.close()
+
+        super().close()
