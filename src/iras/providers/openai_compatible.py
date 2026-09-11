@@ -104,9 +104,16 @@ class OpenAICompatibleProvider(Provider):
             )
 
         if status_code == 402:
+            clean = (
+                detail.strip()
+                or (
+                    "Provider requires credits, billing, "
+                    "or additional quota."
+                )
+            )
             return RuntimeError(
-                "LLM HTTP 402: OpenRouter account "
-                "has insufficient credits for this model."
+                "LLM HTTP 402: "
+                + clean[:900]
             )
 
         if status_code == 429:

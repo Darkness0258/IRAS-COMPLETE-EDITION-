@@ -121,6 +121,8 @@ class MultiProvider:
                 "model": getattr(slot.provider, "model", ""),
                 "ready": slot.cooldown_until <= now,
                 "cooldown_seconds": max(0, int(slot.cooldown_until - now)),
+                "failures": slot.failures,
+                "last_error": slot.last_error,
             }
             for slot in self.slots
         ]

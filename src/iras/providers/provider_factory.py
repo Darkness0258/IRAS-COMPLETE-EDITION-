@@ -4,6 +4,7 @@ import os
 
 from iras.providers.multi_provider import MultiProvider, ProviderSlot
 from iras.providers.openai_compatible import OpenAICompatibleProvider
+from iras.providers.gemini_compatible import GeminiOpenAICompatibleProvider
 from iras.providers.openrouter import OpenRouterProvider
 
 
@@ -65,7 +66,7 @@ def build_multi_provider(settings) -> MultiProvider:
 
     gemini_key = _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")
     if gemini_key:
-        providers["gemini"] = _openai_provider(
+        providers["gemini"] = GeminiOpenAICompatibleProvider(
             api_key=gemini_key,
             base_url=_env(
                 "GEMINI_BASE_URL",
@@ -73,6 +74,7 @@ def build_multi_provider(settings) -> MultiProvider:
             ),
             model=_env("GEMINI_MODEL", "gemini-3.8-flash"),
             timeout=settings.request_timeout,
+            max_tokens=_max_tokens(),
         )
 
     openrouter_key = _env("OPENROUTER_API_KEY") or (
