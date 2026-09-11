@@ -65,7 +65,7 @@ def test_fallback_after_rate_limit(monkeypatch):
 
     result = p.complete([], [])
 
-    assert result.content == "ok"
+    assert result.text == "ok"
     assert attempted == [
         "primary/free",
         "fallback/free",
