@@ -112,23 +112,11 @@ def chat(
             response = runtime.agent.handle(body.message)
 
     except Exception as exc:
-        print(
-            f"[IRAS CHAT ERROR] {type(exc).__name__}: {exc}",
-            flush=True,
-        )
-
         runtime.audit.record(
             "cloud_chat_error",
-            {
-                "request_id": request_id,
-                "error": repr(exc),
-            },
+            {"request_id": request_id, "error": repr(exc)},
         )
-
-        raise HTTPException(
-            status_code=500,
-            detail="IRAS could not complete this request.",
-        ) from exc
+        raise HTTPException(500, "IRAS could not complete this request.") from exc
 
     return ChatOut(
         response=response,
