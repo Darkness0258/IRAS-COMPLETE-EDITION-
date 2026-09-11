@@ -16,14 +16,29 @@ def test_factory_uses_gemini_adapter():
     assert "GeminiOpenAICompatibleProvider" in text
 
 
-def test_health_provider_status_includes_error_details():
-    text = (
-        ROOT
-        / "src"
-        / "iras"
-        / "providers"
-        / "multi_provider.py"
-    ).read_text(encoding="utf-8")
+def test_public_provider_status_stays_minimal():
+    from iras.providers.multi_provider import (
+        MultiProvider,
+        ProviderSlot,
+    )
 
-    assert '"last_error"' in text
-    assert '"failures"' in text
+    class DummyProvider:
+        model = "dummy/model"
+
+    provider = MultiProvider(
+        [
+            ProviderSlot(
+                "dummy",
+                DummyProvider(),
+            )
+        ]
+    )
+
+    assert provider.status() == [
+        {
+            "name": "dummy",
+            "model": "dummy/model",
+            "ready": True,
+            "cooldown_seconds": 0,
+        }
+    ]
