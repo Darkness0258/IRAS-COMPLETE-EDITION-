@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -19,6 +20,7 @@ from fastapi.responses import (
     FileResponse,
     JSONResponse,
     Response,
+    StreamingResponse,
 )
 from fastapi.staticfiles import (
     StaticFiles,
@@ -46,7 +48,11 @@ settings = Settings.load()
 runtime = build_cloud_runtime(
     settings
 )
-agent_lock = threading.RLock()
+
+# A normal Lock is intentional here. StreamingResponse may resume a sync
+# generator on different worker threads; unlike RLock, Lock can safely be
+# released by a different worker thread after the generator resumes.
+agent_lock = threading.Lock()
 started_at = time.time()
 
 app = FastAPI(
@@ -90,6 +96,7 @@ app.add_middleware(
         "Authorization",
         "Content-Type",
         "X-Device-ID",
+        "Accept",
     ],
 )
 
@@ -155,6 +162,22 @@ def _authorized(
         )
 
 
+def _sse(
+    event: str,
+    payload: dict,
+) -> str:
+    return (
+        f"event: {event}\n"
+        "data: "
+        + json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        + "\n\n"
+    )
+
+
 @app.get("/health")
 def health():
     profile = get_profile(
@@ -178,6 +201,7 @@ def health():
             settings.voice_profile
         ),
         "voice": profile.voice,
+        "streaming": True,
         "latency_optimization": {
             "smart_tools": (
                 os.getenv(
@@ -246,6 +270,7 @@ def chat(
                 request_id
             ),
             "device_id": device_id,
+            "stream": False,
         },
     )
 
@@ -314,6 +339,189 @@ def chat(
                 0,
             )
         ),
+    )
+
+
+@app.post("/v1/chat/stream")
+def chat_stream(
+    body: ChatIn,
+    authorization: str | None = Header(
+        default=None
+    ),
+    x_device_id: str | None = Header(
+        default=None
+    ),
+):
+    """
+    SSE streaming endpoint.
+
+    Normal conversational turns stream token-by-token from OpenRouter.
+    Tool-bearing turns preserve the existing agent/tool loop and deliver
+    the completed tool result through the same SSE protocol.
+    """
+    _authorized(
+        authorization
+    )
+
+    request_id = (
+        uuid.uuid4()
+        .hex[:16]
+    )
+
+    device_id = (
+        x_device_id
+        or body.device_id
+        or "unknown"
+    )[:128]
+
+    direct_stream = (
+        runtime.agent.can_stream(
+            body.message
+        )
+    )
+
+    runtime.audit.record(
+        "cloud_chat_request",
+        {
+            "request_id": request_id,
+            "device_id": device_id,
+            "stream": True,
+            "direct_stream": (
+                direct_stream
+            ),
+        },
+    )
+
+    def events():
+        yield _sse(
+            "start",
+            {
+                "request_id": (
+                    request_id
+                ),
+                "streaming": (
+                    direct_stream
+                ),
+            },
+        )
+
+        try:
+            agent_lock.acquire()
+
+            try:
+                for text in (
+                    runtime.agent
+                    .handle_stream(
+                        body.message
+                    )
+                ):
+                    yield _sse(
+                        "token",
+                        {
+                            "text": text,
+                        },
+                    )
+            finally:
+                agent_lock.release()
+
+            metrics = (
+                runtime.agent
+                .last_metrics
+                or {}
+            )
+
+            yield _sse(
+                "done",
+                {
+                    "request_id": (
+                        request_id
+                    ),
+                    "model": (
+                        metrics.get(
+                            "model"
+                        )
+                        or settings.model
+                    ),
+                    "timing_ms": int(
+                        metrics.get(
+                            "total_ms",
+                            0,
+                        )
+                    ),
+                    "model_ms": int(
+                        metrics.get(
+                            "model_ms",
+                            0,
+                        )
+                    ),
+                    "first_token_ms": int(
+                        metrics.get(
+                            "first_token_ms",
+                            0,
+                        )
+                    ),
+                    "tool_schema_count": int(
+                        metrics.get(
+                            "tool_schema_count",
+                            0,
+                        )
+                    ),
+                    "streamed": bool(
+                        metrics.get(
+                            "streamed",
+                            False,
+                        )
+                    ),
+                },
+            )
+
+        except GeneratorExit:
+            raise
+
+        except Exception as exc:
+            print(
+                "[IRAS STREAM ERROR] "
+                f"{type(exc).__name__}: "
+                f"{exc}",
+                flush=True,
+            )
+
+            runtime.audit.record(
+                "cloud_chat_error",
+                {
+                    "request_id": (
+                        request_id
+                    ),
+                    "error": repr(exc),
+                    "stream": True,
+                },
+            )
+
+            yield _sse(
+                "error",
+                {
+                    "request_id": (
+                        request_id
+                    ),
+                    "message": (
+                        "IRAS could not "
+                        "complete this request."
+                    ),
+                },
+            )
+
+    return StreamingResponse(
+        events(),
+        media_type=(
+            "text/event-stream"
+        ),
+        headers={
+            "Cache-Control": (
+                "no-cache, no-transform"
+            ),
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -557,10 +765,6 @@ def main():
         )
     )
 
-    # Run the already-created FastAPI app object directly.
-    # Using "iras.cloud_api:app" here causes this module to be imported
-    # a second time when launched with `python -m iras.cloud_api`.
-    # That duplicated the cloud runtime and persistent Supabase connection.
     uvicorn.run(
         app,
         host="0.0.0.0",

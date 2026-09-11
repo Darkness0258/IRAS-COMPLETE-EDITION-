@@ -71,6 +71,7 @@ class IRASRemoteDesktop:
         self.client = None
         self.outbox = queue.Queue()
         self.listening = False
+        self.request_active = False
 
         settings = Settings.load()
 
@@ -132,12 +133,13 @@ class IRASRemoteDesktop:
             padx=(6, 0),
         )
 
-        tk.Button(
+        self.send_button = tk.Button(
             row,
             text="Send",
             command=self.send,
             width=8,
-        ).pack(
+        )
+        self.send_button.pack(
             side="left",
             padx=(6, 0),
         )
@@ -177,26 +179,54 @@ class IRASRemoteDesktop:
         )
 
         self.root.after(
-            100,
+            80,
             self.poll,
+        )
+
+        self.root.protocol(
+            "WM_DELETE_WINDOW",
+            self.close,
         )
 
         self.ensure_config()
 
-    def add(self, who, text):
+    def _chat_write(
+        self,
+        text,
+    ):
         self.chat.configure(
             state="normal"
         )
-
         self.chat.insert(
             "end",
-            f"{who}: {text}\n\n",
+            text,
         )
-
         self.chat.see("end")
-
         self.chat.configure(
             state="disabled"
+        )
+
+    def add(self, who, text):
+        self._chat_write(
+            f"{who}: {text}\n\n"
+        )
+
+    def begin_stream(self):
+        self._chat_write(
+            "IRAS: "
+        )
+
+    def append_stream(
+        self,
+        text,
+    ):
+        self._chat_write(
+            text
+        )
+
+    def end_stream(self):
+        self._chat_write(
+            "\n\n"
         )
 
     def ensure_config(self):
@@ -254,6 +284,12 @@ class IRASRemoteDesktop:
         self.rebuild_client()
 
     def rebuild_client(self):
+        if self.client is not None:
+            try:
+                self.client.close()
+            except Exception:
+                pass
+
         if (
             self.config.get("server_url")
             and self.config.get("token")
@@ -264,7 +300,7 @@ class IRASRemoteDesktop:
             )
 
             self.status.set(
-                "Ready · "
+                "Ready · streaming · "
                 f"{self.speaker.profile.label}"
             )
         else:
@@ -284,7 +320,10 @@ class IRASRemoteDesktop:
         )
 
     def listen(self):
-        if self.listening:
+        if (
+            self.listening
+            or self.request_active
+        ):
             return
 
         if not self.client:
@@ -330,7 +369,10 @@ class IRASRemoteDesktop:
     def send(self):
         text = self.entry.get().strip()
 
-        if not text:
+        if (
+            not text
+            or self.request_active
+        ):
             return
 
         if not self.client:
@@ -339,6 +381,11 @@ class IRASRemoteDesktop:
                 "Configure the server first.",
             )
             return
+
+        self.request_active = True
+        self.send_button.configure(
+            state="disabled"
+        )
 
         self.entry.delete(
             0,
@@ -361,12 +408,64 @@ class IRASRemoteDesktop:
         ).start()
 
     def _request(self, text):
-        try:
-            reply = self.client.chat(text)
+        parts = []
 
+        try:
             self.outbox.put(
-                ("ok", reply)
+                ("stream_start", "")
             )
+
+            for item in (
+                self.client
+                .chat_stream(text)
+            ):
+                event = item.get(
+                    "event"
+                )
+                data = item.get(
+                    "data"
+                ) or {}
+
+                if event == "token":
+                    chunk = (
+                        data.get("text")
+                        or ""
+                    )
+
+                    if chunk:
+                        parts.append(chunk)
+                        self.outbox.put(
+                            (
+                                "stream_token",
+                                chunk,
+                            )
+                        )
+
+                elif event == "done":
+                    self.outbox.put(
+                        (
+                            "stream_done",
+                            {
+                                "text": (
+                                    "".join(
+                                        parts
+                                    )
+                                ),
+                                "meta": data,
+                            },
+                        )
+                    )
+
+                elif event == "error":
+                    raise RuntimeError(
+                        data.get(
+                            "message"
+                        )
+                        or (
+                            "Streaming "
+                            "failed."
+                        )
+                    )
 
         except Exception as exc:
             self.outbox.put(
@@ -381,20 +480,59 @@ class IRASRemoteDesktop:
                     .get_nowait()
                 )
 
-                if kind == "ok":
-                    self.add(
-                        "IRAS",
-                        value,
-                    )
-
+                if kind == "stream_start":
+                    self.begin_stream()
                     self.status.set(
-                        "Ready"
+                        "IRAS is replying..."
                     )
 
-                    if self.voice_on:
+                elif kind == "stream_token":
+                    self.append_stream(
+                        value
+                    )
+
+                elif kind == "stream_done":
+                    self.end_stream()
+
+                    self.request_active = False
+                    self.send_button.configure(
+                        state="normal"
+                    )
+
+                    meta = (
+                        value.get("meta")
+                        or {}
+                    )
+                    first = int(
+                        meta.get(
+                            "first_token_ms",
+                            0,
+                        )
+                        or 0
+                    )
+
+                    if first:
+                        self.status.set(
+                            "Ready · first token "
+                            f"{first / 1000:.2f}s"
+                        )
+                    else:
+                        self.status.set(
+                            "Ready"
+                        )
+
+                    text = (
+                        value.get("text")
+                        or ""
+                    )
+
+                    if (
+                        self.voice_on
+                        and text
+                    ):
                         threading.Thread(
                             target=self._speak,
-                            args=(value,),
+                            args=(text,),
                             daemon=True,
                         ).start()
 
@@ -418,7 +556,6 @@ class IRASRemoteDesktop:
                         f"Heard: {value}"
                     )
 
-                    # Same behavior as Android: transcribe and send.
                     self.send()
 
                 elif kind == "mic_empty":
@@ -448,7 +585,15 @@ class IRASRemoteDesktop:
                         value,
                     )
 
-                else:
+                elif kind == "error":
+                    if self.request_active:
+                        self.end_stream()
+
+                    self.request_active = False
+                    self.send_button.configure(
+                        state="normal"
+                    )
+
                     self.add(
                         "Error",
                         value,
@@ -462,7 +607,7 @@ class IRASRemoteDesktop:
             pass
 
         self.root.after(
-            100,
+            80,
             self.poll,
         )
 
@@ -496,6 +641,15 @@ class IRASRemoteDesktop:
                     "Voice unavailable"
                 ),
             )
+
+    def close(self):
+        if self.client is not None:
+            try:
+                self.client.close()
+            except Exception:
+                pass
+
+        self.root.destroy()
 
     def run(self):
         self.root.mainloop()

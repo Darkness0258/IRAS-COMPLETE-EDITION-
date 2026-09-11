@@ -54,6 +54,7 @@ class OpenRouterProvider(
     - automatic model fallback
     - persistent HTTP connections
     - latency-prioritized routing for normal chat
+    - streaming fallback before the first token
     """
 
     def __init__(
@@ -237,6 +238,15 @@ class OpenRouterProvider(
                     or 0
                 )
 
+                self.last_first_token_ms = int(
+                    getattr(
+                        provider,
+                        "last_first_token_ms",
+                        0,
+                    )
+                    or 0
+                )
+
                 if index > 0:
                     print(
                         "[IRAS MODEL FALLBACK] "
@@ -276,6 +286,131 @@ class OpenRouterProvider(
                     f"{model} failed: "
                     f"{exc} -> trying "
                     f"{next_model}",
+                    flush=True,
+                )
+
+        if last_error is not None:
+            raise last_error
+
+        raise RuntimeError(
+            "No OpenRouter model "
+            "was available."
+        )
+
+    def stream_text(
+        self,
+        messages,
+        tools,
+    ):
+        """
+        Stream from the primary model.
+
+        If the primary fails before emitting any text, IRAS transparently
+        moves to the configured fallback. Once text has reached the user,
+        switching models would risk duplicate/inconsistent output, so an
+        error after the first token is surfaced instead.
+        """
+        models = [
+            self.model,
+            *self.fallback_models,
+        ]
+
+        last_error = None
+
+        for index, model in enumerate(
+            models
+        ):
+            provider = (
+                self._provider_for_model(
+                    model
+                )
+            )
+            emitted = False
+
+            try:
+                for text in provider.stream_text(
+                    messages,
+                    tools,
+                ):
+                    emitted = True
+                    yield text
+
+                self.last_model = (
+                    getattr(
+                        provider,
+                        "last_response_model",
+                        None,
+                    )
+                    or model
+                )
+
+                self.last_request_ms = int(
+                    getattr(
+                        provider,
+                        "last_request_ms",
+                        0,
+                    )
+                    or 0
+                )
+                self.last_first_token_ms = int(
+                    getattr(
+                        provider,
+                        "last_first_token_ms",
+                        0,
+                    )
+                    or 0
+                )
+
+                if index > 0:
+                    print(
+                        "[IRAS MODEL FALLBACK] "
+                        "stream recovered with "
+                        f"{self.last_model}",
+                        flush=True,
+                    )
+
+                return
+
+            except RuntimeError as exc:
+                last_error = exc
+
+                self.last_request_ms = int(
+                    getattr(
+                        provider,
+                        "last_request_ms",
+                        0,
+                    )
+                    or 0
+                )
+                self.last_first_token_ms = int(
+                    getattr(
+                        provider,
+                        "last_first_token_ms",
+                        0,
+                    )
+                    or 0
+                )
+
+                if emitted:
+                    raise
+
+                if (
+                    index
+                    >= len(models) - 1
+                    or not self
+                    ._retryable_error(exc)
+                ):
+                    raise
+
+                next_model = (
+                    models[index + 1]
+                )
+
+                print(
+                    "[IRAS MODEL FALLBACK] "
+                    f"{model} stream failed "
+                    f"before first token: {exc} "
+                    f"-> trying {next_model}",
                     flush=True,
                 )
 

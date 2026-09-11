@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from typing import Any
+from typing import Any, Iterator
 
 import httpx
 
@@ -28,12 +28,10 @@ class OpenAICompatibleProvider(Provider):
         self.extra_headers = dict(extra_headers or {})
         self.max_tokens = max_tokens
 
-        # Lazily created and then reused. Reusing one HTTP client keeps the
-        # TCP/TLS connection alive instead of reconnecting to OpenRouter on
-        # every agent step and every chat turn.
         self._client: httpx.Client | None = None
 
         self.last_request_ms = 0
+        self.last_first_token_ms = 0
         self.last_response_model = model
 
     def _headers(self) -> dict[str, str]:
@@ -94,6 +92,53 @@ class OpenAICompatibleProvider(Provider):
 
         return payload
 
+    @staticmethod
+    def _runtime_http_error(
+        status_code: int,
+        detail: str,
+    ) -> RuntimeError:
+        if status_code == 401:
+            return RuntimeError(
+                "LLM HTTP 401: API key is invalid "
+                "or unauthorized."
+            )
+
+        if status_code == 402:
+            return RuntimeError(
+                "LLM HTTP 402: OpenRouter account "
+                "has insufficient credits for this model."
+            )
+
+        if status_code == 429:
+            return RuntimeError(
+                "LLM HTTP 429: rate limit reached. "
+                "Retry later or choose another model."
+            )
+
+        return RuntimeError(
+            "LLM HTTP "
+            f"{status_code}: "
+            f"{detail[:1000]}"
+        )
+
+    def _check_response(
+        self,
+        response: httpx.Response,
+    ) -> None:
+        if response.status_code < 400:
+            return
+
+        try:
+            response.read()
+            detail = response.text
+        except Exception:
+            detail = ""
+
+        raise self._runtime_http_error(
+            response.status_code,
+            detail,
+        )
+
     def complete(self, messages, tools):
         started = time.perf_counter()
 
@@ -127,32 +172,7 @@ class OpenAICompatibleProvider(Provider):
                 * 1000
             )
 
-        if response.status_code >= 400:
-            detail = response.text[:1000]
-
-            if response.status_code == 401:
-                raise RuntimeError(
-                    "LLM HTTP 401: API key is invalid "
-                    "or unauthorized."
-                )
-
-            if response.status_code == 402:
-                raise RuntimeError(
-                    "LLM HTTP 402: OpenRouter account "
-                    "has insufficient credits for this model."
-                )
-
-            if response.status_code == 429:
-                raise RuntimeError(
-                    "LLM HTTP 429: rate limit reached. "
-                    "Retry later or choose another model."
-                )
-
-            raise RuntimeError(
-                "LLM HTTP "
-                f"{response.status_code}: "
-                f"{detail}"
-            )
+        self._check_response(response)
 
         try:
             body = response.json()
@@ -215,3 +235,149 @@ class OpenAICompatibleProvider(Provider):
             calls,
             msg,
         )
+
+    @staticmethod
+    def _content_text(content) -> str:
+        if isinstance(content, str):
+            return content
+
+        if isinstance(content, list):
+            parts = []
+
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+
+            return "".join(parts)
+
+        return ""
+
+    def stream_text(
+        self,
+        messages,
+        tools,
+    ) -> Iterator[str]:
+        """
+        Stream text deltas from an OpenAI-compatible SSE endpoint.
+
+        IRAS uses this for normal conversation where no tool calls are
+        required. Tool-bearing turns continue through complete().
+        """
+        started = time.perf_counter()
+        self.last_first_token_ms = 0
+
+        payload = self._payload(
+            messages,
+            tools,
+        )
+        payload["stream"] = True
+
+        try:
+            with self._get_client().stream(
+                "POST",
+                f"{self.base_url}/chat/completions",
+                headers=self._headers(),
+                json=payload,
+            ) as response:
+                self._check_response(response)
+
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+
+                    if line.startswith(":"):
+                        continue
+
+                    if not line.startswith("data:"):
+                        continue
+
+                    raw = line[5:].strip()
+
+                    if raw == "[DONE]":
+                        break
+
+                    try:
+                        event = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+
+                    error = event.get("error")
+
+                    if error:
+                        code = error.get("code")
+                        message = (
+                            error.get("message")
+                            or str(error)
+                        )
+
+                        try:
+                            status_code = int(code)
+                        except (
+                            TypeError,
+                            ValueError,
+                        ):
+                            status_code = 500
+
+                        raise self._runtime_http_error(
+                            status_code,
+                            message,
+                        )
+
+                    model = event.get("model")
+                    if model:
+                        self.last_response_model = model
+
+                    try:
+                        delta = (
+                            event["choices"][0]
+                            .get("delta")
+                            or {}
+                        )
+                    except (
+                        KeyError,
+                        IndexError,
+                        TypeError,
+                    ):
+                        continue
+
+                    text = self._content_text(
+                        delta.get("content")
+                    )
+
+                    if not text:
+                        continue
+
+                    if not self.last_first_token_ms:
+                        self.last_first_token_ms = int(
+                            (
+                                time.perf_counter()
+                                - started
+                            )
+                            * 1000
+                        )
+
+                    yield text
+
+        except httpx.TimeoutException as exc:
+            raise RuntimeError(
+                "LLM request timed out after "
+                f"{self.timeout:g} seconds."
+            ) from exc
+
+        except httpx.HTTPError as exc:
+            raise RuntimeError(
+                f"LLM network error: {exc}"
+            ) from exc
+
+        finally:
+            self.last_request_ms = int(
+                (
+                    time.perf_counter()
+                    - started
+                )
+                * 1000
+            )

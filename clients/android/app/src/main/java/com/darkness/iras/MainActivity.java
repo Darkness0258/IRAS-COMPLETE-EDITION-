@@ -29,6 +29,7 @@ public class MainActivity extends Activity {
     private android.content.SharedPreferences prefs;
     private MediaPlayer player;
     private File voiceFile;
+    private volatile boolean requestActive = false;
 
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
@@ -104,27 +105,34 @@ public class MainActivity extends Activity {
 
         root.addView(row);
 
-        status = tv("Ready", 12);
+        status = tv("Ready · streaming", 12);
         status.setTextColor(Color.GRAY);
         root.addView(status);
 
         setContentView(root);
     }
 
-    private void addMessage(String who, String text) {
-        runOnUiThread(() -> {
-            TextView v = tv(who + ": " + text, 16);
-            v.setBackgroundColor(
-                who.equals("You")
-                    ? Color.rgb(37, 42, 56)
-                    : Color.rgb(22, 26, 36)
-            );
+    private TextView addMessageView(String who, String text) {
+        TextView v = tv(who + ": " + text, 16);
+        v.setBackgroundColor(
+            who.equals("You")
+                ? Color.rgb(37, 42, 56)
+                : Color.rgb(22, 26, 36)
+        );
 
-            LinearLayout.LayoutParams p =
-                new LinearLayout.LayoutParams(-1, -2);
-            p.setMargins(0, 6, 0, 6);
-            chat.addView(v, p);
-        });
+        LinearLayout.LayoutParams p =
+            new LinearLayout.LayoutParams(-1, -2);
+        p.setMargins(0, 6, 0, 6);
+        chat.addView(v, p);
+        return v;
+    }
+
+    private void addMessage(String who, String text) {
+        runOnUiThread(() -> addMessageView(who, text));
+    }
+
+    private void appendStream(TextView view, String text) {
+        runOnUiThread(() -> view.append(text));
     }
 
     private void showSettings() {
@@ -170,36 +178,48 @@ public class MainActivity extends Activity {
 
     private void send() {
         String text = input.getText().toString().trim();
-        if (text.isEmpty()) {
+
+        if (text.isEmpty() || requestActive) {
             return;
         }
 
         String token = prefs.getString("token", "");
+
         if (token.isEmpty()) {
             showSettings();
             return;
         }
 
         stopVoice();
+        requestActive = true;
 
         input.setText("");
-        addMessage("You", text);
+        addMessageView("You", text);
+        TextView assistant = addMessageView("IRAS", "");
+
         status.setText("IRAS is thinking...");
 
         new Thread(
-            () -> request(serverUrl(), token, text)
+            () -> requestStream(
+                serverUrl(),
+                token,
+                text,
+                assistant
+            )
         ).start();
     }
 
-    private void request(
+    private void requestStream(
         String server,
         String token,
-        String message
+        String message,
+        TextView assistant
     ) {
         HttpURLConnection c = null;
+        StringBuilder reply = new StringBuilder();
 
         try {
-            URL u = new URL(server + "/v1/chat");
+            URL u = new URL(server + "/v1/chat/stream");
             c = (HttpURLConnection) u.openConnection();
 
             c.setRequestMethod("POST");
@@ -214,6 +234,10 @@ public class MainActivity extends Activity {
             c.setRequestProperty(
                 "Content-Type",
                 "application/json"
+            );
+            c.setRequestProperty(
+                "Accept",
+                "text/event-stream"
             );
             c.setRequestProperty(
                 "X-Device-ID",
@@ -233,24 +257,111 @@ public class MainActivity extends Activity {
 
             int code = c.getResponseCode();
 
-            InputStream is =
-                (code >= 200 && code < 300)
-                    ? c.getInputStream()
-                    : c.getErrorStream();
-
-            String raw = readAll(is);
-
             if (code < 200 || code >= 300) {
+                String error = readAll(c.getErrorStream());
                 throw new RuntimeException(
-                    "HTTP " + code + ": " + raw
+                    "HTTP " + code + ": " + error
                 );
             }
 
-            String reply =
-                new JSONObject(raw)
-                    .getString("response");
+            BufferedReader reader = new BufferedReader(
+                new InputStreamReader(
+                    c.getInputStream(),
+                    StandardCharsets.UTF_8
+                )
+            );
 
-            addMessage("IRAS", reply);
+            String event = "message";
+            StringBuilder data = new StringBuilder();
+            String line;
+            long firstTokenAt = 0L;
+
+            while ((line = reader.readLine()) != null) {
+                if (line.isEmpty()) {
+                    if (data.length() > 0) {
+                        JSONObject payload =
+                            new JSONObject(data.toString());
+
+                        if (event.equals("token")) {
+                            String chunk =
+                                payload.optString("text", "");
+
+                            if (!chunk.isEmpty()) {
+                                if (firstTokenAt == 0L) {
+                                    firstTokenAt =
+                                        System.currentTimeMillis();
+                                    runOnUiThread(
+                                        () -> status.setText(
+                                            "IRAS is replying..."
+                                        )
+                                    );
+                                }
+
+                                reply.append(chunk);
+                                appendStream(
+                                    assistant,
+                                    chunk
+                                );
+                            }
+
+                        } else if (event.equals("done")) {
+                            int firstMs =
+                                payload.optInt(
+                                    "first_token_ms",
+                                    0
+                                );
+
+                            runOnUiThread(
+                                () -> status.setText(
+                                    firstMs > 0
+                                        ? String.format(
+                                            Locale.US,
+                                            "First words in %.2fs",
+                                            firstMs / 1000.0
+                                        )
+                                        : "Reply complete"
+                                )
+                            );
+
+                        } else if (event.equals("error")) {
+                            throw new RuntimeException(
+                                payload.optString(
+                                    "message",
+                                    "Streaming failed."
+                                )
+                            );
+                        }
+                    }
+
+                    event = "message";
+                    data.setLength(0);
+                    continue;
+                }
+
+                if (line.startsWith("event:")) {
+                    event = line.substring(6).trim();
+                } else if (line.startsWith("data:")) {
+                    if (data.length() > 0) {
+                        data.append('\n');
+                    }
+                    data.append(
+                        line.substring(5).trim()
+                    );
+                }
+            }
+
+            String finalReply = reply.toString().trim();
+
+            requestActive = false;
+
+            if (finalReply.isEmpty()) {
+                runOnUiThread(
+                    () -> assistant.append("Done.")
+                );
+                finalReply = "Done.";
+            }
+
+            String speakText = finalReply;
 
             runOnUiThread(
                 () -> status.setText(
@@ -261,19 +372,26 @@ public class MainActivity extends Activity {
             requestVoice(
                 server,
                 token,
-                reply
+                speakText
             );
 
         } catch (Exception e) {
-            addMessage(
-                "IRAS",
-                "Connection error: " +
-                e.getMessage()
-            );
+            requestActive = false;
 
-            runOnUiThread(
-                () -> status.setText("Offline")
-            );
+            runOnUiThread(() -> {
+                if (reply.length() == 0) {
+                    assistant.append(
+                        "Connection error: " +
+                        e.getMessage()
+                    );
+                } else {
+                    assistant.append(
+                        "\n\n[Connection interrupted]"
+                    );
+                }
+
+                status.setText("Offline");
+            });
 
         } finally {
             if (c != null) {
@@ -470,16 +588,24 @@ public class MainActivity extends Activity {
         stopVoice();
 
         if (
-            checkSelfPermission(
+            requestActive
+            || checkSelfPermission(
                 Manifest.permission.RECORD_AUDIO
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            requestPermissions(
-                new String[]{
+            if (
+                !requestActive
+                && checkSelfPermission(
                     Manifest.permission.RECORD_AUDIO
-                },
-                7
-            );
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissions(
+                    new String[]{
+                        Manifest.permission.RECORD_AUDIO
+                    },
+                    7
+                );
+            }
             return;
         }
 

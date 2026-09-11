@@ -152,12 +152,6 @@ class IRASAgent:
         self,
         user_text: str,
     ):
-        """
-        Return a small relevant tool set for cloud chat.
-
-        Normal conversation gets no tool schemas, which substantially
-        shrinks the request and avoids tool-routing overhead.
-        """
         if not self.smart_tools:
             return None
 
@@ -250,6 +244,24 @@ class IRASAgent:
         return sorted(
             selected
         )
+
+    def can_stream(
+        self,
+        user_text: str,
+    ) -> bool:
+        """
+        True when this turn can go directly to a text stream.
+
+        Tool-bearing turns still use the normal agent loop so tool calls
+        remain reliable and auditable.
+        """
+        tool_names = (
+            self._smart_tool_names(
+                user_text
+            )
+        )
+
+        return tool_names == []
 
     def handle(
         self,
@@ -411,6 +423,7 @@ class IRASAgent:
         self.last_metrics = {
             "total_ms": total_ms,
             "model_ms": model_ms,
+            "first_token_ms": 0,
             "tool_rounds": (
                 tool_rounds
             ),
@@ -420,6 +433,7 @@ class IRASAgent:
             "context_messages": (
                 len(messages)
             ),
+            "streamed": False,
             "model": getattr(
                 self.provider,
                 "last_model",
@@ -443,3 +457,143 @@ class IRASAgent:
         )
 
         return final
+
+    def handle_stream(
+        self,
+        user_text,
+    ):
+        """
+        Stream ordinary no-tool conversation token-by-token.
+
+        If the turn needs tools, use the existing agent loop and expose its
+        final answer as one chunk. This preserves tool safety while giving
+        normal conversation true low-latency streaming.
+        """
+        if not self.can_stream(
+            user_text
+        ):
+            yield self.handle(
+                user_text
+            )
+            return
+
+        started = time.perf_counter()
+
+        self.memory.add_message(
+            "user",
+            user_text,
+        )
+
+        self.audit.record(
+            "user_message",
+            {
+                "text": user_text,
+                "stream": True,
+            },
+        )
+
+        if (
+            self.personality
+            is not None
+        ):
+            self.personality.observe_user(
+                user_text
+            )
+
+        messages = (
+            self._base_messages()
+        )
+
+        pieces = []
+        first_token_ms = 0
+        model_started = (
+            time.perf_counter()
+        )
+
+        for text in (
+            self.provider.stream_text(
+                messages,
+                [],
+            )
+        ):
+            if not first_token_ms:
+                first_token_ms = int(
+                    (
+                        time.perf_counter()
+                        - started
+                    )
+                    * 1000
+                )
+
+            pieces.append(text)
+            yield text
+
+        model_ms = int(
+            (
+                time.perf_counter()
+                - model_started
+            )
+            * 1000
+        )
+
+        final = "".join(
+            pieces
+        ).strip()
+
+        if not final:
+            final = "Done."
+            yield final
+
+        self.memory.add_message(
+            "assistant",
+            final,
+        )
+
+        self.audit.record(
+            "assistant_message",
+            {
+                "text": final,
+                "stream": True,
+            },
+        )
+
+        total_ms = int(
+            (
+                time.perf_counter()
+                - started
+            )
+            * 1000
+        )
+
+        self.last_metrics = {
+            "total_ms": total_ms,
+            "model_ms": model_ms,
+            "first_token_ms": (
+                first_token_ms
+            ),
+            "tool_rounds": 0,
+            "tool_schema_count": 0,
+            "context_messages": (
+                len(messages)
+            ),
+            "streamed": True,
+            "model": getattr(
+                self.provider,
+                "last_model",
+                getattr(
+                    self.provider,
+                    "model",
+                    "",
+                ),
+            ),
+        }
+
+        print(
+            "[IRAS STREAM] "
+            f"first_token={first_token_ms}ms "
+            f"total={total_ms}ms "
+            f"model={model_ms}ms "
+            f"model_used="
+            f"{self.last_metrics['model']}",
+            flush=True,
+        )
