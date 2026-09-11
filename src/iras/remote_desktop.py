@@ -11,6 +11,9 @@ from tkinter import messagebox, simpledialog
 
 from iras.config import Settings
 from iras.remote_client import IRASRemoteClient
+from iras.device_bridge.agent import (
+    DeviceBridgeAgent,
+)
 from iras.voice.conversation import (
     extract_wake_command,
     is_probable_echo,
@@ -81,6 +84,7 @@ class IRASRemoteDesktop:
 
         self.config = load_client_config()
         self.client = None
+        self.device_bridge = None
         self.outbox = queue.Queue()
         self.voice_queue = queue.Queue()
 
@@ -329,7 +333,45 @@ class IRASRemoteDesktop:
         )
         self.rebuild_client()
 
+    def _stop_device_bridge(self):
+        if self.device_bridge is not None:
+            try:
+                self.device_bridge.stop()
+            except Exception:
+                pass
+
+        self.device_bridge = None
+
+    def _start_device_bridge(self):
+        self._stop_device_bridge()
+
+        if not (
+            self.config.get("server_url")
+            and self.config.get("token")
+        ):
+            return
+
+        self.device_bridge = (
+            DeviceBridgeAgent(
+                self.config["server_url"],
+                self.config["token"],
+                status_callback=(
+                    lambda message:
+                    self.outbox.put(
+                        (
+                            "bridge_status",
+                            message,
+                        )
+                    )
+                ),
+            )
+        )
+
+        self.device_bridge.start()
+
     def rebuild_client(self):
+        self._stop_device_bridge()
+
         if self.client is not None:
             try:
                 self.client.close()
@@ -344,6 +386,7 @@ class IRASRemoteDesktop:
                 self.config["server_url"],
                 self.config["token"],
             )
+            self._start_device_bridge()
             self._ready_status()
         else:
             self.client = None
@@ -908,6 +951,15 @@ class IRASRemoteDesktop:
                             "Listening..."
                         )
 
+                elif kind == "bridge_status":
+                    if (
+                        "paired securely"
+                        in value
+                    ):
+                        self.status.set(
+                            "PC bridge online"
+                        )
+
                 elif kind == "voice_error":
                     self.status.set(
                         "Voice unavailable"
@@ -956,6 +1008,7 @@ class IRASRemoteDesktop:
     def close(self):
         self.closing.set()
         self._clear_voice()
+        self._stop_device_bridge()
 
         if self.client is not None:
             try:

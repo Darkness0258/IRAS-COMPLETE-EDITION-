@@ -46,6 +46,12 @@ from iras.tools.memory import (
 from iras.tools.personality import (
     make_tools as personality_tools,
 )
+from iras.device_bridge.store import (
+    DeviceBridgeStore,
+)
+from iras.device_bridge.tools import (
+    make_tools as device_bridge_tools,
+)
 
 
 class CloudRuntime:
@@ -57,6 +63,7 @@ class CloudRuntime:
         memory,
         audit,
         personality,
+        device_bridge,
     ):
         self.settings = settings
         self.agent = agent
@@ -65,6 +72,9 @@ class CloudRuntime:
         self.audit = audit
         self.personality = (
             personality
+        )
+        self.device_bridge = (
+            device_bridge
         )
 
 
@@ -135,6 +145,18 @@ def build_cloud_runtime(
             s.db_path
         )
 
+    device_bridge = (
+        DeviceBridgeStore(
+            database_url=(
+                s.database_url
+            ),
+            sqlite_path=(
+                s.data_dir
+                / "device_bridge.db"
+            ),
+        )
+    )
+
     permissions = (
         PermissionEngine(
             auto_level=(
@@ -171,6 +193,9 @@ def build_cloud_runtime(
         *memory_tools(memory),
         *personality_tools(
             personality
+        ),
+        *device_bridge_tools(
+            device_bridge
         ),
     ]:
         registry.register(tool)
@@ -232,4 +257,5 @@ def build_cloud_runtime(
         memory,
         audit,
         personality,
+        device_bridge,
     )

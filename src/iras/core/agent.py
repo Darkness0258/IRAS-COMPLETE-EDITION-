@@ -260,6 +260,50 @@ class IRASAgent:
         if self._contains_any(
             q,
             (
+                "my pc",
+                "my computer",
+                "my laptop",
+                "my desktop",
+                "on my pc",
+                "on my computer",
+                "on my laptop",
+                "open chrome",
+                "open spotify",
+                "open vs code",
+                "open vscode",
+                "open visual studio code",
+                "open notepad",
+                "open explorer",
+                "open project",
+                "git status",
+                "run tests",
+                "run the tests",
+                "test my project",
+                "screenshot",
+                "capture screen",
+                "screen on my",
+                "files on my",
+                "file on my",
+            ),
+        ):
+            selected.update(
+                {
+                    "device_list",
+                    "device_system_info",
+                    "device_open_app",
+                    "device_open_url",
+                    "device_open_project",
+                    "device_list_files",
+                    "device_read_text",
+                    "device_git_status",
+                    "device_run_tests",
+                    "device_capture_screen",
+                }
+            )
+
+        if self._contains_any(
+            q,
+            (
                 "use a tool",
                 "use tools",
                 "available tools",

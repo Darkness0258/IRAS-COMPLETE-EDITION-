@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import threading
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import edge_tts
 from fastapi import (
@@ -128,6 +130,37 @@ class TTSIn(BaseModel):
     )
 
 
+class DevicePairIn(BaseModel):
+    device_id: str = Field(
+        min_length=8,
+        max_length=128,
+    )
+    display_name: str = Field(
+        min_length=1,
+        max_length=128,
+    )
+    platform: str = Field(
+        min_length=1,
+        max_length=128,
+    )
+    capabilities: list[str] = Field(
+        default_factory=list,
+    )
+    app_version: str = Field(
+        default="unknown",
+        max_length=32,
+    )
+
+
+class DeviceCompleteIn(BaseModel):
+    ok: bool
+    result: Any = None
+    error: str = Field(
+        default="",
+        max_length=8000,
+    )
+
+
 def _authorized(
     authorization: str | None,
 ) -> None:
@@ -160,6 +193,38 @@ def _authorized(
                 "access token."
             ),
         )
+
+
+def _device_authorized(
+    device_id: str | None,
+    device_token: str | None,
+) -> str:
+    if (
+        not device_id
+        or not device_token
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Missing IRAS device credentials."
+            ),
+        )
+
+    if not (
+        runtime.device_bridge
+        .authorize_device(
+            device_id,
+            device_token,
+        )
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Invalid IRAS device credentials."
+            ),
+        )
+
+    return device_id
 
 
 def _sse(
@@ -679,6 +744,185 @@ async def tts(
         ) from exc
 
 
+
+
+@app.post("/v1/devices/pair")
+def pair_device(
+    body: DevicePairIn,
+    authorization: str | None = Header(
+        default=None
+    ),
+):
+    # Pairing requires the existing normal user API token.
+    _authorized(authorization)
+
+    device_token = secrets.token_urlsafe(32)
+
+    device = (
+        runtime.device_bridge
+        .pair_device(
+            device_id=body.device_id,
+            display_name=body.display_name,
+            platform=body.platform,
+            device_token=device_token,
+            capabilities=[
+                str(item)[:64]
+                for item in body.capabilities[:64]
+            ],
+            app_version=body.app_version,
+        )
+    )
+
+    runtime.audit.record(
+        "device_paired",
+        {
+            "device_id": body.device_id,
+            "display_name": body.display_name,
+        },
+    )
+
+    return {
+        "ok": True,
+        "device": device,
+        "device_token": device_token,
+    }
+
+
+@app.get("/v1/devices")
+def list_devices(
+    authorization: str | None = Header(
+        default=None
+    ),
+):
+    _authorized(authorization)
+
+    return {
+        "devices": (
+            runtime.device_bridge
+            .list_devices()
+        )
+    }
+
+
+@app.get("/v1/devices/{device_id}/commands")
+def device_command_history(
+    device_id: str,
+    authorization: str | None = Header(
+        default=None
+    ),
+    limit: int = 20,
+):
+    _authorized(authorization)
+
+    if not runtime.device_bridge.get_device(device_id):
+        raise HTTPException(
+            status_code=404,
+            detail="Unknown IRAS device.",
+        )
+
+    return {
+        "commands": (
+            runtime.device_bridge
+            .recent_commands(
+                device_id,
+                limit,
+            )
+        )
+    }
+
+
+@app.get("/v1/device/commands/next")
+def device_next_command(
+    timeout: int = 25,
+    x_iras_device_id: str | None = Header(
+        default=None,
+        alias="X-IRAS-Device-ID",
+    ),
+    x_iras_device_token: str | None = Header(
+        default=None,
+        alias="X-IRAS-Device-Token",
+    ),
+):
+    device_id = _device_authorized(
+        x_iras_device_id,
+        x_iras_device_token,
+    )
+
+    timeout = max(
+        1,
+        min(int(timeout), 30),
+    )
+
+    runtime.device_bridge.touch_device(device_id)
+    deadline = time.monotonic() + timeout
+
+    while time.monotonic() < deadline:
+        command = (
+            runtime.device_bridge
+            .claim_next(device_id)
+        )
+
+        if command:
+            return {
+                "command": command,
+            }
+
+        time.sleep(0.25)
+
+    runtime.device_bridge.touch_device(device_id)
+
+    return {
+        "command": None,
+    }
+
+
+@app.post(
+    "/v1/device/commands/{command_id}/complete"
+)
+def device_complete_command(
+    command_id: str,
+    body: DeviceCompleteIn,
+    x_iras_device_id: str | None = Header(
+        default=None,
+        alias="X-IRAS-Device-ID",
+    ),
+    x_iras_device_token: str | None = Header(
+        default=None,
+        alias="X-IRAS-Device-Token",
+    ),
+):
+    device_id = _device_authorized(
+        x_iras_device_id,
+        x_iras_device_token,
+    )
+
+    result = (
+        runtime.device_bridge
+        .complete(
+            command_id=command_id,
+            device_id=device_id,
+            ok=body.ok,
+            result=body.result,
+            error=body.error,
+        )
+    )
+
+    runtime.device_bridge.touch_device(device_id)
+
+    runtime.audit.record(
+        "device_command_complete",
+        {
+            "command_id": command_id,
+            "device_id": device_id,
+            "ok": body.ok,
+        },
+    )
+
+    return {
+        "ok": True,
+        "command": result,
+    }
+
 @app.get("/v1/personality")
 def personality(
     authorization: str | None = Header(
@@ -814,6 +1058,15 @@ def shutdown_event():
 
     if callable(memory_close):
         memory_close()
+
+    bridge_close = getattr(
+        runtime.device_bridge,
+        "close",
+        None,
+    )
+
+    if callable(bridge_close):
+        bridge_close()
 
 
 def main():
