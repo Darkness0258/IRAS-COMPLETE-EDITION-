@@ -172,6 +172,242 @@ class IRASAgent:
             for phrase in phrases
         )
 
+    @staticmethod
+    def _canonical_device_app_name(
+        value: str,
+    ) -> str:
+        normalized = " ".join(
+            str(value or "")
+            .lower()
+            .replace("-", " ")
+            .split()
+        )
+
+        aliases = {
+            "google chrome": "chrome",
+            "chrome.exe": "chrome",
+            "spotify.exe": "spotify",
+            "visual studio code": "code",
+            "vs code": "code",
+            "vscode": "code",
+            "code.exe": "code",
+            "notepad.exe": "notepad",
+            "file explorer": "explorer",
+            "explorer.exe": "explorer",
+        }
+
+        return aliases.get(
+            normalized,
+            normalized,
+        )
+
+    @classmethod
+    def _requested_device_apps(
+        cls,
+        user_text: str,
+    ) -> list[str]:
+        q = " ".join(
+            str(user_text or "")
+            .lower()
+            .replace("-", " ")
+            .split()
+        )
+
+        candidates = (
+            ("google chrome", "chrome"),
+            ("chrome", "chrome"),
+            ("spotify", "spotify"),
+            ("visual studio code", "code"),
+            ("vs code", "code"),
+            ("vscode", "code"),
+            ("notepad", "notepad"),
+            ("file explorer", "explorer"),
+            ("explorer", "explorer"),
+        )
+
+        found = []
+
+        for phrase, canonical in candidates:
+            if phrase in q and canonical not in found:
+                found.append(canonical)
+
+        return found
+
+    @classmethod
+    def _device_app_allowed(
+        cls,
+        user_text: str,
+        requested_app: str,
+    ) -> bool:
+        explicit = cls._requested_device_apps(
+            user_text
+        )
+
+        if not explicit:
+            return True
+
+        return (
+            cls._canonical_device_app_name(
+                requested_app
+            )
+            in explicit
+        )
+
+    @classmethod
+    def _device_tool_names(
+        cls,
+        user_text: str,
+    ) -> set[str]:
+        q = " ".join(
+            str(user_text or "")
+            .lower()
+            .split()
+        )
+
+        device_context = cls._contains_any(
+            q,
+            (
+                "my pc",
+                "my computer",
+                "my laptop",
+                "my desktop",
+                "on my pc",
+                "on my computer",
+                "on my laptop",
+                "open chrome",
+                "open spotify",
+                "open vs code",
+                "open vscode",
+                "open visual studio code",
+                "open notepad",
+                "open explorer",
+                "open project",
+                "git status",
+                "run tests",
+                "run the tests",
+                "test my project",
+                "screenshot",
+                "capture screen",
+                "screen on my",
+                "files on my",
+                "file on my",
+            ),
+        )
+
+        if not device_context:
+            return set()
+
+        # Most-specific intent wins. Do not expose every remote action to the
+        # model for a simple request such as "open Chrome".
+        if cls._contains_any(
+            q,
+            (
+                "run tests",
+                "run the tests",
+                "test my project",
+            ),
+        ):
+            return {"device_run_tests"}
+
+        if "git status" in q:
+            return {"device_git_status"}
+
+        if cls._contains_any(
+            q,
+            (
+                "screenshot",
+                "capture screen",
+                "screen on my",
+            ),
+        ):
+            return {"device_capture_screen"}
+
+        if cls._contains_any(
+            q,
+            (
+                "open project",
+                "open my project",
+                "project in vs code",
+                "project in vscode",
+                "project in visual studio code",
+            ),
+        ):
+            return {"device_open_project"}
+
+        if (
+            ("http://" in q or "https://" in q)
+            and cls._contains_any(
+                q,
+                (
+                    "my pc",
+                    "my computer",
+                    "my laptop",
+                    "on my pc",
+                    "on my computer",
+                    "on my laptop",
+                ),
+            )
+        ):
+            return {"device_open_url"}
+
+        requested_apps = cls._requested_device_apps(
+            q
+        )
+
+        if requested_apps and cls._contains_any(
+            q,
+            (
+                "open ",
+                "launch ",
+                "start ",
+                "run ",
+            ),
+        ):
+            return {"device_open_app"}
+
+        if cls._contains_any(
+            q,
+            (
+                "read file",
+                "read the file",
+                "show file",
+                "show me the file",
+                "file contents",
+                "content of",
+            ),
+        ):
+            return {"device_read_text"}
+
+        if cls._contains_any(
+            q,
+            (
+                "list files",
+                "show files",
+                "files on my",
+                "folders on my",
+                "list directory",
+            ),
+        ):
+            return {"device_list_files"}
+
+        if cls._contains_any(
+            q,
+            (
+                "system info",
+                "pc info",
+                "computer info",
+                "laptop info",
+                "specs",
+            ),
+        ):
+            return {"device_system_info"}
+
+        # Generic device questions remain read-only.
+        return {
+            "device_list",
+            "device_system_info",
+        }
+
     def _smart_tool_names(
         self,
         user_text: str,
@@ -257,49 +493,11 @@ class IRASAgent:
                 }
             )
 
-        if self._contains_any(
-            q,
-            (
-                "my pc",
-                "my computer",
-                "my laptop",
-                "my desktop",
-                "on my pc",
-                "on my computer",
-                "on my laptop",
-                "open chrome",
-                "open spotify",
-                "open vs code",
-                "open vscode",
-                "open visual studio code",
-                "open notepad",
-                "open explorer",
-                "open project",
-                "git status",
-                "run tests",
-                "run the tests",
-                "test my project",
-                "screenshot",
-                "capture screen",
-                "screen on my",
-                "files on my",
-                "file on my",
-            ),
-        ):
-            selected.update(
-                {
-                    "device_list",
-                    "device_system_info",
-                    "device_open_app",
-                    "device_open_url",
-                    "device_open_project",
-                    "device_list_files",
-                    "device_read_text",
-                    "device_git_status",
-                    "device_run_tests",
-                    "device_capture_screen",
-                }
+        selected.update(
+            self._device_tool_names(
+                q
             )
+        )
 
         if self._contains_any(
             q,
@@ -382,6 +580,29 @@ class IRASAgent:
             )
         )
 
+        requested_device_apps = (
+            self._requested_device_apps(
+                user_text
+            )
+        )
+
+        if requested_device_apps:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "Current device-action scope: "
+                        "the user explicitly requested only "
+                        "these application target(s): "
+                        + ", ".join(
+                            requested_device_apps
+                        )
+                        + ". Do not open any other application "
+                        "from prior conversation context."
+                    ),
+                }
+            )
+
         tool_names = (
             self._smart_tool_names(
                 user_text
@@ -452,22 +673,63 @@ class IRASAgent:
             for call in (
                 reply.tool_calls
             ):
-                result = (
-                    self.tools.execute(
-                        call.name,
-                        call.arguments,
-                    )
-                )
+                blocked_error = None
 
-                payload = {
-                    "ok": result.ok,
-                    "output": (
-                        result.output
-                    ),
-                    "error": (
-                        result.error
-                    ),
-                }
+                if (
+                    call.name
+                    == "device_open_app"
+                    and not self._device_app_allowed(
+                        user_text,
+                        str(
+                            call.arguments.get(
+                                "app",
+                                "",
+                            )
+                        ),
+                    )
+                ):
+                    blocked_error = (
+                        "Blocked device app launch because "
+                        "the requested app was not part of "
+                        "the user's current command."
+                    )
+
+                    self.audit.record(
+                        "device_intent_blocked",
+                        {
+                            "tool": call.name,
+                            "arguments": (
+                                call.arguments
+                            ),
+                            "user_text": (
+                                user_text
+                            ),
+                        },
+                    )
+
+                if blocked_error:
+                    payload = {
+                        "ok": False,
+                        "output": None,
+                        "error": blocked_error,
+                    }
+                else:
+                    result = (
+                        self.tools.execute(
+                            call.name,
+                            call.arguments,
+                        )
+                    )
+
+                    payload = {
+                        "ok": result.ok,
+                        "output": (
+                            result.output
+                        ),
+                        "error": (
+                            result.error
+                        ),
+                    }
 
                 messages.append(
                     {
