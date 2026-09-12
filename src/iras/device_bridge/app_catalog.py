@@ -250,15 +250,9 @@ class AppCatalog:
     # Direct App Paths executables are normally the most deterministic launch
     # path, followed by Windows AppsFolder AUMIDs.
     KIND_PRIORITY = {
-        "exe": 30,
+        "exe": 40,
+        "shortcut": 30,
         "app_id": 20,
-    }
-
-    # Explicitly allowed URI fallbacks for desktop clients whose EXE is only
-    # a bootstrapper. Arbitrary user-controlled URI schemes are never used.
-    SAFE_PROTOCOL_FALLBACKS = {
-        "steam": "steam://open/main",
-        "spotify": "spotify:",
     }
 
     def __init__(
@@ -1008,10 +1002,6 @@ class AppCatalog:
                 f"Blocked executable: {path.name}"
             )
 
-        # Many Windows clients are bootstrap launchers. They may signal or
-        # spawn the real application and then exit immediately with a nonzero
-        # code. Steam commonly behaves this way. Do not declare failure before
-        # checking whether the actual app appeared.
         process = subprocess.Popen(
             [
                 str(path),
@@ -1036,6 +1026,9 @@ class AppCatalog:
             "method": "direct_exe",
         }
 
+        # Bootstrap clients frequently spawn/signal the real GUI process and
+        # then exit themselves. Record this instead of declaring failure until
+        # verification has checked the actual application.
         if (
             rc is not None
             and rc != 0
@@ -1048,68 +1041,71 @@ class AppCatalog:
 
         return payload
 
-    @classmethod
-    def _protocol_for_query(
-        cls,
-        query: str,
-    ) -> str | None:
-        normalized = (
-            normalize_app_name(
-                query
-            )
-        )
-        alias = (
-            ALIASES.get(
-                normalized,
-                normalized,
-            )
-        )
-        family = (
-            app_family_name(
-                alias
-            )
+    @staticmethod
+    def _launch_shell_path(
+        entry: AppEntry,
+    ) -> dict:
+        """
+        Ask the Windows shell to open a catalog-discovered EXE/shortcut.
+
+        This is generic for safe GUI apps and is often more reliable for
+        bootstrap launchers, shortcuts, packaged bridges, and applications
+        that expect Windows shell activation. The path comes from discovery,
+        never from an arbitrary command string.
+        """
+        target_path = Path(
+            entry.target
         )
 
-        for name, protocol in (
-            cls
-            .SAFE_PROTOCOL_FALLBACKS
-            .items()
+        if not target_path.exists():
+            raise FileNotFoundError(
+                target_path
+            )
+
+        if (
+            entry.kind == "exe"
+            and target_path.name.lower()
+            in BLOCKED_PROCESS_NAMES
         ):
-            if (
-                family == name
-                or normalized == name
-                or alias == name
-            ):
-                return protocol
+            raise PermissionError(
+                f"Blocked executable: {target_path.name}"
+            )
 
-        return None
-
-    @classmethod
-    def _launch_safe_protocol(
-        cls,
-        query: str,
-    ) -> dict | None:
-        protocol = (
-            cls._protocol_for_query(
-                query
+        result = (
+            ctypes.windll.shell32.ShellExecuteW(
+                None,
+                "open",
+                str(
+                    target_path
+                ),
+                None,
+                (
+                    str(
+                        target_path.parent
+                    )
+                    if entry.kind
+                    == "exe"
+                    else None
+                ),
+                1,
             )
         )
 
-        if not protocol:
-            return None
-
-        try:
-            os.startfile(
-                protocol
-            )  # type: ignore[attr-defined]
-        except OSError as exc:
+        if int(
+            result
+        ) <= 32:
             raise RuntimeError(
-                f"Registered protocol launch failed for {query}: {exc}"
-            ) from exc
+                "Windows ShellExecuteW rejected the launch "
+                f"with code {int(result)}."
+            )
 
         return {
-            "launched": protocol,
-            "method": "registered_protocol",
+            "launched": str(
+                target_path
+            ),
+            "method": (
+                "shell_execute_path"
+            ),
         }
 
     @staticmethod
@@ -1190,6 +1186,129 @@ class AppCatalog:
             ),
         }
 
+
+    @staticmethod
+    def _shortcut_discovery(
+    ) -> list[AppEntry]:
+        """
+        Discover normal GUI applications exposed through Windows Start-menu
+        and Desktop shortcuts. The shortcut path itself is the launch target;
+        user text is never executed as a command.
+        """
+        if os.name != "nt":
+            return []
+
+        candidates = []
+
+        appdata = os.getenv(
+            "APPDATA",
+            "",
+        )
+        programdata = os.getenv(
+            "PROGRAMDATA",
+            "",
+        )
+        userprofile = os.getenv(
+            "USERPROFILE",
+            "",
+        )
+        public = os.getenv(
+            "PUBLIC",
+            "",
+        )
+
+        roots = []
+
+        if appdata:
+            roots.append(
+                Path(appdata)
+                / "Microsoft"
+                / "Windows"
+                / "Start Menu"
+                / "Programs"
+            )
+
+        if programdata:
+            roots.append(
+                Path(programdata)
+                / "Microsoft"
+                / "Windows"
+                / "Start Menu"
+                / "Programs"
+            )
+
+        if userprofile:
+            roots.append(
+                Path(userprofile)
+                / "Desktop"
+            )
+
+        if public:
+            roots.append(
+                Path(public)
+                / "Desktop"
+            )
+
+        seen = set()
+
+        for root in roots:
+            if not root.exists():
+                continue
+
+            try:
+                files = root.rglob(
+                    "*.lnk"
+                )
+            except Exception:
+                continue
+
+            for shortcut in files:
+                try:
+                    resolved = (
+                        shortcut.resolve()
+                    )
+                except Exception:
+                    resolved = shortcut
+
+                key = str(
+                    resolved
+                ).lower()
+
+                if key in seen:
+                    continue
+
+                seen.add(
+                    key
+                )
+
+                name = (
+                    shortcut.stem
+                    .strip()
+                )
+
+                if not name:
+                    continue
+
+                try:
+                    ensure_safe_app_request(
+                        name
+                    )
+                except Exception:
+                    continue
+
+                candidates.append(
+                    AppEntry(
+                        name=name,
+                        target=str(
+                            shortcut
+                        ),
+                        kind="shortcut",
+                        source="windows_shortcut",
+                    )
+                )
+
+        return candidates
+
     def refresh(
         self,
         *,
@@ -1215,6 +1334,7 @@ class AppCatalog:
         entries = (
             self._run_start_app_discovery()
             + self._registry_app_paths()
+            + self._shortcut_discovery()
         )
 
         # Keep alternate launch methods for the same display name. They are
@@ -1343,7 +1463,7 @@ class AppCatalog:
                 self.refresh(
                     force=True
                 ),
-                limit=12,
+                limit=20,
             )
         )
 
@@ -1361,13 +1481,13 @@ class AppCatalog:
                 f"IRAS could not confidently match installed app '{query}'."
             )
 
-        best_family = (
+        best_entry = (
             matches[0][1]
-            .family_name
+        )
+        best_family = (
+            best_entry.family_name
         )
 
-        # Try alternate launch records for the same resolved application
-        # family before giving up.
         candidates = [
             (
                 score,
@@ -1381,17 +1501,22 @@ class AppCatalog:
                     entry.family_name
                     == best_family
                     or entry.normalized_name
-                    == matches[0][1]
-                    .normalized_name
+                    == best_entry.normalized_name
                 )
             )
         ]
 
         attempts = []
-        accepted_result = None
+        accepted_unverified = None
 
-        for score, entry in candidates:
-            attempt = {
+        def record_attempt(
+            entry: AppEntry,
+            score: float,
+            method: str,
+            result: dict | None,
+            error: Exception | None = None,
+        ):
+            item = {
                 "name": entry.name,
                 "kind": entry.kind,
                 "source": entry.source,
@@ -1399,55 +1524,112 @@ class AppCatalog:
                     score,
                     4,
                 ),
+                "method": method,
             }
 
-            try:
-                if entry.kind == "exe":
-                    result = (
-                        self._launch_exe(
-                            entry
-                        )
-                    )
+            if error is not None:
+                item[
+                    "accepted"
+                ] = False
+                item[
+                    "error"
+                ] = (
+                    f"{type(error).__name__}: {error}"
+                )
+            else:
+                item[
+                    "accepted"
+                ] = True
 
-                elif (
-                    entry.kind
-                    == "app_id"
-                ):
-                    result = (
-                        self._launch_app_id(
-                            entry
-                        )
-                    )
+                if result:
+                    if (
+                        "early_exit_code"
+                        in result
+                    ):
+                        item[
+                            "early_exit_code"
+                        ] = result[
+                            "early_exit_code"
+                        ]
 
-                else:
-                    raise RuntimeError(
-                        "Unsupported installed-app launch type."
+            attempts.append(
+                item
+            )
+
+            return item
+
+        for score, entry in candidates:
+            strategies = []
+
+            if entry.kind == "exe":
+                strategies = [
+                    (
+                        "direct_exe",
+                        self._launch_exe,
+                    ),
+                    (
+                        "shell_execute_path",
+                        self._launch_shell_path,
+                    ),
+                ]
+
+            elif entry.kind == "shortcut":
+                strategies = [
+                    (
+                        "shell_execute_shortcut",
+                        self._launch_shell_path,
+                    ),
+                ]
+
+            elif entry.kind == "app_id":
+                strategies = [
+                    (
+                        "apps_folder",
+                        self._launch_app_id,
+                    ),
+                ]
+
+            else:
+                continue
+
+            for (
+                method_name,
+                launcher,
+            ) in strategies:
+                try:
+                    result = launcher(
+                        entry
                     )
+                except Exception as exc:
+                    record_attempt(
+                        entry,
+                        score,
+                        method_name,
+                        None,
+                        exc,
+                    )
+                    continue
+
+                item = record_attempt(
+                    entry,
+                    score,
+                    method_name,
+                    result,
+                )
 
                 verified, proof = (
                     self._verify_launch(
-                        entry
+                        entry,
+                        timeout=3.2,
                     )
                 )
 
-                attempt[
-                    "accepted"
-                ] = True
-                attempt[
+                item[
                     "verified"
                 ] = verified
-                attempt[
+                item[
                     "proof"
                 ] = proof
-                attempt[
-                    "method"
-                ] = result.get(
-                    "method"
-                )
-
-                attempts.append(
-                    attempt
-                )
 
                 payload = {
                     **result,
@@ -1464,129 +1646,52 @@ class AppCatalog:
                 if verified:
                     return payload
 
-                # An EXE that already reported a nonzero bootstrap exit
-                # is not considered a successful launch unless verification
-                # proves that the real application appeared.
+                # A bootstrap EXE that already exited nonzero is not accepted
+                # unless another verification/launch strategy succeeds.
                 if (
-                    accepted_result
+                    accepted_unverified
                     is None
                     and result.get(
                         "early_exit_code"
                     )
                     is None
                 ):
-                    accepted_result = (
+                    accepted_unverified = (
                         payload
                     )
 
-            except Exception as exc:
-                attempt[
-                    "accepted"
-                ] = False
-                attempt[
-                    "error"
-                ] = (
-                    f"{type(exc).__name__}: {exc}"
-                )
-                attempts.append(
-                    attempt
-                )
-
-        # If normal Windows launch records did not verify, use a small
-        # explicit protocol fallback for bootstrap clients such as Steam.
-        # Arbitrary URI schemes are never accepted from user input.
-        protocol_result = None
-
-        try:
-            protocol_result = (
-                self._launch_safe_protocol(
-                    query
-                )
-            )
-        except Exception as exc:
-            attempts.append(
-                {
-                    "name": query,
-                    "kind": "protocol",
-                    "source": (
-                        "safe_protocol_fallback"
-                    ),
-                    "accepted": False,
-                    "error": (
-                        f"{type(exc).__name__}: {exc}"
-                    ),
-                }
-            )
-
-        if protocol_result:
-            verification_entry = (
-                candidates[0][1]
-                if candidates
-                else matches[0][1]
-            )
-
-            verified, proof = (
-                self._verify_launch(
-                    verification_entry,
-                    timeout=3.5,
-                )
-            )
-
-            attempts.append(
-                {
-                    "name": query,
-                    "kind": "protocol",
-                    "source": (
-                        "safe_protocol_fallback"
-                    ),
-                    "accepted": True,
-                    "verified": verified,
-                    "proof": proof,
-                    "method": (
-                        protocol_result.get(
-                            "method"
-                        )
-                    ),
-                }
-            )
-
-            return {
-                **protocol_result,
-                "app": (
-                    verification_entry.name
-                ),
-                "auto_detected": True,
-                "source": (
-                    "safe_protocol_fallback"
-                ),
-                "launch_verified": (
-                    verified
-                ),
-                "verification": proof,
-                "attempts": attempts,
-            }
-
-        # A shell launch can be valid even when Windows does not expose a
-        # quickly-verifiable process/window. Return accepted-but-unverified
-        # only after all equivalent launch methods have been attempted.
-        if accepted_result:
-            accepted_result[
+        # Windows sometimes accepts a shell/app activation without exposing a
+        # stable process/window quickly enough to prove it. Return that honest
+        # state only after all equivalent safe launch methods were attempted.
+        if (
+            accepted_unverified
+            is not None
+        ):
+            accepted_unverified[
                 "attempts"
             ] = attempts
-            return accepted_result
+            accepted_unverified[
+                "launch_verified"
+            ] = False
+            accepted_unverified[
+                "verification"
+            ] = (
+                "accepted_unverified_after_all_fallbacks"
+            )
+            return accepted_unverified
 
         error_lines = [
             (
                 f"{item['name']} "
-                f"({item['kind']}): "
-                f"{item.get('error', 'launch was not accepted')}"
+                f"({item['kind']}/{item['method']}): "
+                f"{item.get('error', 'launch accepted but never verified')}"
             )
             for item in attempts
         ]
 
         raise RuntimeError(
-            "IRAS found the application but every safe Windows launch method "
-            "failed. "
+            "IRAS found the application but every safe generic Windows "
+            "launch strategy failed. "
             + " | ".join(
                 error_lines
             )

@@ -17,9 +17,11 @@ def test_bootstrap_launcher_contract():
 
     assert "early_exit_code" in text
     assert "cwd=str(" in text
-    assert "SAFE_PROTOCOL_FALLBACKS" in text
-    assert '"steam": "steam://open/main"' in text
-    assert "registered_protocol" in text
+    assert "def _launch_shell_path(" in text
+    assert "shell_execute_path" in text
+    assert "def _shortcut_discovery(" in text
+    assert "SAFE_PROTOCOL_FALLBACKS" not in text
+    assert "steam://open/main" not in text
 
 
 def test_old_immediate_exit_exception_removed():

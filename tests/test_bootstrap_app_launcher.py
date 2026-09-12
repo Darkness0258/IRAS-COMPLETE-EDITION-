@@ -59,45 +59,57 @@ def test_bootstrap_nonzero_exit_is_not_immediate_failure(
     assert captured["shell"] is False
 
 
-def test_steam_has_explicit_safe_protocol_fallback():
-    assert (
-        AppCatalog._protocol_for_query("Steam")
-        == "steam://open/main"
+def test_bootstrap_fix_is_now_generic():
+    text = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "iras"
+        / "device_bridge"
+        / "app_catalog.py"
+    ).read_text(
+        encoding="utf-8"
     )
 
+    assert "early_exit_code" in text
+    assert "def _launch_shell_path(" in text
+    assert "shell_execute_path" in text
+    assert "def _shortcut_discovery(" in text
 
-def test_arbitrary_protocol_name_is_not_allowed():
-    assert (
-        AppCatalog._protocol_for_query("random-app")
-        is None
+
+def test_v31_has_no_app_specific_protocol_mapping():
+    text = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "iras"
+        / "device_bridge"
+        / "app_catalog.py"
+    ).read_text(
+        encoding="utf-8"
     )
 
+    assert "SAFE_PROTOCOL_FALLBACKS" not in text
+    assert "steam://open/main" not in text
+    assert "_protocol_for_query" not in text
+    assert "_launch_safe_protocol" not in text
 
-def test_safe_protocol_launcher_uses_fixed_mapping(
-    monkeypatch,
-):
-    calls = []
 
-    monkeypatch.setattr(
-        "iras.device_bridge.app_catalog.os.startfile",
-        lambda value: calls.append(value),
-        raising=False,
+def test_shell_names_still_remain_blocked():
+    from iras.device_bridge.app_catalog import (
+        ensure_safe_app_request,
     )
 
-    result = AppCatalog._launch_safe_protocol(
-        "Steam"
-    )
+    import pytest
 
-    assert calls == [
-        "steam://open/main"
-    ]
-    assert result["method"] == "registered_protocol"
-
-
-def test_shell_names_still_have_no_protocol_fallback():
-    assert (
-        AppCatalog._protocol_for_query(
-            "PowerShell"
-        )
-        is None
-    )
+    for name in (
+        "PowerShell",
+        "Command Prompt",
+        "Windows Terminal",
+        "WSL",
+        "Registry Editor",
+    ):
+        with pytest.raises(
+            PermissionError
+        ):
+            ensure_safe_app_request(
+                name
+            )

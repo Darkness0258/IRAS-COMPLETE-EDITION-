@@ -543,7 +543,7 @@ class UniversalWindowsController(
 
         if action == "open":
             result = (
-                launch_app(
+                self.catalog.launch(
                     canonical
                 )
             )

@@ -239,7 +239,7 @@ class DeviceExecutor:
         self,
         app: str,
     ):
-        return launch_app(
+        return self.ui.catalog.launch(
             app
         )
 
