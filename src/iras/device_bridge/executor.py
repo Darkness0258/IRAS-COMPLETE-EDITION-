@@ -31,6 +31,8 @@ DEFAULT_CAPABILITIES = [
     "run_tests",
     "capture_screen",
     "interact_app",
+    "spotify_play",
+    "media_control",
 ]
 
 
@@ -176,6 +178,8 @@ class DeviceExecutor:
             "run_tests": self.run_tests,
             "capture_screen": self.capture_screen,
             "interact_app": self.interact_app,
+            "spotify_play": self.spotify_play,
+            "media_control": self.media_control,
         }
 
         handler = handlers.get(
@@ -586,6 +590,22 @@ class DeviceExecutor:
             ensure_open=bool(
                 ensure_open
             ),
+        )
+
+    def spotify_play(
+        self,
+        query: str,
+    ):
+        return self.ui.spotify_play(
+            query
+        )
+
+    def media_control(
+        self,
+        command: str,
+    ):
+        return self.ui.media_control(
+            command
         )
 
     def capture_screen(

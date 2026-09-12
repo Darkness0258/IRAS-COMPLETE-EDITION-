@@ -304,6 +304,18 @@ class IRASAgent:
                 "in vscode",
                 "in vs code",
                 "in notepad",
+                "play the song",
+                "pause the song",
+                "resume the song",
+                "play music",
+                "pause music",
+                "resume music",
+                "next song",
+                "previous song",
+                "next track",
+                "previous track",
+                "stop the music",
+                "mute the music",
             ),
         )
 
@@ -366,6 +378,45 @@ class IRASAgent:
         requested_apps = cls._requested_device_apps(
             q
         )
+
+        spotify_requested = (
+            "spotify"
+            in requested_apps
+        )
+
+        if (
+            spotify_requested
+            and "play " in q
+        ):
+            return {
+                "device_spotify_play"
+            }
+
+        media_only = cls._contains_any(
+            q,
+            (
+                "play the song",
+                "pause the song",
+                "resume the song",
+                "play music",
+                "pause music",
+                "resume music",
+                "next song",
+                "previous song",
+                "next track",
+                "previous track",
+                "stop the music",
+                "mute the music",
+            ),
+        )
+
+        if (
+            media_only
+            and not requested_apps
+        ):
+            return {
+                "device_media_control"
+            }
 
         interaction_intent = (
             requested_apps
@@ -657,6 +708,27 @@ class IRASAgent:
             else self.tools.schemas()
         )
 
+        required_tool_turn = bool(
+            tool_names
+        )
+        tool_attempted = False
+        forced_tool_retry = False
+
+        if required_tool_turn:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "This turn requests a real external/device action. "
+                        "Do not claim success from text alone. Use one of the "
+                        "supplied tools first. Only describe an action as "
+                        "completed when a tool result supports that claim. "
+                        "If a tool result says state is unverified, say the "
+                        "command was sent rather than claiming the final state."
+                    ),
+                }
+            )
+
         final = ""
         model_ms = 0
         tool_rounds = 0
@@ -696,6 +768,31 @@ class IRASAgent:
             messages.append(am)
 
             if not reply.tool_calls:
+                if (
+                    required_tool_turn
+                    and not tool_attempted
+                ):
+                    if not forced_tool_retry:
+                        forced_tool_retry = True
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": (
+                                    "You have not executed the requested "
+                                    "action yet. You MUST call one of the "
+                                    "supplied tools now. Do not answer with "
+                                    "a fabricated success statement."
+                                ),
+                            }
+                        )
+                        continue
+
+                    final = (
+                        "I couldn't execute that device action, "
+                        "so I won't claim it succeeded."
+                    )
+                    break
+
                 final = (
                     reply.text
                     or empty_reply_fallback(
@@ -720,13 +817,19 @@ class IRASAgent:
                     in {
                         "device_open_app",
                         "device_interact_app",
+                        "device_spotify_play",
                     }
                     and not self._device_app_allowed(
                         user_text,
-                        str(
-                            call.arguments.get(
-                                "app",
-                                "",
+                        (
+                            "spotify"
+                            if call.name
+                            == "device_spotify_play"
+                            else str(
+                                call.arguments.get(
+                                    "app",
+                                    "",
+                                )
                             )
                         ),
                     )
@@ -757,6 +860,8 @@ class IRASAgent:
                         "error": blocked_error,
                     }
                 else:
+                    tool_attempted = True
+
                     result = (
                         self.tools.execute(
                             call.name,

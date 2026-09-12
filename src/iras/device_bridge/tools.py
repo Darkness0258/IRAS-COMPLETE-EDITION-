@@ -65,6 +65,31 @@ def make_tools(store):
             timeout=50,
         )
 
+    def device_spotify_play(
+        query,
+        device_id=None,
+    ):
+        return request(
+            "spotify_play",
+            {
+                "query": query,
+            },
+            device_id,
+            timeout=45,
+        )
+
+    def device_media_control(
+        command,
+        device_id=None,
+    ):
+        return request(
+            "media_control",
+            {
+                "command": command,
+            },
+            device_id,
+        )
+
     def device_open_url(
         url,
         device_id=None,
@@ -297,6 +322,68 @@ def make_tools(store):
                 ],
             },
             device_interact_app,
+            PermissionLevel.SAFE_ACTION,
+        ),
+        Tool(
+            "device_spotify_play",
+            (
+                "Search for and start a requested song/artist/query in the "
+                "Spotify Windows desktop app. Use this instead of generic UI "
+                "actions when the user explicitly asks Spotify to play music. "
+                "The result confirms that the command was sent, not that "
+                "playback was independently verified."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "Song title, artist, or Spotify search query."
+                        ),
+                    },
+                    **optional_device,
+                },
+                "required": [
+                    "query",
+                ],
+            },
+            device_spotify_play,
+            PermissionLevel.SAFE_ACTION,
+        ),
+        Tool(
+            "device_media_control",
+            (
+                "Send a bounded Windows media key to the paired PC. Use for "
+                "follow-ups such as play the song, pause, resume, next track, "
+                "previous track, stop, mute, or volume changes. This sends a "
+                "media command but cannot independently verify playback state."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "enum": [
+                            "play",
+                            "pause",
+                            "resume",
+                            "play_pause",
+                            "next",
+                            "previous",
+                            "stop",
+                            "mute",
+                            "volume_up",
+                            "volume_down",
+                        ],
+                    },
+                    **optional_device,
+                },
+                "required": [
+                    "command",
+                ],
+            },
+            device_media_control,
             PermissionLevel.SAFE_ACTION,
         ),
         Tool(

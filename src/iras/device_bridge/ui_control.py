@@ -30,6 +30,16 @@ class WindowsUIController:
         "file explorer": "explorer",
     }
 
+    MEDIA_KEY_CODES = {
+        "next": 0xB0,
+        "previous": 0xB1,
+        "stop": 0xB2,
+        "play_pause": 0xB3,
+        "mute": 0xAD,
+        "volume_down": 0xAE,
+        "volume_up": 0xAF,
+    }
+
     KEY_CODES = {
         "backspace": 0x08,
         "tab": 0x09,
@@ -449,6 +459,116 @@ class WindowsUIController:
             ).value,
             0,
         )
+
+    def spotify_play(
+        self,
+        query: str,
+    ) -> dict:
+        query = " ".join(
+            str(query or "")
+            .strip()
+            .split()
+        )
+
+        if not query:
+            raise ValueError(
+                "Spotify play requires a song or search query."
+            )
+
+        if len(query) > 220:
+            raise PermissionError(
+                "Spotify query is too long."
+            )
+
+        focused = self.focus_app(
+            "spotify",
+            ensure_open=True,
+        )
+
+        self.hotkey(["ctrl", "k"])
+        time.sleep(0.30)
+        self.type_text(query)
+        time.sleep(0.90)
+        self.press("down")
+        time.sleep(0.12)
+        self.press("enter")
+
+        return {
+            "app": "spotify",
+            "query": query,
+            "launched": focused["launched"],
+            "command_sent": True,
+            "verified_playback": False,
+            "note": (
+                "Spotify search/play command was sent. "
+                "Playback state is not independently verified."
+            ),
+        }
+
+    def media_control(
+        self,
+        command: str,
+    ) -> dict:
+        normalized = " ".join(
+            str(command or "")
+            .lower()
+            .replace("-", "_")
+            .split()
+        )
+
+        aliases = {
+            "play": "play_pause",
+            "pause": "play_pause",
+            "resume": "play_pause",
+            "play pause": "play_pause",
+            "play_pause": "play_pause",
+            "next": "next",
+            "next song": "next",
+            "next track": "next",
+            "previous": "previous",
+            "previous song": "previous",
+            "previous track": "previous",
+            "stop": "stop",
+            "mute": "mute",
+            "volume up": "volume_up",
+            "volume_up": "volume_up",
+            "volume down": "volume_down",
+            "volume_down": "volume_down",
+        }
+
+        action = aliases.get(
+            normalized,
+            normalized,
+        )
+
+        code = self.MEDIA_KEY_CODES.get(
+            action
+        )
+
+        if code is None:
+            raise PermissionError(
+                f"Media command '{command}' is not allowed."
+            )
+
+        user32 = self._user32()
+        user32.keybd_event(code, 0, 0, 0)
+        time.sleep(0.02)
+        user32.keybd_event(
+            code,
+            0,
+            0x0002,
+            0,
+        )
+
+        return {
+            "command": action,
+            "command_sent": True,
+            "verified_state": False,
+            "note": (
+                "Windows media key was sent. "
+                "Playback state is not independently verified."
+            ),
+        }
 
     def interact(
         self,
