@@ -4,6 +4,7 @@ import ctypes
 from ctypes import wintypes
 import os
 import time
+from urllib.parse import quote
 
 from iras.tools.system import launch_app
 
@@ -286,6 +287,96 @@ class WindowsUIController:
         user32.EnumWindows(callback, 0)
         return found[0] if found else None
 
+    def _force_foreground(
+        self,
+        hwnd: int,
+    ) -> bool:
+        user32 = self._user32()
+        kernel32 = ctypes.windll.kernel32
+
+        SW_RESTORE = 9
+        VK_MENU = 0x12
+        KEYEVENTF_KEYUP = 0x0002
+
+        for _attempt in range(3):
+            foreground = user32.GetForegroundWindow()
+
+            if int(foreground or 0) == int(hwnd):
+                return True
+
+            current_thread = kernel32.GetCurrentThreadId()
+            target_thread = user32.GetWindowThreadProcessId(
+                hwnd,
+                None,
+            )
+            foreground_thread = (
+                user32.GetWindowThreadProcessId(
+                    foreground,
+                    None,
+                )
+                if foreground
+                else 0
+            )
+
+            attached = []
+
+            try:
+                for thread_id in {
+                    int(target_thread or 0),
+                    int(foreground_thread or 0),
+                }:
+                    if (
+                        thread_id
+                        and thread_id != current_thread
+                    ):
+                        if user32.AttachThreadInput(
+                            current_thread,
+                            thread_id,
+                            True,
+                        ):
+                            attached.append(thread_id)
+
+                user32.ShowWindowAsync(
+                    hwnd,
+                    SW_RESTORE,
+                )
+
+                user32.keybd_event(
+                    VK_MENU,
+                    0,
+                    0,
+                    0,
+                )
+                user32.keybd_event(
+                    VK_MENU,
+                    0,
+                    KEYEVENTF_KEYUP,
+                    0,
+                )
+
+                user32.BringWindowToTop(hwnd)
+                user32.SetForegroundWindow(hwnd)
+                user32.SetActiveWindow(hwnd)
+                user32.SetFocus(hwnd)
+
+            finally:
+                for thread_id in reversed(attached):
+                    user32.AttachThreadInput(
+                        current_thread,
+                        thread_id,
+                        False,
+                    )
+
+            time.sleep(0.18)
+
+            if (
+                int(user32.GetForegroundWindow() or 0)
+                == int(hwnd)
+            ):
+                return True
+
+        return False
+
     def focus_app(
         self,
         app: str,
@@ -299,7 +390,7 @@ class WindowsUIController:
         if hwnd is None and ensure_open:
             launch_app(canonical)
             launched = True
-            deadline = time.monotonic() + 8.0
+            deadline = time.monotonic() + 10.0
 
             while time.monotonic() < deadline:
                 time.sleep(0.35)
@@ -312,16 +403,18 @@ class WindowsUIController:
                 f"Could not find a visible {canonical} window."
             )
 
-        user32 = self._user32()
-        user32.ShowWindow(hwnd, 9)
-        user32.BringWindowToTop(hwnd)
-        user32.SetForegroundWindow(hwnd)
-        time.sleep(0.20)
+        if not self._force_foreground(hwnd):
+            raise RuntimeError(
+                f"Windows refused to focus the {canonical} window. "
+                "IRAS did not send keyboard input to avoid controlling "
+                "the wrong application."
+            )
 
         return {
             "app": canonical,
             "window": hwnd,
             "launched": launched,
+            "foreground_verified": True,
         }
 
     def _key_event(self, key: str, down: bool):
@@ -567,6 +660,28 @@ class WindowsUIController:
             0,
         )
 
+    def _open_spotify_search_uri(
+        self,
+        query: str,
+    ) -> bool:
+        self._require_windows()
+
+        uri = (
+            "spotify:search:"
+            + quote(query, safe="")
+        )
+
+        result = ctypes.windll.shell32.ShellExecuteW(
+            None,
+            "open",
+            uri,
+            None,
+            None,
+            1,
+        )
+
+        return int(result) > 32
+
     def spotify_play(
         self,
         query: str,
@@ -587,28 +702,59 @@ class WindowsUIController:
                 "Spotify query is too long."
             )
 
+        deep_link_opened = False
+
+        try:
+            deep_link_opened = (
+                self._open_spotify_search_uri(query)
+            )
+        except Exception:
+            deep_link_opened = False
+
+        if deep_link_opened:
+            time.sleep(1.10)
+
         focused = self.focus_app(
             "spotify",
             ensure_open=True,
         )
 
         self.hotkey(["ctrl", "k"])
-        time.sleep(0.30)
+        time.sleep(0.35)
+        self.hotkey(["ctrl", "a"])
+        time.sleep(0.08)
         self.type_text(query)
-        time.sleep(0.90)
+        time.sleep(1.20)
         self.press("down")
-        time.sleep(0.12)
+        time.sleep(0.15)
         self.press("enter")
+        time.sleep(0.35)
+
+        print(
+            "[IRAS SPOTIFY] "
+            f"query={query!r} "
+            f"deep_link={deep_link_opened} "
+            f"foreground={focused.get('foreground_verified', False)}",
+            flush=True,
+        )
 
         return {
             "app": "spotify",
             "query": query,
             "launched": focused["launched"],
+            "deep_link_opened": deep_link_opened,
+            "foreground_verified": focused.get(
+                "foreground_verified",
+                False,
+            ),
+            "search_input_sent": True,
+            "activation_sent": True,
             "command_sent": True,
             "verified_playback": False,
             "note": (
-                "Spotify search/play command was sent. "
-                "Playback state is not independently verified."
+                "Spotify search was opened, the Spotify window was verified "
+                "in the foreground, and the first result was activated. "
+                "Audio playback state is not independently verified."
             ),
         }
 

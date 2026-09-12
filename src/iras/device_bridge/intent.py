@@ -78,6 +78,19 @@ def spotify_query_from_text(
     spotify_context: bool = False,
 ) -> str | None:
     command = normalize_command(text)
+
+    voice_filler = re.match(
+        r"^(?:yeah|yah|ya)\s+(.+\b(?:song|track|music)\b.*)$",
+        command,
+        flags=re.IGNORECASE,
+    )
+
+    if voice_filler:
+        command = (
+            "play "
+            + voice_filler.group(1)
+        )
+
     lower = command.lower()
     explicit_spotify = "spotify" in lower
 
