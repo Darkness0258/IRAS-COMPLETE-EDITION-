@@ -513,8 +513,36 @@ def chat_stream(
             },
         )
 
+        acquired = False
+
         try:
-            agent_lock.acquire()
+            try:
+                lock_wait = float(
+                    os.getenv(
+                        "IRAS_CHAT_LOCK_TIMEOUT",
+                        "12",
+                    )
+                )
+            except ValueError:
+                lock_wait = 12.0
+
+            lock_wait = max(
+                3.0,
+                min(
+                    lock_wait,
+                    30.0,
+                ),
+            )
+
+            acquired = agent_lock.acquire(
+                timeout=lock_wait
+            )
+
+            if not acquired:
+                raise RuntimeError(
+                    "IRAS is still finishing a previous request. "
+                    "Retry in a moment."
+                )
 
             try:
                 for text in (
@@ -530,7 +558,9 @@ def chat_stream(
                         },
                     )
             finally:
-                agent_lock.release()
+                if acquired:
+                    agent_lock.release()
+                    acquired = False
 
             metrics = (
                 runtime.agent

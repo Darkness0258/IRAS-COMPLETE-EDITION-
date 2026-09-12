@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import uuid
 from typing import Any, Iterator
@@ -46,6 +47,67 @@ class OpenAICompatibleProvider(Provider):
             )
 
         return headers
+
+    @staticmethod
+    def _env_seconds(
+        name: str,
+        default: float,
+        *,
+        minimum: float,
+        maximum: float,
+    ) -> float:
+        try:
+            value = float(
+                os.getenv(
+                    name,
+                    str(default),
+                )
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            value = default
+
+        return max(
+            minimum,
+            min(
+                value,
+                maximum,
+            ),
+        )
+
+    @classmethod
+    def _first_token_timeout_seconds(
+        cls,
+    ) -> float:
+        return cls._env_seconds(
+            "IRAS_FIRST_TOKEN_TIMEOUT",
+            8.0,
+            minimum=3.0,
+            maximum=30.0,
+        )
+
+    @classmethod
+    def _stream_read_timeout_seconds(
+        cls,
+    ) -> float:
+        first = (
+            cls
+            ._first_token_timeout_seconds()
+        )
+
+        configured = cls._env_seconds(
+            "IRAS_STREAM_READ_TIMEOUT",
+            10.0,
+            minimum=5.0,
+            maximum=45.0,
+        )
+
+        return max(
+            configured,
+            first + 1.0,
+        )
 
     def _get_client(self) -> httpx.Client:
         if (
@@ -283,16 +345,58 @@ class OpenAICompatibleProvider(Provider):
         )
         payload["stream"] = True
 
+        first_token_timeout = (
+            self
+            ._first_token_timeout_seconds()
+        )
+        stream_read_timeout = (
+            self
+            ._stream_read_timeout_seconds()
+        )
+
+        request_timeout = httpx.Timeout(
+            connect=min(
+                max(
+                    3.0,
+                    float(self.timeout),
+                ),
+                10.0,
+            ),
+            read=stream_read_timeout,
+            write=min(
+                max(
+                    5.0,
+                    float(self.timeout),
+                ),
+                20.0,
+            ),
+            pool=10.0,
+        )
+
         try:
             with self._get_client().stream(
                 "POST",
                 f"{self.base_url}/chat/completions",
                 headers=self._headers(),
                 json=payload,
+                timeout=request_timeout,
             ) as response:
                 self._check_response(response)
 
                 for line in response.iter_lines():
+                    if (
+                        not self.last_first_token_ms
+                        and (
+                            time.perf_counter()
+                            - started
+                        )
+                        > first_token_timeout
+                    ):
+                        raise RuntimeError(
+                            "LLM timed out waiting for first token after "
+                            f"{first_token_timeout:g} seconds."
+                        )
+
                     if not line:
                         continue
 
@@ -370,9 +474,15 @@ class OpenAICompatibleProvider(Provider):
                     yield text
 
         except httpx.TimeoutException as exc:
+            if not self.last_first_token_ms:
+                raise RuntimeError(
+                    "LLM timed out waiting for first token after "
+                    f"{first_token_timeout:g} seconds."
+                ) from exc
+
             raise RuntimeError(
-                "LLM request timed out after "
-                f"{self.timeout:g} seconds."
+                "LLM stream stalled for "
+                f"{stream_read_timeout:g} seconds."
             ) from exc
 
         except httpx.HTTPError as exc:
