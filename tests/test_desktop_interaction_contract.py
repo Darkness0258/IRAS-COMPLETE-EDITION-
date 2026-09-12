@@ -14,7 +14,7 @@ def test_executor_registers_interact_app():
     ).read_text(encoding="utf-8")
 
     assert '"interact_app"' in text
-    assert "WindowsUIController" in text
+    assert "UniversalWindowsController" in text
 
 
 def test_cloud_tool_exists():

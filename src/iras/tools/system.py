@@ -119,6 +119,9 @@ def launch_app(command: str):
     if any(ch in command for ch in ('\n', '\r', '&', '|', '>', '<', '^')):
         raise PermissionError('Shell operators are not allowed in launch_app; use run_shell with approval instead.')
 
+    from iras.device_bridge.app_catalog import ensure_safe_app_request
+    ensure_safe_app_request(command)
+
     # Resolve a single app name first. This covers natural model outputs such as
     # "google-chrome" on Windows without pretending a failed shell command worked.
     alias = _canonical_alias(command)
@@ -160,6 +163,15 @@ def launch_app(command: str):
     if p.exists():
         proc = subprocess.Popen([str(p.resolve())], shell=False)
         return {'launched': str(p.resolve()), 'pid': proc.pid}
+
+    # Final Windows fallback: safely resolve a normal installed GUI app from
+    # Get-StartApps/App Paths. User text is never inserted into a shell.
+    if os.name == 'nt':
+        from iras.device_bridge.app_catalog import get_app_catalog
+        try:
+            return get_app_catalog().launch(command)
+        except FileNotFoundError:
+            pass
 
     raise FileNotFoundError(
         f"Application '{command}' was not found. Use an installed app name or an explicit executable path."

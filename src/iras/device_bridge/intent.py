@@ -104,6 +104,31 @@ NON_MUSIC_PLAY_PREFIXES = (
     "episode ",
 )
 
+GENERIC_APP_NOUNS = {
+    "app",
+    "application",
+    "project",
+    "file",
+    "folder",
+    "website",
+    "url",
+    "queue",
+    "liked songs",
+    "now playing",
+}
+
+BROWSER_NAMES = {
+    "chrome",
+    "google chrome",
+    "edge",
+    "microsoft edge",
+    "firefox",
+    "mozilla firefox",
+    "brave",
+    "brave browser",
+    "opera",
+}
+
 
 def normalize_command(text: str) -> str:
     value = " ".join(
@@ -164,65 +189,125 @@ def _normalize_voice_music_form(command: str) -> str:
     )
 
     if match:
-        return (
-            "play "
-            + match.group(1)
-        )
+        return "play " + match.group(1)
 
     return command
 
 
 def is_retry_phrase(text: str) -> bool:
-    return (
-        normalize_command(text).lower()
-        in RETRY_PHRASES
-    )
+    return normalize_command(text).lower() in RETRY_PHRASES
 
 
-def media_control_from_text(
-    text: str,
-) -> str | None:
-    command = normalize_command(
-        text
-    ).lower()
+def media_control_from_text(text: str) -> str | None:
+    command = normalize_command(text).lower()
 
     for pattern, action in MEDIA_CONTROL_PATTERNS:
-        if re.match(
-            pattern,
-            command,
-            flags=re.IGNORECASE,
-        ):
+        if re.match(pattern, command, flags=re.IGNORECASE):
             return action
 
     return None
 
 
-def spotify_search_query_from_text(
-    text: str,
-) -> str | None:
-    command = _normalize_voice_music_form(
-        normalize_command(
-            text
-        )
+def media_control_request_from_text(text: str) -> dict | None:
+    command = normalize_command(text)
+    lower = command.lower()
+
+    # A request such as "play video on YouTube" is a content/navigation
+    # request, not a transport-resume command. Preserve it for browser/video
+    # routing while still allowing pause/stop/resume of existing media.
+    if re.match(
+        r"^(?:play|start)\s+(?:the\s+)?(?:video|movie|episode)"
+        r"\s+(?:on|in)\s+(?:youtube|netflix|prime\s+video)\b",
+        lower,
+    ):
+        return None
+
+    exact = media_control_from_text(command)
+
+    if exact:
+        return {
+            "command": exact,
+        }
+
+    target_patterns = (
+        (
+            r"^(pause|hold|resume|continue|stop|next|skip|previous|prev|mute|unmute)"
+            r"(?:\s+(?:the\s+)?(?:song|music|track|video))?"
+            r"\s+(?:on|in)\s+(.+)$"
+        ),
     )
 
-    for pattern in SEARCH_PATTERNS:
+    for pattern in target_patterns:
         match = re.match(
             pattern,
             command,
             flags=re.IGNORECASE,
         )
 
-        if match:
-            query = _clean_query(
-                match.group(1)
-            )
+        if not match:
+            continue
 
-            return (
-                query
-                if query
-                else None
-            )
+        verb = match.group(1).lower()
+        app = _clean_query(match.group(2))
+        mapping = {
+            "hold": "pause",
+            "resume": "play",
+            "continue": "play",
+            "skip": "next",
+            "prev": "previous",
+        }
+
+        return {
+            "command": mapping.get(verb, verb),
+            "app": app,
+        }
+
+    match = re.match(
+        r"^(?:play|resume|continue)\s+(?:the\s+)?(?:song|music|track|video)"
+        r"\s+(?:on|in)\s+(.+)$",
+        command,
+        flags=re.IGNORECASE,
+    )
+
+    if match:
+        return {
+            "command": "play",
+            "app": _clean_query(match.group(1)),
+        }
+
+    match = re.match(
+        r"^(volume\s+up|volume\s+down|turn\s+it\s+up|turn\s+it\s+down)"
+        r"\s+(?:on|in)\s+(.+)$",
+        command,
+        flags=re.IGNORECASE,
+    )
+
+    if match:
+        action = match.group(1).lower()
+        action = {
+            "turn it up": "volume_up",
+            "turn it down": "volume_down",
+            "volume up": "volume_up",
+            "volume down": "volume_down",
+        }[action]
+
+        return {
+            "command": action,
+            "app": _clean_query(match.group(2)),
+        }
+
+    return None
+
+
+def spotify_search_query_from_text(text: str) -> str | None:
+    command = _normalize_voice_music_form(normalize_command(text))
+
+    for pattern in SEARCH_PATTERNS:
+        match = re.match(pattern, command, flags=re.IGNORECASE)
+
+        if match:
+            query = _clean_query(match.group(1))
+            return query if query else None
 
     return None
 
@@ -232,37 +317,20 @@ def spotify_query_from_text(
     *,
     spotify_context: bool = False,
 ) -> str | None:
-    command = _normalize_voice_music_form(
-        normalize_command(
-            text
-        )
-    )
-
+    command = _normalize_voice_music_form(normalize_command(text))
     lower = command.lower()
 
-    if any(
-        destination in lower
-        for destination in NON_SPOTIFY_DESTINATIONS
-    ):
+    if any(destination in lower for destination in NON_SPOTIFY_DESTINATIONS):
         return None
 
-    explicit_spotify = (
-        "spotify" in lower
-    )
-
+    explicit_spotify = "spotify" in lower
     query = None
 
     for pattern in PLAY_PATTERNS:
-        match = re.match(
-            pattern,
-            command,
-            flags=re.IGNORECASE,
-        )
+        match = re.match(pattern, command, flags=re.IGNORECASE)
 
         if match:
-            query = _clean_query(
-                match.group(1)
-            )
+            query = _clean_query(match.group(1))
             break
 
     if not query:
@@ -294,9 +362,7 @@ def spotify_query_from_text(
         and not spotify_context
         and any(
             query_lower == name
-            or query_lower.startswith(
-                name + " "
-            )
+            or query_lower.startswith(name + " ")
             for name in obvious_non_music
         )
     ):
@@ -315,12 +381,8 @@ def spotify_query_from_text(
     return query
 
 
-def _open_spotify_intent(
-    text: str,
-) -> bool:
-    command = normalize_command(
-        text
-    ).lower()
+def _open_spotify_intent(text: str) -> bool:
+    command = normalize_command(text).lower()
 
     return bool(
         re.match(
@@ -330,14 +392,254 @@ def _open_spotify_intent(
     )
 
 
+def detect_apps_intent(text: str) -> dict | None:
+    command = normalize_command(text)
+    lower = command.lower()
+
+    if lower in {
+        "list apps",
+        "list installed apps",
+        "what apps are installed",
+        "what applications are installed",
+        "detect apps",
+        "detect installed apps",
+        "show installed apps",
+        "show running apps",
+        "what apps are running",
+    }:
+        return {
+            "tool": "device_detect_apps",
+            "arguments": {
+                "query": "",
+            },
+            "kind": "app_detect",
+        }
+
+    match = re.match(
+        r"^(?:find|detect|look\s+for)\s+(?:the\s+)?(?:app|application)\s+(.+)$",
+        command,
+        flags=re.IGNORECASE,
+    )
+
+    if match:
+        return {
+            "tool": "device_detect_apps",
+            "arguments": {
+                "query": _clean_query(match.group(1)),
+            },
+            "kind": "app_detect",
+        }
+
+    return None
+
+
+def app_control_intent(text: str) -> dict | None:
+    command = normalize_command(text)
+    lower = command.lower()
+
+    # Preserve specialized device routing. These are not application names.
+    if (
+        "http://" in lower
+        or "https://" in lower
+        or "www." in lower
+        or re.search(
+            r"\b(?:open|launch|start)\s+(?:my\s+)?(?:project|file|folder|website|url)\b",
+            lower,
+        )
+        or (" and search " in lower)
+    ):
+        return None
+
+    patterns = (
+        (r"^(?:open|launch|start)\s+(?:the\s+)?(.+?)(?:\s+app)?$", "open"),
+        (r"^(?:close|quit|exit)\s+(?:the\s+)?(.+?)(?:\s+app)?$", "close"),
+        (r"^(?:focus|switch\s+to|bring)\s+(?:the\s+)?(.+?)(?:\s+to\s+front)?$", "focus"),
+        (r"^(?:minimize|hide)\s+(?:the\s+)?(.+)$", "minimize"),
+        (r"^maximize\s+(?:the\s+)?(.+)$", "maximize"),
+        (r"^restore\s+(?:the\s+)?(.+)$", "restore"),
+    )
+
+    for pattern, action in patterns:
+        match = re.match(pattern, command, flags=re.IGNORECASE)
+
+        if not match:
+            continue
+
+        app = _clean_query(match.group(1))
+
+        if not app or app.lower() in GENERIC_APP_NOUNS:
+            return None
+
+        # Preserve historical open-app routing for old tests and simple opens.
+        if action == "open":
+            return {
+                "tool": "device_open_app",
+                "arguments": {
+                    "app": app,
+                },
+                "kind": "app_open",
+            }
+
+        return {
+            "tool": "device_app_control",
+            "arguments": {
+                "app": app,
+                "action": action,
+            },
+            "kind": "app_control",
+        }
+
+    return None
+
+
+def app_interaction_intent(text: str) -> dict | None:
+    command = normalize_command(text)
+
+    match = re.match(
+        r"^(?:open|launch|start)\s+(?:the\s+)?(.+?)"
+        r"\s+and\s+search(?:\s+for)?\s+(.+)$",
+        command,
+        flags=re.IGNORECASE,
+    )
+
+    if match:
+        app = _clean_query(match.group(1))
+        query = _clean_query(match.group(2))
+
+        if app.lower() in BROWSER_NAMES:
+            return {
+                "tool": "device_interact_app",
+                "arguments": {
+                    "app": app,
+                    "actions": [
+                        {
+                            "action": "hotkey",
+                            "keys": ["ctrl", "l"],
+                        },
+                        {
+                            "action": "type",
+                            "text": query,
+                        },
+                        {
+                            "action": "press",
+                            "key": "enter",
+                        },
+                    ],
+                    "ensure_open": True,
+                },
+                "kind": "browser_search",
+            }
+
+    match = re.match(
+        r"^(?:type|write)\s+(.+?)\s+(?:in|into)\s+(.+)$",
+        command,
+        flags=re.IGNORECASE,
+    )
+
+    if match:
+        return {
+            "tool": "device_interact_app",
+            "arguments": {
+                "app": _clean_query(match.group(2)),
+                "actions": [
+                    {
+                        "action": "type",
+                        "text": match.group(1),
+                    }
+                ],
+                "ensure_open": True,
+            },
+            "kind": "app_interact",
+        }
+
+    match = re.match(
+        r"^press\s+([a-z0-9]+)\s+(?:in|on)\s+(.+)$",
+        command,
+        flags=re.IGNORECASE,
+    )
+
+    if match:
+        return {
+            "tool": "device_interact_app",
+            "arguments": {
+                "app": _clean_query(match.group(2)),
+                "actions": [
+                    {
+                        "action": "press",
+                        "key": match.group(1).lower(),
+                    }
+                ],
+                "ensure_open": True,
+            },
+            "kind": "app_interact",
+        }
+
+    match = re.match(
+        r"^scroll\s+(up|down)\s+(?:in|on)\s+(.+)$",
+        command,
+        flags=re.IGNORECASE,
+    )
+
+    if match:
+        amount = 3 if match.group(1).lower() == "up" else -3
+        return {
+            "tool": "device_interact_app",
+            "arguments": {
+                "app": _clean_query(match.group(2)),
+                "actions": [
+                    {
+                        "action": "scroll",
+                        "amount": amount,
+                    }
+                ],
+                "ensure_open": True,
+            },
+            "kind": "app_interact",
+        }
+
+    match = re.match(
+        r"^search\s+(.+?)\s+(?:in|on)\s+(.+)$",
+        command,
+        flags=re.IGNORECASE,
+    )
+
+    if match:
+        query = _clean_query(match.group(1))
+        app = _clean_query(match.group(2))
+
+        if app.lower() in BROWSER_NAMES:
+            return {
+                "tool": "device_interact_app",
+                "arguments": {
+                    "app": app,
+                    "actions": [
+                        {
+                            "action": "hotkey",
+                            "keys": ["ctrl", "l"],
+                        },
+                        {
+                            "action": "type",
+                            "text": query,
+                        },
+                        {
+                            "action": "press",
+                            "key": "enter",
+                        },
+                    ],
+                    "ensure_open": True,
+                },
+                "kind": "browser_search",
+            }
+
+    return None
+
+
 def direct_device_intent(
     text: str,
     *,
     spotify_context: bool = False,
 ) -> dict | None:
-    if _open_spotify_intent(
-        text
-    ):
+    if _open_spotify_intent(text):
         return {
             "tool": "device_open_app",
             "arguments": {
@@ -346,24 +648,19 @@ def direct_device_intent(
             "kind": "spotify_open",
         }
 
-    control = media_control_from_text(
-        text
-    )
+    detected = detect_apps_intent(text)
+    if detected:
+        return detected
 
-    if control:
+    media = media_control_request_from_text(text)
+    if media:
         return {
             "tool": "device_media_control",
-            "arguments": {
-                "command": control,
-            },
+            "arguments": media,
             "kind": "media_control",
         }
 
-    search_query = (
-        spotify_search_query_from_text(
-            text
-        )
-    )
+    search_query = spotify_search_query_from_text(text)
 
     if search_query:
         return {
@@ -388,76 +685,71 @@ def direct_device_intent(
             "kind": "spotify_play",
         }
 
+    interaction = app_interaction_intent(text)
+    if interaction:
+        return interaction
+
+    lower = normalize_command(text).lower()
+    if any(
+        phrase in lower
+        for phrase in (
+            "open project",
+            "open my project",
+            "project in vs code",
+            "project in vscode",
+            "project in visual studio code",
+        )
+    ):
+        return None
+
+    app_action = app_control_intent(text)
+    if app_action:
+        return app_action
+
     return None
 
 
-def result_message(
-    action: dict,
-    result,
-) -> str:
-    tool = action.get(
-        "tool",
-        "",
-    )
-
-    arguments = action.get(
-        "arguments",
-        {},
-    )
+def result_message(action: dict, result) -> str:
+    tool = action.get("tool", "")
+    arguments = action.get("arguments", {})
 
     if not result.ok:
-        error = str(
-            result.error
-            or "unknown device error"
-        )
+        error = str(result.error or "unknown device error")
+        return "I couldn't complete that action on your PC: " + error
 
+    if tool == "device_detect_apps":
+        query = str(arguments.get("query", "")).strip()
         return (
-            "I couldn't complete that action on your PC: "
-            + error
+            f"I checked installed/running apps matching “{query}”."
+            if query
+            else "I checked the installed and running apps on your PC."
         )
 
     if tool == "device_open_app":
-        return "I opened Spotify on your PC."
+        app = str(arguments.get("app", "the app"))
+        return f"I opened {app} on your PC."
+
+    if tool == "device_app_control":
+        app = str(arguments.get("app", "the app"))
+        command = str(arguments.get("action", "control"))
+        return f"I sent the {command} command to {app}."
+
+    if tool == "device_interact_app":
+        app = str(arguments.get("app", "the app"))
+        return f"I completed the requested interaction in {app}."
 
     if tool == "device_spotify_search":
-        query = str(
-            arguments.get(
-                "query",
-                "",
-            )
-        )
-
-        return (
-            "I opened Spotify search for "
-            f"“{query}”."
-        )
+        query = str(arguments.get("query", ""))
+        return f"I opened Spotify search for “{query}”."
 
     if tool == "device_spotify_play":
-        query = str(
-            arguments.get(
-                "query",
-                "that track",
-            )
-        )
-
-        return (
-            "I sent Spotify the command to search for and play "
-            f"“{query}”."
-        )
+        query = str(arguments.get("query", "that track"))
+        return f"I searched Spotify and started “{query}”."
 
     if tool == "device_media_control":
-        command = str(
-            arguments.get(
-                "command",
-                "media",
-            )
-        ).replace(
-            "_",
-            " ",
-        )
-
-        return (
-            f"I sent the {command} command to Spotify."
-        )
+        command = str(arguments.get("command", "media")).replace("_", " ")
+        app = str(arguments.get("app", "")).strip()
+        target = f" on {app}" if app else ""
+        return f"I sent the {command} media command{target}."
 
     return "I completed the device action."

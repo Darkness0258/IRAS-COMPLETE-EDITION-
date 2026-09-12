@@ -34,6 +34,34 @@ def make_tools(store):
             device_id,
         )
 
+    def device_detect_apps(
+        query="",
+        limit=100,
+        device_id=None,
+    ):
+        return request(
+            "detect_apps",
+            {
+                "query": query,
+                "limit": limit,
+            },
+            device_id,
+        )
+
+    def device_app_control(
+        app,
+        action,
+        device_id=None,
+    ):
+        return request(
+            "app_control",
+            {
+                "app": app,
+                "action": action,
+            },
+            device_id,
+        )
+
     def device_open_app(
         app,
         device_id=None,
@@ -93,13 +121,19 @@ def make_tools(store):
 
     def device_media_control(
         command,
+        app=None,
         device_id=None,
     ):
+        arguments = {
+            "command": command,
+        }
+
+        if app:
+            arguments["app"] = app
+
         return request(
             "media_control",
-            {
-                "command": command,
-            },
+            arguments,
             device_id,
         )
 
@@ -230,9 +264,66 @@ def make_tools(store):
             PermissionLevel.READ,
         ),
         Tool(
+            "device_detect_apps",
+            (
+                "Auto-detect installed and running GUI applications on the "
+                "paired Windows PC. Use it to discover an app name before "
+                "control when the user is unsure what is installed."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 250,
+                    },
+                    **optional_device,
+                },
+            },
+            device_detect_apps,
+            PermissionLevel.READ,
+        ),
+        Tool(
+            "device_app_control",
+            (
+                "Control an auto-detected installed/running GUI app. Supports "
+                "focus, minimize, maximize, restore and graceful close. Shells "
+                "and administrative consoles remain blocked."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "app": {
+                        "type": "string",
+                    },
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "focus",
+                            "minimize",
+                            "maximize",
+                            "restore",
+                            "close",
+                        ],
+                    },
+                    **optional_device,
+                },
+                "required": [
+                    "app",
+                    "action",
+                ],
+            },
+            device_app_control,
+            PermissionLevel.SAFE_ACTION,
+        ),
+        Tool(
             "device_open_app",
             (
-                "Open an approved desktop application on the user's paired "
+                "Open a safe auto-detected installed GUI application on the user's paired "
                 "computer. Good for VS Code, Chrome, Spotify, Notepad, and Explorer."
             ),
             {
@@ -253,7 +344,7 @@ def make_tools(store):
         Tool(
             "device_interact_app",
             (
-                "Interact with one approved desktop application on the paired "
+                "Interact with one safe auto-detected desktop application on the paired "
                 "Windows PC. Use this for typing, searching, pressing keys, "
                 "scrolling, or clicking known coordinates. It can launch and "
                 "focus the app first. For Chrome search use Ctrl+L, type the "
@@ -264,16 +355,10 @@ def make_tools(store):
                 "properties": {
                     "app": {
                         "type": "string",
-                        "enum": [
-                            "chrome",
-                            "spotify",
-                            "code",
-                            "vscode",
-                            "visual studio code",
-                            "notepad",
-                            "explorer",
-                            "file explorer",
-                        ],
+                        "description": (
+                            "Installed/running GUI app name. IRAS auto-detects "
+                            "the closest safe application match on Windows."
+                        ),
                     },
                     "actions": {
                         "type": "array",
@@ -418,6 +503,10 @@ def make_tools(store):
                             "open_liked_songs",
                             "open_now_playing",
                         ],
+                    },
+                    "app": {
+                        "type": "string",
+                        "description": "Optional target media application. Omit for auto-detection.",
                     },
                     **optional_device,
                 },

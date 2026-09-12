@@ -15,13 +15,15 @@ from iras.tools.system import (
     launch_app,
     system_info,
 )
-from iras.device_bridge.ui_control import (
-    WindowsUIController,
+from iras.device_bridge.universal_control import (
+    UniversalWindowsController,
 )
 
 
 DEFAULT_CAPABILITIES = [
     "system_info",
+    "detect_apps",
+    "app_control",
     "open_app",
     "open_url",
     "open_project",
@@ -88,7 +90,7 @@ class DeviceExecutor:
                 Path.home().resolve()
             ]
 
-        self.ui = WindowsUIController()
+        self.ui = UniversalWindowsController()
 
     @staticmethod
     def default_roots() -> list[str]:
@@ -170,6 +172,8 @@ class DeviceExecutor:
 
         handlers = {
             "system_info": self.system_info,
+            "detect_apps": self.detect_apps,
+            "app_control": self.app_control,
             "open_app": self.open_app,
             "open_url": self.open_url,
             "open_project": self.open_project,
@@ -205,21 +209,36 @@ class DeviceExecutor:
         ]
         return info
 
+    def detect_apps(
+        self,
+        query: str = "",
+        limit: int = 100,
+    ):
+        return {
+            "installed": self.ui.catalog.list_apps(
+                query=(query or None),
+                limit=limit,
+            ),
+            "running": self.ui.detect_running_apps(
+                query=(query or None),
+                limit=limit,
+            ),
+        }
+
+    def app_control(
+        self,
+        app: str,
+        action: str,
+    ):
+        return self.ui.app_control(
+            app,
+            action,
+        )
+
     def open_app(
         self,
         app: str,
     ):
-        normalized = " ".join(
-            str(app)
-            .lower()
-            .split()
-        )
-
-        if normalized not in self.APP_ALIASES:
-            raise PermissionError(
-                "Remote app launch is limited to approved application aliases."
-            )
-
         return launch_app(
             app
         )
@@ -613,9 +632,11 @@ class DeviceExecutor:
     def media_control(
         self,
         command: str,
+        app: str | None = None,
     ):
         return self.ui.media_control(
-            command
+            command,
+            app=app,
         )
 
     def capture_screen(
