@@ -406,8 +406,115 @@ class WindowsUIController:
             kernel32.GlobalFree(handle)
 
     def type_text(self, text: str):
-        self._set_clipboard_text(text)
-        self.hotkey(["ctrl", "v"])
+        self._require_windows()
+
+        value = str(text)
+
+        if not value:
+            return
+
+        INPUT_KEYBOARD = 1
+        KEYEVENTF_KEYUP = 0x0002
+        KEYEVENTF_UNICODE = 0x0004
+
+        class MOUSEINPUT(ctypes.Structure):
+            _fields_ = [
+                ("dx", wintypes.LONG),
+                ("dy", wintypes.LONG),
+                ("mouseData", wintypes.DWORD),
+                ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", wintypes.WPARAM),
+            ]
+
+        class KEYBDINPUT(ctypes.Structure):
+            _fields_ = [
+                ("wVk", wintypes.WORD),
+                ("wScan", wintypes.WORD),
+                ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", wintypes.WPARAM),
+            ]
+
+        class HARDWAREINPUT(ctypes.Structure):
+            _fields_ = [
+                ("uMsg", wintypes.DWORD),
+                ("wParamL", wintypes.WORD),
+                ("wParamH", wintypes.WORD),
+            ]
+
+        class INPUTUNION(ctypes.Union):
+            _fields_ = [
+                ("mi", MOUSEINPUT),
+                ("ki", KEYBDINPUT),
+                ("hi", HARDWAREINPUT),
+            ]
+
+        class INPUT(ctypes.Structure):
+            _fields_ = [
+                ("type", wintypes.DWORD),
+                ("u", INPUTUNION),
+            ]
+
+        utf16 = value.encode("utf-16-le")
+
+        code_units = [
+            int.from_bytes(
+                utf16[index:index + 2],
+                "little",
+            )
+            for index in range(
+                0,
+                len(utf16),
+                2,
+            )
+        ]
+
+        events = []
+
+        for code_unit in code_units:
+            key_down = INPUT()
+            key_down.type = INPUT_KEYBOARD
+            key_down.u.ki = KEYBDINPUT(
+                0,
+                code_unit,
+                KEYEVENTF_UNICODE,
+                0,
+                0,
+            )
+
+            key_up = INPUT()
+            key_up.type = INPUT_KEYBOARD
+            key_up.u.ki = KEYBDINPUT(
+                0,
+                code_unit,
+                KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                0,
+                0,
+            )
+
+            events.extend([key_down, key_up])
+
+        array_type = INPUT * len(events)
+        array = array_type(*events)
+
+        sent = self._user32().SendInput(
+            len(events),
+            array,
+            ctypes.sizeof(INPUT),
+        )
+
+        if sent != len(events):
+            raise RuntimeError(
+                "Windows could not inject all requested text input."
+            )
+
+        time.sleep(
+            min(
+                0.35,
+                0.01 + (len(code_units) * 0.001),
+            )
+        )
 
     def click(
         self,
