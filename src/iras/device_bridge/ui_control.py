@@ -682,6 +682,139 @@ class WindowsUIController:
 
         return int(result) > 32
 
+    def _physical_window_rect(
+        self,
+        hwnd: int,
+    ):
+        # Return physical-pixel window bounds so ImageGrab and mouse
+        # coordinates use the same DPI coordinate system.
+        self._require_windows()
+
+        rect = wintypes.RECT()
+
+        try:
+            DWMWA_EXTENDED_FRAME_BOUNDS = 9
+
+            result = (
+                ctypes.windll.dwmapi
+                .DwmGetWindowAttribute(
+                    hwnd,
+                    DWMWA_EXTENDED_FRAME_BOUNDS,
+                    ctypes.byref(rect),
+                    ctypes.sizeof(rect),
+                )
+            )
+
+            if result == 0:
+                return rect
+
+        except Exception:
+            pass
+
+        if not self._user32().GetWindowRect(
+            hwnd,
+            ctypes.byref(rect),
+        ):
+            raise RuntimeError(
+                "Could not read the Spotify window position."
+            )
+
+        return rect
+
+    def _set_physical_cursor(
+        self,
+        x: int,
+        y: int,
+    ) -> dict:
+        # Move and verify the cursor in physical screen pixels.
+        user32 = self._user32()
+
+        moved = False
+
+        try:
+            moved = bool(
+                user32.SetPhysicalCursorPos(
+                    int(x),
+                    int(y),
+                )
+            )
+        except Exception:
+            moved = bool(
+                user32.SetCursorPos(
+                    int(x),
+                    int(y),
+                )
+            )
+
+        if not moved:
+            raise RuntimeError(
+                "Windows refused to move the cursor to the Spotify Play button."
+            )
+
+        point = wintypes.POINT()
+
+        try:
+            ok = user32.GetPhysicalCursorPos(
+                ctypes.byref(point)
+            )
+        except Exception:
+            ok = user32.GetCursorPos(
+                ctypes.byref(point)
+            )
+
+        if not ok:
+            raise RuntimeError(
+                "Could not verify the physical cursor position."
+            )
+
+        actual_x = int(point.x)
+        actual_y = int(point.y)
+
+        if (
+            abs(actual_x - int(x)) > 3
+            or abs(actual_y - int(y)) > 3
+        ):
+            raise RuntimeError(
+                "Windows DPI scaling moved the cursor away from the requested "
+                f"Spotify button position: requested=({x},{y}) "
+                f"actual=({actual_x},{actual_y})."
+            )
+
+        return {
+            "requested_x": int(x),
+            "requested_y": int(y),
+            "actual_x": actual_x,
+            "actual_y": actual_y,
+        }
+
+    def _send_spotify_play_command(
+        self,
+        hwnd: int,
+    ) -> bool:
+        # Explicit PLAY, not PLAY_PAUSE, so this is idempotent.
+        user32 = self._user32()
+
+        WM_APPCOMMAND = 0x0319
+        APPCOMMAND_MEDIA_PLAY = 46
+        SMTO_ABORTIFHUNG = 0x0002
+
+        result_value = ctypes.c_size_t()
+
+        try:
+            sent = user32.SendMessageTimeoutW(
+                hwnd,
+                WM_APPCOMMAND,
+                hwnd,
+                APPCOMMAND_MEDIA_PLAY << 16,
+                SMTO_ABORTIFHUNG,
+                1500,
+                ctypes.byref(result_value),
+            )
+        except Exception:
+            return False
+
+        return bool(sent)
+
     def _spotify_play_button_point(
         self,
         hwnd: int,
@@ -690,14 +823,9 @@ class WindowsUIController:
 
         from PIL import ImageGrab
 
-        user32 = self._user32()
-        rect = wintypes.RECT()
-
-        if not user32.GetWindowRect(
-            hwnd,
-            ctypes.byref(rect),
-        ):
-            return None
+        rect = self._physical_window_rect(
+            hwnd
+        )
 
         left = int(rect.left)
         top = int(rect.top)
@@ -778,15 +906,9 @@ class WindowsUIController:
         detected = point is not None
 
         if point is None:
-            rect = wintypes.RECT()
-
-            if not self._user32().GetWindowRect(
-                hwnd,
-                ctypes.byref(rect),
-            ):
-                raise RuntimeError(
-                    "Could not read the Spotify window position."
-                )
+            rect = self._physical_window_rect(
+                hwnd
+            )
 
             width = max(
                 1,
@@ -828,14 +950,16 @@ class WindowsUIController:
                 "Spotify lost foreground focus before IRAS could press Play."
             )
 
-        user32 = self._user32()
-
-        user32.SetCursorPos(
+        cursor = self._set_physical_cursor(
             int(point["x"]),
             int(point["y"]),
         )
 
-        time.sleep(0.08)
+        time.sleep(
+            0.10
+        )
+
+        user32 = self._user32()
 
         user32.mouse_event(
             0x0002,
@@ -843,6 +967,9 @@ class WindowsUIController:
             0,
             0,
             0,
+        )
+        time.sleep(
+            0.035
         )
         user32.mouse_event(
             0x0004,
@@ -852,10 +979,29 @@ class WindowsUIController:
             0,
         )
 
-        time.sleep(0.55)
+        time.sleep(
+            0.35
+        )
+
+        media_play_sent = (
+            self._send_spotify_play_command(
+                hwnd
+            )
+        )
+
+        time.sleep(
+            0.45
+        )
 
         return {
             "detected": detected,
+            "media_play_sent": media_play_sent,
+            "cursor_actual_x": cursor[
+                "actual_x"
+            ],
+            "cursor_actual_y": cursor[
+                "actual_y"
+            ],
             **point,
         }
 
@@ -938,7 +1084,10 @@ class WindowsUIController:
             f"foreground={focused.get('foreground_verified', False)} "
             f"play_click=({play_click['x']},{play_click['y']}) "
             f"green_detected={play_click['detected']} "
-            f"green_pixels={play_click['green_pixels']}",
+            f"green_pixels={play_click['green_pixels']} "
+            f"cursor_actual=({play_click['cursor_actual_x']},"
+            f"{play_click['cursor_actual_y']}) "
+            f"media_play={play_click['media_play_sent']}",
             flush=True,
         )
 
@@ -967,13 +1116,24 @@ class WindowsUIController:
                 "y": play_click[
                     "y"
                 ],
+                "actual_x": play_click[
+                    "cursor_actual_x"
+                ],
+                "actual_y": play_click[
+                    "cursor_actual_y"
+                ],
             },
+            "media_play_sent": play_click[
+                "media_play_sent"
+            ],
             "command_sent": True,
             "verified_playback": False,
             "note": (
                 "Spotify search was opened, Spotify was verified in the "
-                "foreground, and IRAS clicked the Top Result Play button. "
-                "Audio playback state is not independently verified."
+                "foreground, IRAS clicked the Top Result Play button using "
+                "verified physical coordinates, and sent an explicit Windows "
+                "MEDIA_PLAY command. Audio playback state is not independently "
+                "verified."
             ),
         }
 

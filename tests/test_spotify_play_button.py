@@ -63,5 +63,5 @@ def test_spotify_click_keeps_foreground_guard():
     block = text[start:end]
 
     assert "_force_foreground" in block
-    assert "SetCursorPos" in block
+    assert "_set_physical_cursor" in block
     assert "mouse_event" in block
