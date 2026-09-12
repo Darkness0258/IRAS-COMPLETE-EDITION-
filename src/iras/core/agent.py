@@ -641,8 +641,28 @@ class IRASAgent:
 
         spotify_context = bool(
             self._last_device_action
-            and self._last_device_action.get("tool")
-            == "device_spotify_play"
+            and (
+                (
+                    self._last_device_action
+                    .get("tool")
+                )
+                in {
+                    "device_spotify_play",
+                    "device_spotify_search",
+                    "device_media_control",
+                }
+                or (
+                    self._last_device_action
+                    .get("tool")
+                    == "device_open_app"
+                    and (
+                        self._last_device_action
+                        .get("arguments")
+                        or {}
+                    ).get("app")
+                    == "spotify"
+                )
+            )
         )
 
         return direct_device_intent(

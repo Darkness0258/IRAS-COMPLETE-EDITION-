@@ -65,6 +65,19 @@ def make_tools(store):
             timeout=50,
         )
 
+    def device_spotify_search(
+        query,
+        device_id=None,
+    ):
+        return request(
+            "spotify_search",
+            {
+                "query": query,
+            },
+            device_id,
+            timeout=45,
+        )
+
     def device_spotify_play(
         query,
         device_id=None,
@@ -325,6 +338,28 @@ def make_tools(store):
             PermissionLevel.SAFE_ACTION,
         ),
         Tool(
+            "device_spotify_search",
+            (
+                "Open Spotify search for any requested song, artist, album, "
+                "playlist, podcast, or free-text query without starting "
+                "playback."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                    },
+                    **optional_device,
+                },
+                "required": [
+                    "query",
+                ],
+            },
+            device_spotify_search,
+            PermissionLevel.SAFE_ACTION,
+        ),
+        Tool(
             "device_spotify_play",
             (
                 "Search for and start a requested song/artist/query in the "
@@ -373,8 +408,15 @@ def make_tools(store):
                             "previous",
                             "stop",
                             "mute",
+                            "unmute",
                             "volume_up",
                             "volume_down",
+                            "shuffle_toggle",
+                            "repeat_toggle",
+                            "like_toggle",
+                            "open_queue",
+                            "open_liked_songs",
+                            "open_now_playing",
                         ],
                     },
                     **optional_device,

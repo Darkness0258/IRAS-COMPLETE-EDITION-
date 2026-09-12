@@ -31,6 +31,7 @@ DEFAULT_CAPABILITIES = [
     "run_tests",
     "capture_screen",
     "interact_app",
+    "spotify_search",
     "spotify_play",
     "media_control",
 ]
@@ -178,6 +179,7 @@ class DeviceExecutor:
             "run_tests": self.run_tests,
             "capture_screen": self.capture_screen,
             "interact_app": self.interact_app,
+            "spotify_search": self.spotify_search,
             "spotify_play": self.spotify_play,
             "media_control": self.media_control,
         }
@@ -590,6 +592,14 @@ class DeviceExecutor:
             ensure_open=bool(
                 ensure_open
             ),
+        )
+
+    def spotify_search(
+        self,
+        query: str,
+    ):
+        return self.ui.spotify_search(
+            query
         )
 
     def spotify_play(

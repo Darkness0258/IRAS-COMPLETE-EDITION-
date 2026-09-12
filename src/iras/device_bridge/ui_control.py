@@ -1005,6 +1005,84 @@ class WindowsUIController:
             **point,
         }
 
+    def spotify_search(
+        self,
+        query: str,
+    ) -> dict:
+        query = " ".join(
+            str(query or "")
+            .strip()
+            .split()
+        )
+
+        if not query:
+            raise ValueError(
+                "Spotify search requires a query."
+            )
+
+        if len(query) > 220:
+            raise PermissionError(
+                "Spotify query is too long."
+            )
+
+        deep_link_opened = False
+
+        try:
+            deep_link_opened = (
+                self._open_spotify_search_uri(
+                    query
+                )
+            )
+        except Exception:
+            deep_link_opened = False
+
+        if deep_link_opened:
+            time.sleep(1.0)
+
+        focused = self.focus_app(
+            "spotify",
+            ensure_open=True,
+        )
+
+        if not deep_link_opened:
+            self.hotkey(
+                [
+                    "ctrl",
+                    "k",
+                ]
+            )
+            time.sleep(0.25)
+            self.hotkey(
+                [
+                    "ctrl",
+                    "a",
+                ]
+            )
+            time.sleep(0.05)
+            self.type_text(
+                query
+            )
+            time.sleep(0.45)
+
+        print(
+            "[IRAS SPOTIFY SEARCH] "
+            f"query={query!r} "
+            f"deep_link={deep_link_opened} "
+            f"foreground={focused.get('foreground_verified', False)}",
+            flush=True,
+        )
+
+        return {
+            "app": "spotify",
+            "query": query,
+            "deep_link_opened": deep_link_opened,
+            "foreground_verified": focused.get(
+                "foreground_verified",
+                False,
+            ),
+            "search_opened": True,
+        }
+
     def spotify_play(
         self,
         query: str,
@@ -1137,6 +1215,50 @@ class WindowsUIController:
             ),
         }
 
+    def _send_media_appcommand(
+        self,
+        command_id: int,
+        *,
+        hwnd: int | None = None,
+    ) -> bool:
+        self._require_windows()
+
+        user32 = self._user32()
+
+        if hwnd is None:
+            hwnd = self._find_window(
+                "spotify"
+            )
+
+        if hwnd is None:
+            hwnd = int(
+                user32.GetForegroundWindow()
+                or 0
+            )
+
+        if not hwnd:
+            return False
+
+        WM_APPCOMMAND = 0x0319
+        SMTO_ABORTIFHUNG = 0x0002
+
+        result_value = ctypes.c_size_t()
+
+        try:
+            sent = user32.SendMessageTimeoutW(
+                hwnd,
+                WM_APPCOMMAND,
+                hwnd,
+                int(command_id) << 16,
+                SMTO_ABORTIFHUNG,
+                1500,
+                ctypes.byref(result_value),
+            )
+        except Exception:
+            return False
+
+        return bool(sent)
+
     def media_control(
         self,
         command: str,
@@ -1149,23 +1271,20 @@ class WindowsUIController:
         )
 
         aliases = {
-            "play": "play_pause",
-            "pause": "play_pause",
-            "resume": "play_pause",
+            "resume": "play",
             "play pause": "play_pause",
-            "play_pause": "play_pause",
-            "next": "next",
             "next song": "next",
             "next track": "next",
-            "previous": "previous",
             "previous song": "previous",
             "previous track": "previous",
-            "stop": "stop",
-            "mute": "mute",
             "volume up": "volume_up",
-            "volume_up": "volume_up",
             "volume down": "volume_down",
-            "volume_down": "volume_down",
+            "shuffle": "shuffle_toggle",
+            "repeat": "repeat_toggle",
+            "like": "like_toggle",
+            "queue": "open_queue",
+            "liked songs": "open_liked_songs",
+            "now playing": "open_now_playing",
         }
 
         action = aliases.get(
@@ -1173,33 +1292,96 @@ class WindowsUIController:
             normalized,
         )
 
-        code = self.MEDIA_KEY_CODES.get(
+        app_commands = {
+            "next": 11,
+            "previous": 12,
+            "stop": 13,
+            "play_pause": 14,
+            "mute": 8,
+            "unmute": 8,
+            "volume_down": 9,
+            "volume_up": 10,
+            "play": 46,
+            "pause": 47,
+        }
+
+        if action in app_commands:
+            sent = self._send_media_appcommand(
+                app_commands[
+                    action
+                ]
+            )
+
+            if not sent:
+                raise RuntimeError(
+                    f"Windows rejected the {action} media command."
+                )
+
+            return {
+                "command": action,
+                "command_sent": True,
+                "transport": "wm_appcommand",
+                "verified_state": False,
+            }
+
+        spotify_shortcuts = {
+            "shuffle_toggle": [
+                "ctrl",
+                "s",
+            ],
+            "repeat_toggle": [
+                "ctrl",
+                "r",
+            ],
+            "like_toggle": [
+                "alt",
+                "shift",
+                "b",
+            ],
+            "open_queue": [
+                "alt",
+                "shift",
+                "q",
+            ],
+            "open_liked_songs": [
+                "alt",
+                "shift",
+                "s",
+            ],
+            "open_now_playing": [
+                "alt",
+                "shift",
+                "j",
+            ],
+        }
+
+        keys = spotify_shortcuts.get(
             action
         )
 
-        if code is None:
+        if keys is None:
             raise PermissionError(
                 f"Media command '{command}' is not allowed."
             )
 
-        user32 = self._user32()
-        user32.keybd_event(code, 0, 0, 0)
-        time.sleep(0.02)
-        user32.keybd_event(
-            code,
-            0,
-            0x0002,
-            0,
+        focused = self.focus_app(
+            "spotify",
+            ensure_open=True,
+        )
+
+        self.hotkey(
+            keys
         )
 
         return {
             "command": action,
             "command_sent": True,
-            "verified_state": False,
-            "note": (
-                "Windows media key was sent. "
-                "Playback state is not independently verified."
+            "transport": "spotify_keyboard_shortcut",
+            "foreground_verified": focused.get(
+                "foreground_verified",
+                False,
             ),
+            "verified_state": False,
         }
 
     def interact(
