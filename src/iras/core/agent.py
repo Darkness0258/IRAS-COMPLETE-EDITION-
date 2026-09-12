@@ -291,6 +291,19 @@ class IRASAgent:
                 "screen on my",
                 "files on my",
                 "file on my",
+                "search in chrome",
+                "search chrome",
+                "type in chrome",
+                "type in vscode",
+                "type in vs code",
+                "type in notepad",
+                "press in chrome",
+                "click in chrome",
+                "scroll in chrome",
+                "in chrome",
+                "in vscode",
+                "in vs code",
+                "in notepad",
             ),
         )
 
@@ -353,6 +366,33 @@ class IRASAgent:
         requested_apps = cls._requested_device_apps(
             q
         )
+
+        interaction_intent = (
+            requested_apps
+            and cls._contains_any(
+                q,
+                (
+                    "search ",
+                    "type ",
+                    "write ",
+                    "press ",
+                    "click ",
+                    "double click",
+                    "scroll ",
+                    "paste ",
+                    "select ",
+                    "go to ",
+                    "navigate ",
+                    "play ",
+                    "pause ",
+                ),
+            )
+        )
+
+        if interaction_intent:
+            return {
+                "device_interact_app"
+            }
 
         if requested_apps and cls._contains_any(
             q,
@@ -677,7 +717,10 @@ class IRASAgent:
 
                 if (
                     call.name
-                    == "device_open_app"
+                    in {
+                        "device_open_app",
+                        "device_interact_app",
+                    }
                     and not self._device_app_allowed(
                         user_text,
                         str(

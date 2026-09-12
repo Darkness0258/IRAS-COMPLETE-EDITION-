@@ -15,6 +15,9 @@ from iras.tools.system import (
     launch_app,
     system_info,
 )
+from iras.device_bridge.ui_control import (
+    WindowsUIController,
+)
 
 
 DEFAULT_CAPABILITIES = [
@@ -27,6 +30,7 @@ DEFAULT_CAPABILITIES = [
     "git_status",
     "run_tests",
     "capture_screen",
+    "interact_app",
 ]
 
 
@@ -80,6 +84,8 @@ class DeviceExecutor:
             self.allowed_roots = [
                 Path.home().resolve()
             ]
+
+        self.ui = WindowsUIController()
 
     @staticmethod
     def default_roots() -> list[str]:
@@ -169,6 +175,7 @@ class DeviceExecutor:
             "git_status": self.git_status,
             "run_tests": self.run_tests,
             "capture_screen": self.capture_screen,
+            "interact_app": self.interact_app,
         }
 
         handler = handlers.get(
@@ -566,6 +573,20 @@ class DeviceExecutor:
                 result.stderr[-12000:]
             ),
         }
+
+    def interact_app(
+        self,
+        app: str,
+        actions,
+        ensure_open: bool = True,
+    ):
+        return self.ui.interact(
+            app,
+            actions,
+            ensure_open=bool(
+                ensure_open
+            ),
+        )
 
     def capture_screen(
         self,

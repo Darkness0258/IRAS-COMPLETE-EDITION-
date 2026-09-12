@@ -46,6 +46,25 @@ def make_tools(store):
             device_id,
         )
 
+    def device_interact_app(
+        app,
+        actions,
+        ensure_open=True,
+        device_id=None,
+    ):
+        return request(
+            "interact_app",
+            {
+                "app": app,
+                "actions": actions,
+                "ensure_open": (
+                    ensure_open
+                ),
+            },
+            device_id,
+            timeout=50,
+        )
+
     def device_open_url(
         url,
         device_id=None,
@@ -191,6 +210,93 @@ def make_tools(store):
                 ],
             },
             device_open_app,
+            PermissionLevel.SAFE_ACTION,
+        ),
+        Tool(
+            "device_interact_app",
+            (
+                "Interact with one approved desktop application on the paired "
+                "Windows PC. Use this for typing, searching, pressing keys, "
+                "scrolling, or clicking known coordinates. It can launch and "
+                "focus the app first. For Chrome search use Ctrl+L, type the "
+                "query, then Enter."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "app": {
+                        "type": "string",
+                        "enum": [
+                            "chrome",
+                            "spotify",
+                            "code",
+                            "vscode",
+                            "visual studio code",
+                            "notepad",
+                            "explorer",
+                            "file explorer",
+                        ],
+                    },
+                    "actions": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 15,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "action": {
+                                    "type": "string",
+                                    "enum": [
+                                        "wait",
+                                        "type",
+                                        "press",
+                                        "hotkey",
+                                        "click",
+                                        "double_click",
+                                        "scroll",
+                                    ],
+                                },
+                                "text": {
+                                    "type": "string",
+                                },
+                                "key": {
+                                    "type": "string",
+                                },
+                                "keys": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string",
+                                    },
+                                },
+                                "x": {
+                                    "type": "integer",
+                                },
+                                "y": {
+                                    "type": "integer",
+                                },
+                                "amount": {
+                                    "type": "integer",
+                                },
+                                "seconds": {
+                                    "type": "number",
+                                },
+                            },
+                            "required": [
+                                "action",
+                            ],
+                        },
+                    },
+                    "ensure_open": {
+                        "type": "boolean",
+                    },
+                    **optional_device,
+                },
+                "required": [
+                    "app",
+                    "actions",
+                ],
+            },
+            device_interact_app,
             PermissionLevel.SAFE_ACTION,
         ),
         Tool(
