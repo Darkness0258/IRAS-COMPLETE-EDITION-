@@ -12,6 +12,12 @@ from iras.device_bridge.intent import (
     is_retry_phrase,
     result_message as device_result_message,
 )
+from iras.device_bridge.planner import (
+    SAFE_DEVICE_PLANNER_TOOLS,
+    extract_app_scope,
+    planner_system_nudge,
+    should_use_device_planner,
+)
 from iras.social_style import (
     empty_reply_fallback,
     is_social_turn,
@@ -200,6 +206,20 @@ class IRASAgent:
             "notepad.exe": "notepad",
             "file explorer": "explorer",
             "explorer.exe": "explorer",
+            "microsoft edge": "edge",
+            "ms edge": "edge",
+            "edge.exe": "edge",
+            "mozilla firefox": "firefox",
+            "firefox.exe": "firefox",
+            "brave browser": "brave",
+            "brave.exe": "brave",
+            "discord.exe": "discord",
+            "telegram desktop": "telegram",
+            "telegram.exe": "telegram",
+            "whatsapp.exe": "whatsapp",
+            "vlc media player": "vlc",
+            "vlc.exe": "vlc",
+            "steam.exe": "steam",
         }
 
         return aliases.get(
@@ -236,6 +256,25 @@ class IRASAgent:
         for phrase, canonical in candidates:
             if phrase in q and canonical not in found:
                 found.append(canonical)
+
+        # v3 planner scope: dynamically capture app names explicitly named
+        # in the current turn instead of relying on a hard-coded app list.
+        for candidate in extract_app_scope(
+            user_text
+        ):
+            canonical = (
+                cls._canonical_device_app_name(
+                    candidate
+                )
+            )
+
+            if (
+                canonical
+                and canonical not in found
+            ):
+                found.append(
+                    canonical
+                )
 
         return found
 
@@ -335,6 +374,13 @@ class IRASAgent:
         )
 
         if not device_context:
+            if should_use_device_planner(
+                user_text
+            ):
+                return set(
+                    SAFE_DEVICE_PLANNER_TOOLS
+                )
+
             return set()
 
         # Most-specific intent wins. Do not expose every remote action to the
@@ -847,6 +893,41 @@ class IRASAgent:
             )
         )
 
+        planner_mode = bool(
+            tool_names
+            and set(
+                SAFE_DEVICE_PLANNER_TOOLS
+            ).issubset(
+                set(tool_names)
+            )
+        )
+
+        if planner_mode:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        planner_system_nudge(
+                            user_text,
+                            requested_device_apps,
+                        )
+                    ),
+                }
+            )
+
+            self.audit.record(
+                "device_planner_started",
+                {
+                    "user_text": user_text,
+                    "app_scope": (
+                        requested_device_apps
+                    ),
+                    "tool_count": len(
+                        tool_names
+                    ),
+                },
+            )
+
         tool_schemas = (
             self.tools.schemas(
                 tool_names
@@ -959,26 +1040,39 @@ class IRASAgent:
             ):
                 blocked_error = None
 
+                guarded_app = ""
+
+                if call.name in {
+                    "device_open_app",
+                    "device_interact_app",
+                    "device_app_control",
+                }:
+                    guarded_app = str(
+                        call.arguments.get(
+                            "app",
+                            "",
+                        )
+                    )
+
+                elif call.name in {
+                    "device_spotify_play",
+                    "device_spotify_search",
+                }:
+                    guarded_app = "spotify"
+
+                elif call.name == "device_media_control":
+                    guarded_app = str(
+                        call.arguments.get(
+                            "app",
+                            "",
+                        )
+                    )
+
                 if (
-                    call.name
-                    in {
-                        "device_open_app",
-                        "device_interact_app",
-                        "device_spotify_play",
-                    }
+                    guarded_app
                     and not self._device_app_allowed(
                         user_text,
-                        (
-                            "spotify"
-                            if call.name
-                            == "device_spotify_play"
-                            else str(
-                                call.arguments.get(
-                                    "app",
-                                    "",
-                                )
-                            )
-                        ),
+                        guarded_app,
                     )
                 ):
                     blocked_error = (

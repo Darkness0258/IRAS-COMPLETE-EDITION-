@@ -57,12 +57,11 @@ MEDIA_CONTROL_PATTERNS = (
 )
 
 SEARCH_PATTERNS = (
-    r"^search\s+spotify\s+for\s+(.+)$",
-    r"^search\s+for\s+(.+?)\s+on\s+spotify$",
-    r"^search\s+(.+?)\s+on\s+spotify$",
-    r"^find\s+(.+?)\s+on\s+spotify$",
-    r"^look\s+up\s+(.+?)\s+on\s+spotify$",
+    r"^search\s+spotify\s+(?:for\s+)?(.+)$",
     r"^spotify\s+search\s+(?:for\s+)?(.+)$",
+    r"^search\s+(?:for\s+)?(.+?)\s+(?:on|in)\s+spotify$",
+    r"^find\s+(.+?)\s+(?:on|in)\s+spotify$",
+    r"^look\s+(?:up|for)\s+(.+?)\s+(?:on|in)\s+spotify$",
 )
 
 PLAY_PATTERNS = (
@@ -299,15 +298,52 @@ def media_control_request_from_text(text: str) -> dict | None:
     return None
 
 
-def spotify_search_query_from_text(text: str) -> str | None:
-    command = _normalize_voice_music_form(normalize_command(text))
+def spotify_search_query_from_text(
+    text: str,
+    *,
+    spotify_context: bool = False,
+) -> str | None:
+    command = _normalize_voice_music_form(
+        normalize_command(text)
+    )
 
     for pattern in SEARCH_PATTERNS:
-        match = re.match(pattern, command, flags=re.IGNORECASE)
+        match = re.match(
+            pattern,
+            command,
+            flags=re.IGNORECASE,
+        )
 
         if match:
-            query = _clean_query(match.group(1))
+            query = _clean_query(
+                match.group(1)
+            )
             return query if query else None
+
+    # Natural follow-up inside an established Spotify context:
+    # "search another song", "find Atif Aslam", "look up Heeriye".
+    # Commands naming another target with "in/on" are left to the planner.
+    if spotify_context:
+        lower = command.lower()
+
+        if (
+            " in " not in lower
+            and " on " not in lower
+        ):
+            match = re.match(
+                r"^(?:search|find|look\s+up|look\s+for)"
+                r"(?:\s+for)?\s+(.+)$",
+                command,
+                flags=re.IGNORECASE,
+            )
+
+            if match:
+                query = _clean_query(
+                    match.group(1)
+                )
+
+                if query:
+                    return query
 
     return None
 
@@ -447,6 +483,16 @@ def app_control_intent(text: str) -> dict | None:
             lower,
         )
         or (" and search " in lower)
+    ):
+        return None
+
+    # Compound tasks are planner tasks. The deterministic open/close
+    # parser must not treat the entire remaining sentence as an application
+    # name (for example: "Discord and send a message to Hamza").
+    if re.search(
+        r"\b(?:and|then|after\s+that)\b",
+        lower,
+        flags=re.IGNORECASE,
     ):
         return None
 
@@ -660,7 +706,10 @@ def direct_device_intent(
             "kind": "media_control",
         }
 
-    search_query = spotify_search_query_from_text(text)
+    search_query = spotify_search_query_from_text(
+        text,
+        spotify_context=spotify_context,
+    )
 
     if search_query:
         return {
