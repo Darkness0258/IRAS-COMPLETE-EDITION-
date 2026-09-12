@@ -682,6 +682,183 @@ class WindowsUIController:
 
         return int(result) > 32
 
+    def _spotify_play_button_point(
+        self,
+        hwnd: int,
+    ):
+        self._require_windows()
+
+        from PIL import ImageGrab
+
+        user32 = self._user32()
+        rect = wintypes.RECT()
+
+        if not user32.GetWindowRect(
+            hwnd,
+            ctypes.byref(rect),
+        ):
+            return None
+
+        left = int(rect.left)
+        top = int(rect.top)
+        right = int(rect.right)
+        bottom = int(rect.bottom)
+
+        width = max(
+            1,
+            right - left,
+        )
+        height = max(
+            1,
+            bottom - top,
+        )
+
+        roi_left = int(width * 0.24)
+        roi_right = int(width * 0.78)
+        roi_top = int(height * 0.10)
+        roi_bottom = int(height * 0.39)
+
+        bbox = (
+            left + roi_left,
+            top + roi_top,
+            left + roi_right,
+            top + roi_bottom,
+        )
+
+        try:
+            image = ImageGrab.grab(
+                bbox=bbox,
+                all_screens=True,
+            ).convert("RGB")
+        except TypeError:
+            image = ImageGrab.grab(
+                bbox=bbox,
+            ).convert("RGB")
+
+        pixels = image.load()
+        image_width, image_height = image.size
+
+        xs = []
+        ys = []
+
+        for y in range(image_height):
+            for x in range(image_width):
+                r, g, b = pixels[x, y]
+
+                if (
+                    g >= 150
+                    and g >= r + 70
+                    and g >= b + 45
+                    and r <= 115
+                    and b <= 170
+                ):
+                    xs.append(x)
+                    ys.append(y)
+
+        if len(xs) < 180:
+            return None
+
+        center_x = int(sum(xs) / len(xs))
+        center_y = int(sum(ys) / len(ys))
+
+        return {
+            "x": left + roi_left + center_x,
+            "y": top + roi_top + center_y,
+            "green_pixels": len(xs),
+        }
+
+    def _click_spotify_play_button(
+        self,
+        hwnd: int,
+    ) -> dict:
+        point = self._spotify_play_button_point(
+            hwnd
+        )
+
+        detected = point is not None
+
+        if point is None:
+            rect = wintypes.RECT()
+
+            if not self._user32().GetWindowRect(
+                hwnd,
+                ctypes.byref(rect),
+            ):
+                raise RuntimeError(
+                    "Could not read the Spotify window position."
+                )
+
+            width = max(
+                1,
+                int(
+                    rect.right
+                    - rect.left
+                ),
+            )
+            height = max(
+                1,
+                int(
+                    rect.bottom
+                    - rect.top
+                ),
+            )
+
+            point = {
+                "x": int(
+                    rect.left
+                    + (
+                        width
+                        * 0.69
+                    )
+                ),
+                "y": int(
+                    rect.top
+                    + (
+                        height
+                        * 0.21
+                    )
+                ),
+                "green_pixels": 0,
+            }
+
+        if not self._force_foreground(
+            hwnd
+        ):
+            raise RuntimeError(
+                "Spotify lost foreground focus before IRAS could press Play."
+            )
+
+        user32 = self._user32()
+
+        user32.SetCursorPos(
+            int(point["x"]),
+            int(point["y"]),
+        )
+
+        time.sleep(0.08)
+
+        user32.mouse_event(
+            0x0002,
+            0,
+            0,
+            0,
+            0,
+        )
+        user32.mouse_event(
+            0x0004,
+            0,
+            0,
+            0,
+            0,
+        )
+
+        time.sleep(0.55)
+
+        return {
+            "detected": detected,
+            **point,
+        }
+
     def spotify_play(
         self,
         query: str,
@@ -706,54 +883,96 @@ class WindowsUIController:
 
         try:
             deep_link_opened = (
-                self._open_spotify_search_uri(query)
+                self._open_spotify_search_uri(
+                    query
+                )
             )
         except Exception:
             deep_link_opened = False
 
         if deep_link_opened:
-            time.sleep(1.10)
+            time.sleep(1.25)
 
         focused = self.focus_app(
             "spotify",
             ensure_open=True,
         )
 
-        self.hotkey(["ctrl", "k"])
-        time.sleep(0.35)
-        self.hotkey(["ctrl", "a"])
-        time.sleep(0.08)
-        self.type_text(query)
-        time.sleep(1.20)
-        self.press("down")
-        time.sleep(0.15)
-        self.press("enter")
-        time.sleep(0.35)
+        self.hotkey(
+            [
+                "ctrl",
+                "k",
+            ]
+        )
+        time.sleep(0.30)
+        self.hotkey(
+            [
+                "ctrl",
+                "a",
+            ]
+        )
+        time.sleep(0.06)
+        self.type_text(
+            query
+        )
+        time.sleep(0.90)
+        self.press(
+            "enter"
+        )
+        time.sleep(1.05)
+
+        play_click = (
+            self._click_spotify_play_button(
+                int(
+                    focused[
+                        "window"
+                    ]
+                )
+            )
+        )
 
         print(
             "[IRAS SPOTIFY] "
             f"query={query!r} "
             f"deep_link={deep_link_opened} "
-            f"foreground={focused.get('foreground_verified', False)}",
+            f"foreground={focused.get('foreground_verified', False)} "
+            f"play_click=({play_click['x']},{play_click['y']}) "
+            f"green_detected={play_click['detected']} "
+            f"green_pixels={play_click['green_pixels']}",
             flush=True,
         )
 
         return {
             "app": "spotify",
             "query": query,
-            "launched": focused["launched"],
+            "launched": focused[
+                "launched"
+            ],
             "deep_link_opened": deep_link_opened,
             "foreground_verified": focused.get(
                 "foreground_verified",
                 False,
             ),
             "search_input_sent": True,
-            "activation_sent": True,
+            "play_button_clicked": True,
+            "play_button_detected": (
+                play_click[
+                    "detected"
+                ]
+            ),
+            "play_click": {
+                "x": play_click[
+                    "x"
+                ],
+                "y": play_click[
+                    "y"
+                ],
+            },
             "command_sent": True,
             "verified_playback": False,
             "note": (
-                "Spotify search was opened, the Spotify window was verified "
-                "in the foreground, and the first result was activated. "
+                "Spotify search was opened, Spotify was verified in the "
+                "foreground, and IRAS clicked the Top Result Play button. "
                 "Audio playback state is not independently verified."
             ),
         }

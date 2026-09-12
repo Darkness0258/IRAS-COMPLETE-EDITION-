@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "iras-agent"
-version = "2.7.5"
+version = "2.7.6"
 description = "IRAS - permissioned voice-first local AI agent"
 readme = "README.md"
 requires-python = ">=3.11"
