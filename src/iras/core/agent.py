@@ -7,6 +7,11 @@ from iras.persona import (
     SYSTEM_PROMPT,
     build_system_prompt,
 )
+from iras.device_bridge.intent import (
+    direct_device_intent,
+    is_retry_phrase,
+    result_message as device_result_message,
+)
 from iras.social_style import (
     empty_reply_fallback,
     is_social_turn,
@@ -57,6 +62,7 @@ class IRASAgent:
             smart_tools
         )
         self.last_metrics = {}
+        self._last_device_action = None
 
     def set_voice_profile(
         self,
@@ -263,6 +269,15 @@ class IRASAgent:
             .lower()
             .split()
         )
+
+        deterministic = direct_device_intent(
+            user_text
+        )
+
+        if deterministic:
+            return {
+                deterministic["tool"]
+            }
 
         device_context = cls._contains_any(
             q,
@@ -604,6 +619,98 @@ class IRASAgent:
             selected
         )
 
+    def _resolve_direct_device_action(
+        self,
+        user_text: str,
+    ):
+        if is_retry_phrase(
+            user_text
+        ):
+            if self._last_device_action:
+                return {
+                    "tool": self._last_device_action["tool"],
+                    "arguments": dict(
+                        self._last_device_action["arguments"]
+                    ),
+                    "kind": self._last_device_action.get(
+                        "kind",
+                        "retry",
+                    ),
+                }
+            return None
+
+        spotify_context = bool(
+            self._last_device_action
+            and self._last_device_action.get("tool")
+            == "device_spotify_play"
+        )
+
+        return direct_device_intent(
+            user_text,
+            spotify_context=spotify_context,
+        )
+
+    def _execute_direct_device_action(
+        self,
+        action: dict,
+        started: float,
+    ) -> str:
+        tool_name = str(action["tool"])
+        arguments = dict(action.get("arguments", {}))
+
+        result = self.tools.execute(
+            tool_name,
+            arguments,
+        )
+
+        self._last_device_action = {
+            "tool": tool_name,
+            "arguments": arguments,
+            "kind": action.get("kind", ""),
+        }
+
+        final = device_result_message(
+            action,
+            result,
+        )
+
+        self.memory.add_message(
+            "assistant",
+            final,
+        )
+        self.audit.record(
+            "assistant_message",
+            {
+                "text": final,
+                "direct_device_action": True,
+                "tool": tool_name,
+                "ok": bool(result.ok),
+            },
+        )
+
+        total_ms = int(
+            (time.perf_counter() - started) * 1000
+        )
+        self.last_metrics = {
+            "total_ms": total_ms,
+            "model_ms": 0,
+            "first_token_ms": 0,
+            "tool_rounds": 1,
+            "tool_schema_count": 1,
+            "context_messages": 0,
+            "streamed": False,
+            "model": "deterministic-device-router",
+        }
+
+        print(
+            "[IRAS DEVICE FASTPATH] "
+            f"tool={tool_name} "
+            f"ok={bool(result.ok)} "
+            f"total={total_ms}ms",
+            flush=True,
+        )
+        return final
+
     def can_stream(
         self,
         user_text: str,
@@ -614,6 +721,14 @@ class IRASAgent:
         Tool-bearing turns still use the normal agent loop so tool calls
         remain reliable and auditable.
         """
+        if (
+            is_retry_phrase(
+                user_text
+            )
+            and self._last_device_action
+        ):
+            return False
+
         tool_names = (
             self._smart_tool_names(
                 user_text
@@ -663,6 +778,18 @@ class IRASAgent:
         ):
             self.personality.observe_user(
                 user_text
+            )
+
+        direct_action = (
+            self._resolve_direct_device_action(
+                user_text
+            )
+        )
+
+        if direct_action:
+            return self._execute_direct_device_action(
+                direct_action,
+                started,
             )
 
         messages = (
@@ -868,6 +995,13 @@ class IRASAgent:
                             call.arguments,
                         )
                     )
+
+                    if call.name.startswith("device_"):
+                        self._last_device_action = {
+                            "tool": call.name,
+                            "arguments": dict(call.arguments),
+                            "kind": "tool_call",
+                        }
 
                     payload = {
                         "ok": result.ok,
