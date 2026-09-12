@@ -254,6 +254,13 @@ class AppCatalog:
         "app_id": 20,
     }
 
+    # Explicitly allowed URI fallbacks for desktop clients whose EXE is only
+    # a bootstrapper. Arbitrary user-controlled URI schemes are never used.
+    SAFE_PROTOCOL_FALLBACKS = {
+        "steam": "steam://open/main",
+        "spotify": "spotify:",
+    }
+
     def __init__(
         self,
     ):
@@ -1001,35 +1008,108 @@ class AppCatalog:
                 f"Blocked executable: {path.name}"
             )
 
+        # Many Windows clients are bootstrap launchers. They may signal or
+        # spawn the real application and then exit immediately with a nonzero
+        # code. Steam commonly behaves this way. Do not declare failure before
+        # checking whether the actual app appeared.
         process = subprocess.Popen(
             [
                 str(path),
             ],
+            cwd=str(
+                path.parent
+            ),
             shell=False,
         )
 
         time.sleep(
-            0.20
+            0.30
         )
 
         rc = process.poll()
 
-        if (
-            rc is not None
-            and rc not in {
-                0,
-            }
-        ):
-            raise RuntimeError(
-                f"{path.name} exited immediately with code {rc}."
-            )
-
-        return {
+        payload = {
             "launched": str(
                 path
             ),
             "pid": process.pid,
             "method": "direct_exe",
+        }
+
+        if (
+            rc is not None
+            and rc != 0
+        ):
+            payload[
+                "early_exit_code"
+            ] = int(
+                rc
+            )
+
+        return payload
+
+    @classmethod
+    def _protocol_for_query(
+        cls,
+        query: str,
+    ) -> str | None:
+        normalized = (
+            normalize_app_name(
+                query
+            )
+        )
+        alias = (
+            ALIASES.get(
+                normalized,
+                normalized,
+            )
+        )
+        family = (
+            app_family_name(
+                alias
+            )
+        )
+
+        for name, protocol in (
+            cls
+            .SAFE_PROTOCOL_FALLBACKS
+            .items()
+        ):
+            if (
+                family == name
+                or normalized == name
+                or alias == name
+            ):
+                return protocol
+
+        return None
+
+    @classmethod
+    def _launch_safe_protocol(
+        cls,
+        query: str,
+    ) -> dict | None:
+        protocol = (
+            cls._protocol_for_query(
+                query
+            )
+        )
+
+        if not protocol:
+            return None
+
+        try:
+            os.startfile(
+                protocol
+            )  # type: ignore[attr-defined]
+        except OSError as exc:
+            raise RuntimeError(
+                f"Registered protocol launch failed for {query}: {exc}"
+            ) from exc
+
+        return {
+            "launched": protocol,
+            "method": "registered_protocol",
         }
 
     @staticmethod
@@ -1384,8 +1464,15 @@ class AppCatalog:
                 if verified:
                     return payload
 
+                # An EXE that already reported a nonzero bootstrap exit
+                # is not considered a successful launch unless verification
+                # proves that the real application appeared.
                 if (
                     accepted_result
+                    is None
+                    and result.get(
+                        "early_exit_code"
+                    )
                     is None
                 ):
                     accepted_result = (
@@ -1404,6 +1491,80 @@ class AppCatalog:
                 attempts.append(
                     attempt
                 )
+
+        # If normal Windows launch records did not verify, use a small
+        # explicit protocol fallback for bootstrap clients such as Steam.
+        # Arbitrary URI schemes are never accepted from user input.
+        protocol_result = None
+
+        try:
+            protocol_result = (
+                self._launch_safe_protocol(
+                    query
+                )
+            )
+        except Exception as exc:
+            attempts.append(
+                {
+                    "name": query,
+                    "kind": "protocol",
+                    "source": (
+                        "safe_protocol_fallback"
+                    ),
+                    "accepted": False,
+                    "error": (
+                        f"{type(exc).__name__}: {exc}"
+                    ),
+                }
+            )
+
+        if protocol_result:
+            verification_entry = (
+                candidates[0][1]
+                if candidates
+                else matches[0][1]
+            )
+
+            verified, proof = (
+                self._verify_launch(
+                    verification_entry,
+                    timeout=3.5,
+                )
+            )
+
+            attempts.append(
+                {
+                    "name": query,
+                    "kind": "protocol",
+                    "source": (
+                        "safe_protocol_fallback"
+                    ),
+                    "accepted": True,
+                    "verified": verified,
+                    "proof": proof,
+                    "method": (
+                        protocol_result.get(
+                            "method"
+                        )
+                    ),
+                }
+            )
+
+            return {
+                **protocol_result,
+                "app": (
+                    verification_entry.name
+                ),
+                "auto_detected": True,
+                "source": (
+                    "safe_protocol_fallback"
+                ),
+                "launch_verified": (
+                    verified
+                ),
+                "verification": proof,
+                "attempts": attempts,
+            }
 
         # A shell launch can be valid even when Windows does not expose a
         # quickly-verifiable process/window. Return accepted-but-unverified
