@@ -32,7 +32,7 @@ def test_spotify_sends_explicit_play_not_toggle():
     assert "SendMessageTimeoutW" in text
 
 
-def test_spotify_diagnostics_include_cursor_and_media_play():
+def test_spotify_diagnostics_include_verified_selection():
     text = (
         ROOT
         / "src"
@@ -42,4 +42,7 @@ def test_spotify_diagnostics_include_cursor_and_media_play():
     ).read_text(encoding="utf-8")
 
     assert "cursor_actual=" in text
-    assert "media_play=" in text
+    assert "green_detected=" in text
+    assert "green_size=" in text
+    assert "attempts=" in text
+    assert "media_play=" not in text

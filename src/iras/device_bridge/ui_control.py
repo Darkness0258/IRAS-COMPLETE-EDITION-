@@ -815,6 +815,165 @@ class WindowsUIController:
 
         return bool(sent)
 
+    @staticmethod
+    def _spotify_green_components(
+        image,
+    ) -> list[dict]:
+        image = image.convert("RGB")
+        pixels = image.load()
+        width, height = image.size
+
+        mask = bytearray(
+            width * height
+        )
+
+        for y in range(height):
+            row = y * width
+
+            for x in range(width):
+                r, g, b = pixels[
+                    x,
+                    y,
+                ]
+
+                if (
+                    g >= 145
+                    and g >= r + 65
+                    and g >= b + 40
+                    and r <= 125
+                    and b <= 180
+                ):
+                    mask[
+                        row + x
+                    ] = 1
+
+        visited = bytearray(
+            width * height
+        )
+        components = []
+
+        for y in range(height):
+            for x in range(width):
+                index = (
+                    y * width
+                    + x
+                )
+
+                if (
+                    not mask[index]
+                    or visited[index]
+                ):
+                    continue
+
+                stack = [
+                    index
+                ]
+                visited[
+                    index
+                ] = 1
+
+                count = 0
+                sum_x = 0
+                sum_y = 0
+                min_x = x
+                max_x = x
+                min_y = y
+                max_y = y
+
+                while stack:
+                    current = stack.pop()
+                    cy, cx = divmod(
+                        current,
+                        width,
+                    )
+
+                    count += 1
+                    sum_x += cx
+                    sum_y += cy
+
+                    min_x = min(
+                        min_x,
+                        cx,
+                    )
+                    max_x = max(
+                        max_x,
+                        cx,
+                    )
+                    min_y = min(
+                        min_y,
+                        cy,
+                    )
+                    max_y = max(
+                        max_y,
+                        cy,
+                    )
+
+                    neighbors = []
+
+                    if cx > 0:
+                        neighbors.append(
+                            current - 1
+                        )
+
+                    if (
+                        cx + 1
+                        < width
+                    ):
+                        neighbors.append(
+                            current + 1
+                        )
+
+                    if cy > 0:
+                        neighbors.append(
+                            current - width
+                        )
+
+                    if (
+                        cy + 1
+                        < height
+                    ):
+                        neighbors.append(
+                            current + width
+                        )
+
+                    for neighbor in neighbors:
+                        if (
+                            mask[neighbor]
+                            and not visited[
+                                neighbor
+                            ]
+                        ):
+                            visited[
+                                neighbor
+                            ] = 1
+                            stack.append(
+                                neighbor
+                            )
+
+                components.append(
+                    {
+                        "green_pixels": count,
+                        "x": int(
+                            sum_x / count
+                        ),
+                        "y": int(
+                            sum_y / count
+                        ),
+                        "width": (
+                            max_x
+                            - min_x
+                            + 1
+                        ),
+                        "height": (
+                            max_y
+                            - min_y
+                            + 1
+                        ),
+                    }
+                )
+
+        return components
+
     def _spotify_play_button_point(
         self,
         hwnd: int,
@@ -841,10 +1000,18 @@ class WindowsUIController:
             bottom - top,
         )
 
-        roi_left = int(width * 0.24)
-        roi_right = int(width * 0.78)
-        roi_top = int(height * 0.10)
-        roi_bottom = int(height * 0.39)
+        roi_left = int(
+            width * 0.20
+        )
+        roi_right = int(
+            width * 0.82
+        )
+        roi_top = int(
+            height * 0.07
+        )
+        roi_bottom = int(
+            height * 0.42
+        )
 
         bbox = (
             left + roi_left,
@@ -863,85 +1030,139 @@ class WindowsUIController:
                 bbox=bbox,
             ).convert("RGB")
 
-        pixels = image.load()
-        image_width, image_height = image.size
+        candidates = []
 
-        xs = []
-        ys = []
+        for component in (
+            self._spotify_green_components(
+                image
+            )
+        ):
+            if (
+                component[
+                    "green_pixels"
+                ]
+                >= 350
+                and 24
+                <= component[
+                    "width"
+                ]
+                <= 110
+                and 24
+                <= component[
+                    "height"
+                ]
+                <= 110
+            ):
+                candidates.append(
+                    component
+                )
 
-        for y in range(image_height):
-            for x in range(image_width):
-                r, g, b = pixels[x, y]
-
-                if (
-                    g >= 150
-                    and g >= r + 70
-                    and g >= b + 45
-                    and r <= 115
-                    and b <= 170
-                ):
-                    xs.append(x)
-                    ys.append(y)
-
-        if len(xs) < 180:
+        if not candidates:
             return None
 
-        center_x = int(sum(xs) / len(xs))
-        center_y = int(sum(ys) / len(ys))
+        best = max(
+            candidates,
+            key=lambda item: (
+                item[
+                    "green_pixels"
+                ],
+                item[
+                    "width"
+                ]
+                * item[
+                    "height"
+                ],
+            ),
+        )
 
         return {
-            "x": left + roi_left + center_x,
-            "y": top + roi_top + center_y,
-            "green_pixels": len(xs),
+            "x": (
+                left
+                + roi_left
+                + best["x"]
+            ),
+            "y": (
+                top
+                + roi_top
+                + best["y"]
+            ),
+            "green_pixels": (
+                best[
+                    "green_pixels"
+                ]
+            ),
+            "component_width": (
+                best[
+                    "width"
+                ]
+            ),
+            "component_height": (
+                best[
+                    "height"
+                ]
+            ),
         }
+
+    def _wait_for_spotify_play_button(
+        self,
+        hwnd: int,
+        *,
+        timeout: float = 8.0,
+    ):
+        deadline = (
+            time.monotonic()
+            + max(
+                1.0,
+                float(timeout),
+            )
+        )
+
+        attempts = 0
+
+        while (
+            time.monotonic()
+            < deadline
+        ):
+            attempts += 1
+
+            point = (
+                self._spotify_play_button_point(
+                    hwnd
+                )
+            )
+
+            if point is not None:
+                point[
+                    "detection_attempts"
+                ] = attempts
+
+                return point
+
+            time.sleep(
+                0.30
+            )
+
+        return None
 
     def _click_spotify_play_button(
         self,
         hwnd: int,
     ) -> dict:
-        point = self._spotify_play_button_point(
-            hwnd
+        # Never guess a coordinate. A guessed click plus MEDIA_PLAY can
+        # resume the previous track instead of starting the requested result.
+        point = (
+            self._wait_for_spotify_play_button(
+                hwnd,
+                timeout=8.0,
+            )
         )
 
-        detected = point is not None
-
         if point is None:
-            rect = self._physical_window_rect(
-                hwnd
+            raise RuntimeError(
+                "IRAS could not detect Spotify's green Top Result Play button "
+                "within 8 seconds. No fallback click or generic MEDIA_PLAY "
+                "command was sent, so the previous track was not resumed."
             )
-
-            width = max(
-                1,
-                int(
-                    rect.right
-                    - rect.left
-                ),
-            )
-            height = max(
-                1,
-                int(
-                    rect.bottom
-                    - rect.top
-                ),
-            )
-
-            point = {
-                "x": int(
-                    rect.left
-                    + (
-                        width
-                        * 0.69
-                    )
-                ),
-                "y": int(
-                    rect.top
-                    + (
-                        height
-                        * 0.21
-                    )
-                ),
-                "green_pixels": 0,
-            }
 
         if not self._force_foreground(
             hwnd
@@ -956,7 +1177,7 @@ class WindowsUIController:
         )
 
         time.sleep(
-            0.10
+            0.12
         )
 
         user32 = self._user32()
@@ -969,7 +1190,7 @@ class WindowsUIController:
             0,
         )
         time.sleep(
-            0.035
+            0.045
         )
         user32.mouse_event(
             0x0004,
@@ -980,22 +1201,12 @@ class WindowsUIController:
         )
 
         time.sleep(
-            0.35
-        )
-
-        media_play_sent = (
-            self._send_spotify_play_command(
-                hwnd
-            )
-        )
-
-        time.sleep(
-            0.45
+            0.70
         )
 
         return {
-            "detected": detected,
-            "media_play_sent": media_play_sent,
+            "detected": True,
+            "media_play_sent": False,
             "cursor_actual_x": cursor[
                 "actual_x"
             ],
@@ -1163,9 +1374,11 @@ class WindowsUIController:
             f"play_click=({play_click['x']},{play_click['y']}) "
             f"green_detected={play_click['detected']} "
             f"green_pixels={play_click['green_pixels']} "
+            f"green_size=({play_click['component_width']}x"
+            f"{play_click['component_height']}) "
+            f"attempts={play_click['detection_attempts']} "
             f"cursor_actual=({play_click['cursor_actual_x']},"
-            f"{play_click['cursor_actual_y']}) "
-            f"media_play={play_click['media_play_sent']}",
+            f"{play_click['cursor_actual_y']})",
             flush=True,
         )
 
@@ -1201,17 +1414,19 @@ class WindowsUIController:
                     "cursor_actual_y"
                 ],
             },
-            "media_play_sent": play_click[
-                "media_play_sent"
-            ],
+            "media_play_sent": False,
+            "play_button_detection_attempts": (
+                play_click[
+                    "detection_attempts"
+                ]
+            ),
             "command_sent": True,
             "verified_playback": False,
             "note": (
-                "Spotify search was opened, Spotify was verified in the "
-                "foreground, IRAS clicked the Top Result Play button using "
-                "verified physical coordinates, and sent an explicit Windows "
-                "MEDIA_PLAY command. Audio playback state is not independently "
-                "verified."
+                "Spotify search was opened, IRAS waited for and detected the "
+                "large green Top Result Play button, verified Spotify was in "
+                "the foreground, and clicked that detected result. No generic "
+                "MEDIA_PLAY fallback was sent."
             ),
         }
 
