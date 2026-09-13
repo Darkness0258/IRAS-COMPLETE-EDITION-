@@ -410,7 +410,9 @@ async function streamReply(base,c,text,bubble,session,signal){
             :`Completed in ${(total/1000).toFixed(2)}s`);
       }else if(event==="error"){
         bubble.classList.remove("cursor");
-        throw new Error(data.message||"Streaming failed.");
+        const err=new Error(data.message||"Streaming failed.");
+        err.code=data.code||"request_failed";
+        throw err;
       }
     }
 
@@ -459,9 +461,22 @@ async function sendText(text,{interrupt=false}={}){
     if(generation!==chatGeneration||e.name==="AbortError")return;
 
     bubble.classList.remove("cursor");
-    if(!bubble.textContent.trim())bubble.textContent="Connection error: "+e.message;
-    else bubble.textContent+="\n\n[Connection interrupted]";
-    status.textContent="AI provider unavailable";
+
+    if(!bubble.textContent.trim()){
+      bubble.textContent=e.code==="request_busy"
+        ?e.message
+        :"Connection error: "+e.message;
+    }else{
+      bubble.textContent+="\n\n[Connection interrupted]";
+    }
+
+    if(e.code==="request_busy"){
+      status.textContent="IRAS busy · retry in a moment";
+    }else if(e.code==="ai_rate_limited"){
+      status.textContent="AI provider unavailable";
+    }else{
+      status.textContent="Connection error";
+    }
   }finally{
     if(generation===chatGeneration){
       sending=false;
