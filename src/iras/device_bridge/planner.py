@@ -301,7 +301,10 @@ def planner_system_nudge(
         "expressible with that tool. For unfamiliar GUIs, call "
         "device_observe_ui before clicking. Reason only from returned visible "
         "UI elements. Prefer device_semantic_action for buttons, fields, tabs, "
-        "menus and list items, then re-observe and adapt after meaningful actions. "
+        "menus and list items. A successful semantic action verifies only that specific interaction, not the user's entire goal. "
+        "For compound GUI goals, re-observe after semantic actions and compare the fresh state with the original requested end state; if the terminal control is still pending, continue instead of finalizing. "
+        "If device_observe_ui returns accessibility_available=false, do not describe the app as blank. Treat it as a Windows UI Automation limitation. "
+        "Screenshot metadata is fallback evidence only in v3.4.2; do not invent coordinates or claim screenshot pixels were understood. "
         "For URLs/websites prefer device_open_url. For files/projects "
         "use the file/project tools. Never invent a click coordinate or claim "
         "you saw screen content that no tool returned. If a tool fails, inspect "
@@ -310,3 +313,6 @@ def planner_system_nudge(
         "exactly what capability is missing instead of fabricating success."
         + scope_text
     )
+
+# Historical visual-control planner contract: re-observe after meaningful actions.
+

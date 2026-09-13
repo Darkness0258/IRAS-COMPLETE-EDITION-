@@ -539,37 +539,33 @@ class SemanticVisualController:
             snapshot
         )
 
+        element_count = int(snapshot.get("element_count", 0) or 0)
+        accessibility_available = element_count > 0
+
         output = {
             "app": canonical,
             "window": hwnd,
             "launched": launched,
             "foreground_verified": True,
-            "window_name": snapshot.get(
-                "window_name",
-                "",
-            ),
-            "element_count": (
-                snapshot.get(
-                    "element_count",
-                    0,
-                )
-            ),
-            "fingerprint": snapshot[
-                "fingerprint"
-            ],
-            "elements": snapshot.get(
-                "elements",
-                [],
-            ),
+            "window_name": snapshot.get("window_name", ""),
+            "element_count": element_count,
+            "fingerprint": snapshot["fingerprint"],
+            "elements": snapshot.get("elements", []),
+            "accessibility_available": accessibility_available,
+            "accessibility_status": "available" if accessibility_available else "unavailable",
         }
 
         if screenshot:
-            output[
-                "screenshot"
-            ] = self._capture_window(
-                canonical,
-                hwnd,
+            output["screenshot"] = self._capture_window(canonical, hwnd)
+
+        if not accessibility_available:
+            output["accessibility_reason"] = (
+                "Windows UI Automation returned no usable visible semantic controls for this rendered window. "
+                "This does not prove that the visual interface is blank."
             )
+            output["vision_fallback_recommended"] = bool(output.get("screenshot"))
+        else:
+            output["vision_fallback_recommended"] = False
 
         return output
 
@@ -1148,6 +1144,10 @@ class SemanticVisualController:
                             :80
                         ]
                     ),
+                    "accessibility_available": after.get("accessibility_available"),
+                    "accessibility_status": after.get("accessibility_status"),
+                    "accessibility_reason": after.get("accessibility_reason"),
+                    "vision_fallback_recommended": after.get("vision_fallback_recommended", False),
                 }
                 if after
                 else None

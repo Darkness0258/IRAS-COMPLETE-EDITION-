@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import re
 from typing import Any
 
 from iras.device_bridge.skills import (
@@ -69,6 +70,36 @@ def _result_output(payload: dict[str, Any]) -> dict[str, Any]:
     return output if isinstance(output, dict) else {}
 
 
+def _normalize_goal_text(value: str) -> str:
+    return " ".join(str(value or "").strip().lower().replace("_", " ").replace("-", " ").split())
+
+
+def _compound_goal(value: str) -> bool:
+    normalized = " " + _normalize_goal_text(value) + " "
+    return any(marker in normalized for marker in (" and ", " then ", " after that "))
+
+
+def _terminal_goal_target(value: str) -> str:
+    normalized = _normalize_goal_text(value)
+    match = re.search(
+        r"(?:\band\b|\bthen\b|\bafter that\b)\s+"
+        r"(?:open|click|select|choose|press|go to|navigate to)\s+"
+        r"(.+?)\s*[.!?]*$",
+        normalized, flags=re.IGNORECASE,
+    )
+    if not match:
+        return ""
+    target = match.group(1).strip(" .!?")
+    return re.sub(r"\s+(?:in|inside|on)\s+[a-z0-9 .+_-]+$", "", target, flags=re.IGNORECASE).strip()
+
+
+def _semantic_target_matches(actual: str, expected: str) -> bool:
+    left, right = _normalize_goal_text(actual), _normalize_goal_text(expected)
+    if not left or not right:
+        return False
+    return left == right or left.endswith(" " + right) or right.endswith(" " + left)
+
+
 def _expected_state(output: dict[str, Any]) -> dict[str, Any]:
     observation = output.get("verification_observation")
     if not isinstance(observation, dict):
@@ -112,6 +143,10 @@ class TaskTracker:
     learning_blocked: bool = False
     learning_block_reason: str = ""
     learning_recovery_pending: bool = False
+    goal_checkpoint_required: bool = False
+    last_semantic_target: str = ""
+    accessibility_limited: bool = False
+    accessibility_reason: str = ""
     skill_store: PersistentSkillStore = field(default_factory=PersistentSkillStore)
     _learning_finalized: bool = False
 
@@ -228,14 +263,34 @@ class TaskTracker:
 
         if name == "device_observe_ui":
             self.needs_verification = False
+            accessibility = output.get("accessibility_available")
+            self.accessibility_limited = accessibility is False
+            self.accessibility_reason = str(output.get("accessibility_reason") or "")
+            if self.accessibility_limited:
+                self.goal_checkpoint_required = False
+            elif _compound_goal(self.goal):
+                terminal = _terminal_goal_target(self.goal)
+                self.goal_checkpoint_required = bool(
+                    terminal and self.last_semantic_target and
+                    not _semantic_target_matches(self.last_semantic_target, terminal)
+                )
+            else:
+                self.goal_checkpoint_required = False
             return
 
         if name == "device_semantic_action":
-            verified = bool(output.get("verification_observation"))
+            observation = output.get("verification_observation")
+            verified = bool(observation)
             self.needs_verification = not verified
             if verified:
                 self._capture_verified_semantic_step(arguments, output)
                 self.learning_recovery_pending = False
+                self.last_semantic_target = str(arguments.get("target") or "").strip()
+                if isinstance(observation, dict):
+                    accessibility = observation.get("accessibility_available")
+                    self.accessibility_limited = accessibility is False
+                    self.accessibility_reason = str(observation.get("accessibility_reason") or "")
+                self.goal_checkpoint_required = _compound_goal(self.goal) and not self.accessibility_limited
             return
 
         if name == "device_open_app":
@@ -283,6 +338,8 @@ class TaskTracker:
             or self.needs_verification
             or self.learning_blocked
             or self.learning_recovery_pending
+            or self.goal_checkpoint_required
+            or self.accessibility_limited
             or self.consecutive_failures > 0
         ):
             return
@@ -342,6 +399,25 @@ class TaskTracker:
                 "an appropriate observation/read/status tool to confirm it."
             )
 
+        if self.last_tool == "device_observe_ui" and self.accessibility_limited:
+            return (
+                "WORKFLOW ACCESSIBILITY LIMIT: Windows UI Automation returned no usable semantic controls for the rendered app window. "
+                "This does NOT mean the visual interface is blank. A screenshot may have been captured as fallback evidence, but v3.4.2 "
+                "must not pretend it can read screenshot pixels. Do not invent coordinates; report the limitation unless another bounded semantic route exists."
+            )
+
+        if self.goal_checkpoint_required:
+            terminal = _terminal_goal_target(self.goal)
+            suffix = (
+                " The compound goal's terminal semantic target is " + repr(terminal) +
+                ", and the last verified semantic action targeted " + repr(self.last_semantic_target) + "."
+                if terminal else ""
+            )
+            return (
+                "WORKFLOW GOAL CHECKPOINT: a verified semantic action proves only that specific UI interaction, not that the user's whole goal is complete. "
+                "Call device_observe_ui now and compare the fresh semantic state with the original request. If a requested destination/control is still pending, continue with the next semantic action instead of finalizing." + suffix
+            )
+
         return (
             "WORKFLOW CONTINUE: use the real result above to decide whether "
             "the user's goal is complete. If not, perform the next smallest "
@@ -354,6 +430,19 @@ class TaskTracker:
             return (
                 "I executed part of that device workflow, but the final "
                 "state is still unverified, so I won't claim it succeeded."
+            )
+
+        if self.accessibility_limited:
+            detail = (" " + self.accessibility_reason) if self.accessibility_reason else ""
+            return (
+                "The app window is open, but Windows accessibility exposed no usable semantic controls. That does not mean the interface is visually blank. "
+                "I won't invent coordinates or claim the remaining UI work succeeded." + detail
+            )
+
+        if self.goal_checkpoint_required:
+            return (
+                "The workflow made partial UI progress, but the requested compound end state has not passed a fresh semantic checkpoint, "
+                "so I won't claim the whole goal is complete."
             )
 
         if self.consecutive_failures > 0:
@@ -369,9 +458,8 @@ class TaskTracker:
 
         if self.successful_calls > 0:
             return (
-                "The device workflow completed verified tool steps, but the "
-                "model returned no final message. I won't claim anything "
-                "beyond the verified tool evidence."
+                "The device workflow made verified step-level progress, but the model returned no final message and I do not have enough "
+                "goal-level evidence to claim the requested outcome is complete."
             )
 
         return (
@@ -385,6 +473,20 @@ class TaskTracker:
                 "The last state-changing action is not verified yet. Do not "
                 "finish with a success claim. Use an observation/read/status "
                 "tool now to verify the requested end state."
+            )
+
+        if self.accessibility_limited:
+            return ""
+
+        if self.goal_checkpoint_required:
+            terminal = _terminal_goal_target(self.goal)
+            detail = (
+                " The requested terminal target is " + repr(terminal) + "; the last verified semantic target was " + repr(self.last_semantic_target) + "."
+                if terminal else ""
+            )
+            return (
+                "Do not finalize yet. A successful semantic click verifies only that click, not the user's complete compound goal. "
+                "Call device_observe_ui for a fresh end-state checkpoint and continue acting if the requested destination/control is still pending." + detail
             )
 
         if self.consecutive_failures > 0 and self.successful_calls == 0:
@@ -412,6 +514,10 @@ class TaskTracker:
             "learning_blocked": self.learning_blocked,
             "learning_block_reason": self.learning_block_reason or None,
             "learning_recovery_pending": self.learning_recovery_pending,
+            "goal_checkpoint_required": self.goal_checkpoint_required,
+            "last_semantic_target": self.last_semantic_target or None,
+            "accessibility_limited": self.accessibility_limited,
+            "accessibility_reason": self.accessibility_reason or None,
         }
 
 
@@ -431,8 +537,10 @@ def workflow_system_nudge(user_text: str) -> str:
         "semantically; never use a memorized or invented coordinate. For "
         "unfamiliar GUI state, observe first. After navigation, typing, "
         "clicking, opening an unverified app, or another uncertain state "
-        "change, verify before claiming completion. Never repeat the same "
-        "failed call over and over; re-observe and change approach. Prefer "
+        "change, verify before claiming completion. A successful semantic action verifies only that one interaction; it does not prove the whole user goal is complete. "
+        "For compound GUI goals, perform a fresh device_observe_ui checkpoint after semantic actions and continue when the terminal requested control/destination has not yet been acted on. "
+        "If observation reports accessibility_available=false, do not call the interface blank: Windows UI Automation is unavailable for that rendered window. Never invent coordinates or claim screenshot pixels were read. "
+        "Never repeat the same failed call over and over; re-observe and change approach. Prefer "
         "specialized tools over generic UI actions. Stay inside current-turn "
         "app/device scope and the existing permission system. Learned skills "
         "are hints, never permission bypasses. If bounded tools cannot complete "
