@@ -1294,14 +1294,36 @@ class WindowsUIController:
             "search_opened": True,
         }
 
+    def _play_spotify_quick_search_result(
+        self,
+        hwnd: int,
+    ) -> dict:
+        if not self._force_foreground(int(hwnd)):
+            raise RuntimeError(
+                "Spotify lost foreground focus before IRAS could play "
+                "the highlighted search result."
+            )
+
+        self.hotkey(
+            [
+                "shift",
+                "enter",
+            ]
+        )
+        time.sleep(1.0)
+
+        return {
+            "shortcut": "shift+enter",
+            "foreground_verified": True,
+            "requested_action": "play_highlighted_search_result",
+        }
+
     def spotify_play(
         self,
         query: str,
     ) -> dict:
         query = " ".join(
-            str(query or "")
-            .strip()
-            .split()
+            str(query or "").strip().split()
         )
 
         if not query:
@@ -1315,13 +1337,8 @@ class WindowsUIController:
             )
 
         deep_link_opened = False
-
         try:
-            deep_link_opened = (
-                self._open_spotify_search_uri(
-                    query
-                )
-            )
+            deep_link_opened = self._open_spotify_search_uri(query)
         except Exception:
             deep_link_opened = False
 
@@ -1333,100 +1350,102 @@ class WindowsUIController:
             ensure_open=True,
         )
 
-        self.hotkey(
-            [
-                "ctrl",
-                "k",
-            ]
-        )
+        self.hotkey(["ctrl", "k"])
         time.sleep(0.30)
-        self.hotkey(
-            [
-                "ctrl",
-                "a",
-            ]
-        )
+        self.hotkey(["ctrl", "a"])
         time.sleep(0.06)
-        self.type_text(
-            query
-        )
-        time.sleep(0.90)
-        self.press(
-            "enter"
-        )
+        self.type_text(query)
         time.sleep(1.05)
 
-        play_click = (
-            self._click_spotify_play_button(
-                int(
-                    focused[
-                        "window"
-                    ]
-                )
-            )
-        )
+        play_method = "quick_search_shift_enter"
+        quick_search_play = None
+        play_click = None
+        quick_search_error = ""
 
-        print(
-            "[IRAS SPOTIFY] "
-            f"query={query!r} "
-            f"deep_link={deep_link_opened} "
-            f"foreground={focused.get('foreground_verified', False)} "
-            f"play_click=({play_click['x']},{play_click['y']}) "
-            f"green_detected={play_click['detected']} "
-            f"green_pixels={play_click['green_pixels']} "
-            f"green_size=({play_click['component_width']}x"
-            f"{play_click['component_height']}) "
-            f"attempts={play_click['detection_attempts']} "
-            f"cursor_actual=({play_click['cursor_actual_x']},"
-            f"{play_click['cursor_actual_y']})",
-            flush=True,
-        )
+        try:
+            quick_search_play = self._play_spotify_quick_search_result(
+                int(focused["window"])
+            )
+        except Exception as exc:
+            # Legacy compatibility only. Never send generic MEDIA_PLAY here.
+            quick_search_error = str(exc)
+            self.press("enter")
+            time.sleep(1.05)
+            play_click = self._click_spotify_play_button(
+                int(focused["window"])
+            )
+            play_method = "legacy_green_play_button"
+
+        if quick_search_play is not None:
+            print(
+                "[IRAS SPOTIFY] "
+                f"query={query!r} deep_link={deep_link_opened} "
+                f"foreground={focused.get('foreground_verified', False)} "
+                "method=quick_search_shift_enter shortcut=shift+enter",
+                flush=True,
+            )
+        else:
+            print(
+                "[IRAS SPOTIFY] "
+                f"query={query!r} deep_link={deep_link_opened} "
+                f"foreground={focused.get('foreground_verified', False)} "
+                "method=legacy_green_play_button "
+                f"quick_search_error={quick_search_error!r} "
+                f"play_click=({play_click['x']},{play_click['y']}) "
+                f"green_detected={play_click['detected']} "
+                f"green_pixels={play_click['green_pixels']} "
+                f"green_size=({play_click['component_width']}x"
+                f"{play_click['component_height']}) "
+                f"attempts={play_click['detection_attempts']} "
+                f"cursor_actual=({play_click['cursor_actual_x']},"
+                f"{play_click['cursor_actual_y']})",
+                flush=True,
+            )
 
         return {
             "app": "spotify",
             "query": query,
-            "launched": focused[
-                "launched"
-            ],
+            "launched": focused["launched"],
             "deep_link_opened": deep_link_opened,
             "foreground_verified": focused.get(
                 "foreground_verified",
                 False,
             ),
             "search_input_sent": True,
-            "play_button_clicked": True,
-            "play_button_detected": (
-                play_click[
-                    "detected"
-                ]
+            "playback_method": play_method,
+            "quick_search_play_sent": quick_search_play is not None,
+            "quick_search_shortcut": (
+                "shift+enter" if quick_search_play is not None else None
             ),
-            "play_click": {
-                "x": play_click[
-                    "x"
-                ],
-                "y": play_click[
-                    "y"
-                ],
-                "actual_x": play_click[
-                    "cursor_actual_x"
-                ],
-                "actual_y": play_click[
-                    "cursor_actual_y"
-                ],
-            },
+            "play_button_clicked": play_click is not None,
+            "play_button_detected": bool(
+                play_click and play_click.get("detected")
+            ),
+            "play_click": (
+                {
+                    "x": play_click["x"],
+                    "y": play_click["y"],
+                    "actual_x": play_click["cursor_actual_x"],
+                    "actual_y": play_click["cursor_actual_y"],
+                }
+                if play_click else None
+            ),
             "media_play_sent": False,
             "play_button_detection_attempts": (
-                play_click[
-                    "detection_attempts"
-                ]
+                play_click["detection_attempts"] if play_click else 0
             ),
             "command_sent": True,
             "verified_playback": False,
             "note": (
-                "Spotify search was opened, IRAS waited for and detected the "
-                "large green Top Result Play button, verified Spotify was in "
-                "the foreground, and clicked that detected result. No generic "
-                "MEDIA_PLAY fallback was sent."
+                "Spotify Quick Search was focused, the requested query was "
+                "typed, and IRAS sent Spotify's own Shift+Enter Play shortcut "
+                "for the highlighted result. No generic MEDIA_PLAY command "
+                "was sent."
+                if quick_search_play is not None
+                else
+                "Spotify Quick Search playback could not be injected, so "
+                "IRAS used the existing detected green Play-button fallback. "
+                "No generic MEDIA_PLAY command was sent."
             ),
         }
 
