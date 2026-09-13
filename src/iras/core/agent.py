@@ -1112,8 +1112,8 @@ class IRASAgent:
                                 "tools, but the previous final assistant message "
                                 "was empty. Give one concise final status now "
                                 "using only existing tool/verification evidence. "
-                                "Do not fabricate success. Call another tool only "
-                                "if verification is still genuinely required."
+                                "Do not fabricate success. Verified tool steps are not the same as verified completion of the user's whole goal. "
+                                "If a compound GUI goal still needs a semantic checkpoint, call device_observe_ui and continue the workflow."
                             ),
                         }
                     )

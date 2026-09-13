@@ -32,7 +32,9 @@ def test_tasktracker_empty_final_is_evidence_aware(tmp_path, monkeypatch):
     tracker.successful_calls = 1
     tracker.needs_verification = False
     text = tracker.empty_final_response().lower()
-    assert "verified tool steps" in text
+    assert "verified step-level progress" in text
+    assert "goal-level evidence" in text
+    assert "completed verified tool steps" not in text
     assert "lost that response" not in text
 
 
