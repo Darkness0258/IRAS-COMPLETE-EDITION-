@@ -20,6 +20,11 @@ SAFE_DEVICE_PLANNER_TOOLS = (
     "device_interact_app",
     "device_observe_ui",
     "device_semantic_action",
+    "device_skill_find",
+    "device_skill_validate",
+    "device_skill_list",
+    "device_skill_inspect",
+    "device_skill_delete",
     "device_spotify_search",
     "device_spotify_play",
     "device_media_control",
@@ -54,7 +59,8 @@ DEVICE_ACTION_RE = re.compile(
     r"double\s+click|scroll|select|paste|navigate|go|"
     r"play|pause|resume|continue|stop|next|skip|"
     r"previous|prev|mute|unmute|increase|decrease|"
-    r"read|list|show|check|capture|take|test"
+    r"read|list|show|check|capture|take|test|inspect|"
+    r"delete|forget"
     r")\b",
     flags=re.IGNORECASE,
 )
@@ -65,10 +71,28 @@ DEVICE_HINT_RE = re.compile(
     r"app|application|program|window|browser|"
     r"file|folder|directory|project|repo|repository|"
     r"screen|screenshot|spotify|chrome|edge|firefox|"
-    r"discord|telegram|whatsapp|vlc|notepad|"
+    r"discord|telegram|whatsapp|vlc|notepad|steam|blender|"
+    r"skill|skills|workflow|workflows|"
     r"vs\s*code|vscode|visual\s+studio\s+code"
     r")\b",
     flags=re.IGNORECASE,
+)
+
+
+KNOWN_GUI_APP_SCOPE_NAMES = (
+    "Visual Studio Code",
+    "Google Chrome",
+    "Microsoft Edge",
+    "Discord",
+    "Spotify",
+    "Telegram",
+    "WhatsApp",
+    "Steam",
+    "Blender",
+    "Firefox",
+    "Chrome",
+    "VLC",
+    "Notepad",
 )
 
 NON_DEVICE_OBJECT_RE = re.compile(
@@ -82,46 +106,32 @@ NON_DEVICE_OBJECT_RE = re.compile(
 )
 
 
-def should_use_device_planner(
-    text: str,
-) -> bool:
+def should_use_device_planner(text: str) -> bool:
     """
     Detect a likely real device task that the deterministic router did not
     understand. This is the bridge between rigid regex commands and model-led
     multi-step tool planning.
     """
-    command = normalize_command(
-        text
-    ).strip()
+    command = normalize_command(text).strip()
 
     if not command:
         return False
 
-    if INFORMATIONAL_PREFIX_RE.match(
-        command
-    ):
+    if INFORMATIONAL_PREFIX_RE.match(command):
         return False
 
-    if NON_DEVICE_OBJECT_RE.match(
-        command
-    ):
+    if NON_DEVICE_OBJECT_RE.match(command):
         return False
 
     # If the deterministic layer understands the command, it remains the
     # fast/reliable route and the planner is unnecessary.
-    if direct_device_intent(
-        command
-    ):
+    if direct_device_intent(command):
         return False
 
-    if DEVICE_HINT_RE.search(
-        command
-    ):
+    if DEVICE_HINT_RE.search(command):
         return True
 
-    if DEVICE_ACTION_RE.match(
-        command
-    ):
+    if DEVICE_ACTION_RE.match(command):
         return True
 
     # Compound continuation language is a strong signal for a task that may
@@ -136,14 +146,8 @@ def should_use_device_planner(
     return False
 
 
-def _clean_app_candidate(
-    value: str,
-) -> str:
-    value = " ".join(
-        str(value or "")
-        .strip(" \t,.:;!?-")
-        .split()
-    )
+def _clean_app_candidate(value: str) -> str:
+    value = " ".join(str(value or "").strip(" \t,.:;!?-").split())
 
     value = re.sub(
         r"\s+(?:app|application)$",
@@ -155,9 +159,7 @@ def _clean_app_candidate(
     return value
 
 
-def extract_app_scope(
-    text: str,
-) -> list[str]:
+def extract_app_scope(text: str) -> list[str]:
     """
     Extract only app names explicitly named in the current turn.
 
@@ -165,32 +167,32 @@ def extract_app_scope(
     after the model chooses a tool so prior conversation context cannot cause
     it to operate a different GUI app.
     """
-    command = normalize_command(
-        text
-    )
+    command = normalize_command(text)
 
     found = []
 
-    deterministic = direct_device_intent(
-        command
-    )
+    # Preserve the current-turn app-scope guard while correctly separating a
+    # named app from a destination inside that app (e.g. "Discord settings").
+    for known_app in KNOWN_GUI_APP_SCOPE_NAMES:
+        if re.search(
+            r"(?<![A-Za-z0-9])"
+            + re.escape(known_app)
+            + r"(?![A-Za-z0-9])",
+            command,
+            flags=re.IGNORECASE,
+        ):
+            if known_app.lower() not in {item.lower() for item in found}:
+                found.append(known_app)
+
+    deterministic = direct_device_intent(command)
 
     if deterministic:
-        app = (
-            deterministic.get(
-                "arguments",
-                {},
-            ).get(
-                "app"
-            )
-        )
+        app = deterministic.get("arguments", {}).get("app")
 
         if app:
-            found.append(
-                _clean_app_candidate(
-                    app
-                )
-            )
+            candidate = _clean_app_candidate(app)
+            if candidate.lower() not in {item.lower() for item in found}:
+                found.append(candidate)
 
     # Project/file/URL commands have their own specialized device tools and
     # should not be mistaken for application names.
@@ -214,11 +216,7 @@ def extract_app_scope(
     )
 
     if game_match:
-        found.append(
-            _clean_app_candidate(
-                game_match.group(1)
-            )
-        )
+        found.append(_clean_app_candidate(game_match.group(1)))
 
     patterns = (
         # "open Discord and send..."
@@ -233,18 +231,17 @@ def extract_app_scope(
     )
 
     for pattern in patterns:
-        match = re.search(
-            pattern,
-            command,
-            flags=re.IGNORECASE,
-        )
+        match = re.search(pattern, command, flags=re.IGNORECASE)
 
         if not match:
             continue
 
-        candidate = _clean_app_candidate(
-            match.group(1)
-        )
+        candidate = _clean_app_candidate(match.group(1))
+
+        for existing in found:
+            if candidate.lower().startswith(existing.lower() + " "):
+                candidate = existing
+                break
 
         if (
             candidate
@@ -258,15 +255,9 @@ def extract_app_scope(
                 "the computer",
                 "the laptop",
             }
-            and candidate.lower()
-            not in {
-                item.lower()
-                for item in found
-            }
+            and candidate.lower() not in {item.lower() for item in found}
         ):
-            found.append(
-                candidate
-            )
+            found.append(candidate)
 
     return found
 
@@ -292,18 +283,29 @@ def planner_system_nudge(
         "tools needed to complete it. You may make multiple tool calls and "
         "adapt after each real tool result. Do not reveal hidden chain-of-"
         "thought; report only useful actions/results. Prefer specialized tools "
-        "over generic UI automation. If an installed app name is uncertain, "
-        "use device_detect_apps first. For a normal installed GUI app, use "
-        "device_open_app/device_app_control and then device_interact_app when "
-        "keyboard or mouse actions are actually expressible with that tool. "
-        "For unfamiliar GUIs, call device_observe_ui before clicking. "
-        "Reason only from returned visible UI elements. Prefer "
-        "device_semantic_action for buttons, fields, tabs, menus and "
-        "list items, then re-observe and adapt after meaningful actions. "
-        "For URLs/websites prefer device_open_url. For files/projects use the "
-        "file/project tools. Never invent a click coordinate or claim you saw "
-        "screen content that no tool returned. If a tool fails, inspect the "
-        "error and try a safe alternative when one exists. If the requested "
+        "over generic UI automation. For normal GUI workflows, first call "
+        "device_skill_find with the user's current command and explicit app. "
+        "If a skill matches, call device_skill_validate for each step before "
+        "executing it. Validation is read-only and performs a fresh UIA "
+        "observation; execute only the validated semantic target via "
+        "device_semantic_action so the existing permission, audit and app-scope "
+        "guards remain in force. If the learned locator is stale, treat the "
+        "returned live observation as the v3.2 fallback, recover semantically, "
+        "verify the recovered action, and let the successful workflow refresh "
+        "the skill. Never replay or memorize raw coordinates. Use "
+        "device_skill_list/device_skill_inspect/device_skill_delete only when "
+        "the user explicitly asks to manage learned skills. If an installed "
+        "app name is uncertain, use device_detect_apps first. For a normal "
+        "installed GUI app, use device_open_app/device_app_control and then "
+        "device_interact_app when keyboard or mouse actions are actually "
+        "expressible with that tool. For unfamiliar GUIs, call "
+        "device_observe_ui before clicking. Reason only from returned visible "
+        "UI elements. Prefer device_semantic_action for buttons, fields, tabs, "
+        "menus and list items, then re-observe and adapt after meaningful actions. "
+        "For URLs/websites prefer device_open_url. For files/projects "
+        "use the file/project tools. Never invent a click coordinate or claim "
+        "you saw screen content that no tool returned. If a tool fails, inspect "
+        "the error and try a safe alternative when one exists. If the requested "
         "operation cannot be completed with the supplied bounded tools, say "
         "exactly what capability is missing instead of fabricating success."
         + scope_text
