@@ -1046,6 +1046,8 @@ class IRASAgent:
                     "device_open_app",
                     "device_interact_app",
                     "device_app_control",
+                    "device_observe_ui",
+                    "device_semantic_action",
                 }:
                     guarded_app = str(
                         call.arguments.get(

@@ -93,6 +93,56 @@ def make_tools(store):
             timeout=50,
         )
 
+    def device_observe_ui(
+        app,
+        ensure_open=True,
+        max_elements=180,
+        screenshot=True,
+        device_id=None,
+    ):
+        return request(
+            "observe_ui",
+            {
+                "app": app,
+                "ensure_open": ensure_open,
+                "max_elements": max_elements,
+                "screenshot": screenshot,
+            },
+            device_id,
+            timeout=45,
+        )
+
+    def device_semantic_action(
+        app,
+        action,
+        target,
+        text="",
+        key="",
+        role="",
+        occurrence=1,
+        replace=False,
+        ensure_open=True,
+        verify=True,
+        device_id=None,
+    ):
+        return request(
+            "semantic_action",
+            {
+                "app": app,
+                "action": action,
+                "target": target,
+                "text": text,
+                "key": key,
+                "role": role,
+                "occurrence": occurrence,
+                "replace": replace,
+                "ensure_open": ensure_open,
+                "verify": verify,
+            },
+            device_id,
+            timeout=55,
+        )
+
     def device_spotify_search(
         query,
         device_id=None,
@@ -420,6 +470,112 @@ def make_tools(store):
                 ],
             },
             device_interact_app,
+            PermissionLevel.SAFE_ACTION,
+        ),
+        Tool(
+            "device_observe_ui",
+            (
+                "Observe one safe Windows GUI application semantically. Returns "
+                "the visible Windows UI Automation element tree (names, roles, "
+                "automation IDs, values and screen bounds), plus an optional "
+                "local screenshot path/hash for audit. Use this before acting "
+                "on an unfamiliar interface. Do not invent coordinates."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "app": {
+                        "type": "string",
+                    },
+                    "ensure_open": {
+                        "type": "boolean",
+                    },
+                    "max_elements": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 300,
+                    },
+                    "screenshot": {
+                        "type": "boolean",
+                    },
+                    **optional_device,
+                },
+                "required": [
+                    "app",
+                ],
+            },
+            device_observe_ui,
+            PermissionLevel.READ,
+        ),
+        Tool(
+            "device_semantic_action",
+            (
+                "Perform one bounded semantic action on a visible UI element "
+                "inside one safe Windows GUI app. The target must be matched "
+                "against a real element returned by Windows UI Automation; "
+                "IRAS derives the click point from that observed element instead "
+                "of inventing coordinates. Actions: click, double_click, focus, "
+                "type_into, or press. Re-observes after the action by default."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "app": {
+                        "type": "string",
+                    },
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "click",
+                            "double_click",
+                            "focus",
+                            "type_into",
+                            "press",
+                        ],
+                    },
+                    "target": {
+                        "type": "string",
+                        "description": (
+                            "Visible UI element name or automation ID observed "
+                            "from device_observe_ui."
+                        ),
+                    },
+                    "text": {
+                        "type": "string",
+                    },
+                    "key": {
+                        "type": "string",
+                    },
+                    "role": {
+                        "type": "string",
+                        "description": (
+                            "Optional UI Automation role such as Button, Edit, "
+                            "ListItem, MenuItem, TabItem, or Hyperlink."
+                        ),
+                    },
+                    "occurrence": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 20,
+                    },
+                    "replace": {
+                        "type": "boolean",
+                    },
+                    "ensure_open": {
+                        "type": "boolean",
+                    },
+                    "verify": {
+                        "type": "boolean",
+                    },
+                    **optional_device,
+                },
+                "required": [
+                    "app",
+                    "action",
+                    "target",
+                ],
+            },
+            device_semantic_action,
             PermissionLevel.SAFE_ACTION,
         ),
         Tool(

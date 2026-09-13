@@ -18,6 +18,9 @@ from iras.tools.system import (
 from iras.device_bridge.universal_control import (
     UniversalWindowsController,
 )
+from iras.device_bridge.visual_control import (
+    SemanticVisualController,
+)
 
 
 DEFAULT_CAPABILITIES = [
@@ -33,6 +36,8 @@ DEFAULT_CAPABILITIES = [
     "run_tests",
     "capture_screen",
     "interact_app",
+    "observe_ui",
+    "semantic_action",
     "spotify_search",
     "spotify_play",
     "media_control",
@@ -91,6 +96,9 @@ class DeviceExecutor:
             ]
 
         self.ui = UniversalWindowsController()
+        self.visual = SemanticVisualController(
+            self.ui
+        )
 
     @staticmethod
     def default_roots() -> list[str]:
@@ -183,6 +191,8 @@ class DeviceExecutor:
             "run_tests": self.run_tests,
             "capture_screen": self.capture_screen,
             "interact_app": self.interact_app,
+            "observe_ui": self.observe_ui,
+            "semantic_action": self.semantic_action,
             "spotify_search": self.spotify_search,
             "spotify_play": self.spotify_play,
             "media_control": self.media_control,
@@ -610,6 +620,56 @@ class DeviceExecutor:
             actions,
             ensure_open=bool(
                 ensure_open
+            ),
+        )
+
+    def observe_ui(
+        self,
+        app: str,
+        ensure_open: bool = True,
+        max_elements: int = 180,
+        screenshot: bool = True,
+    ):
+        return self.visual.observe(
+            app,
+            ensure_open=bool(
+                ensure_open
+            ),
+            max_elements=max_elements,
+            screenshot=bool(
+                screenshot
+            ),
+        )
+
+    def semantic_action(
+        self,
+        app: str,
+        action: str,
+        target: str,
+        text: str = "",
+        key: str = "",
+        role: str = "",
+        occurrence: int = 1,
+        replace: bool = False,
+        ensure_open: bool = True,
+        verify: bool = True,
+    ):
+        return self.visual.act(
+            app,
+            action,
+            target,
+            text=text,
+            key=key,
+            role=role,
+            occurrence=occurrence,
+            replace=bool(
+                replace
+            ),
+            ensure_open=bool(
+                ensure_open
+            ),
+            verify=bool(
+                verify
             ),
         )
 

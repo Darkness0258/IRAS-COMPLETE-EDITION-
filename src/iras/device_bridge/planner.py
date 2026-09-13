@@ -18,6 +18,8 @@ SAFE_DEVICE_PLANNER_TOOLS = (
     "device_app_control",
     "device_open_app",
     "device_interact_app",
+    "device_observe_ui",
+    "device_semantic_action",
     "device_spotify_search",
     "device_spotify_play",
     "device_media_control",
@@ -294,6 +296,10 @@ def planner_system_nudge(
         "use device_detect_apps first. For a normal installed GUI app, use "
         "device_open_app/device_app_control and then device_interact_app when "
         "keyboard or mouse actions are actually expressible with that tool. "
+        "For unfamiliar GUIs, call device_observe_ui before clicking. "
+        "Reason only from returned visible UI elements. Prefer "
+        "device_semantic_action for buttons, fields, tabs, menus and "
+        "list items, then re-observe and adapt after meaningful actions. "
         "For URLs/websites prefer device_open_url. For files/projects use the "
         "file/project tools. Never invent a click coordinate or claim you saw "
         "screen content that no tool returned. If a tool fails, inspect the "
