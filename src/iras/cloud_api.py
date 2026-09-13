@@ -544,29 +544,56 @@ def chat_stream(
                     "Retry in a moment."
                 )
 
-            try:
-                for text in (
-                    runtime.agent
-                    .handle_stream(
+            if not direct_stream:
+                # Tool-bearing turns are internally buffered and produce one
+                # final response. Complete that work under the global agent
+                # lock, copy metrics, then release the lock BEFORE yielding SSE
+                # data so a slow/aborted client cannot pin the agent.
+                try:
+                    tool_text = runtime.agent.handle(
                         body.message
                     )
-                ):
+                    metrics = dict(
+                        runtime.agent.last_metrics
+                        or {}
+                    )
+                finally:
+                    if acquired:
+                        agent_lock.release()
+                        acquired = False
+
+                if tool_text:
                     yield _sse(
                         "token",
                         {
-                            "text": text,
+                            "text": tool_text,
                         },
                     )
-            finally:
-                if acquired:
-                    agent_lock.release()
-                    acquired = False
 
-            metrics = (
-                runtime.agent
-                .last_metrics
-                or {}
-            )
+            else:
+                # Ordinary no-tool conversation keeps true token streaming.
+                try:
+                    for text in (
+                        runtime.agent
+                        .handle_stream(
+                            body.message
+                        )
+                    ):
+                        yield _sse(
+                            "token",
+                            {
+                                "text": text,
+                            },
+                        )
+                finally:
+                    if acquired:
+                        agent_lock.release()
+                        acquired = False
+
+                metrics = dict(
+                    runtime.agent.last_metrics
+                    or {}
+                )
 
             yield _sse(
                 "done",
@@ -638,6 +665,15 @@ def chat_stream(
             error_text = str(exc)
 
             if (
+                "still finishing a previous request"
+                in error_text
+            ):
+                user_message = (
+                    "IRAS is still finishing a previous request. "
+                    "Retry in a moment."
+                )
+                error_code = "request_busy"
+            elif (
                 "LLM HTTP 429" in error_text
                 or "ALL_PROVIDERS_UNAVAILABLE" in error_text
             ):
