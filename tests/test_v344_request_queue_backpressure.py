@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 ROOT=Path(__file__).resolve().parents[1]
 def cloud(): return (ROOT/'src/iras/cloud_api.py').read_text(encoding='utf-8')
 def web(): return (ROOT/'clients/web/index.html').read_text(encoding='utf-8')
@@ -16,6 +17,12 @@ def test_web_handles_queued_event():
     t=web(); assert 'event==="queued"' in t; assert 'IRAS queued' in t; assert 'queue_wait_ms' in t
 def test_busy_error_maps_queue_exhaustion():
     t=cloud().lower(); assert 'request queue timed out' in t; assert 'error_code = "request_busy"' in t
-def test_v344_version_contract():
-    assert '3.4.4' in (ROOT/'src/iras/__init__.py').read_text(encoding='utf-8')
-    assert 'version = "3.4.4"' in (ROOT/'pyproject.toml').read_text(encoding='utf-8')
+def test_v344_or_newer_version_contract():
+    init=(ROOT/'src/iras/__init__.py').read_text(encoding='utf-8')
+    project=(ROOT/'pyproject.toml').read_text(encoding='utf-8')
+    m=re.search(r'__version__\s*=\s*"(\d+)\.(\d+)\.(\d+)"',init)
+    p=re.search(r'(?m)^version\s*=\s*"(\d+)\.(\d+)\.(\d+)"',project)
+    assert m is not None and p is not None
+    version=tuple(int(x) for x in m.groups())
+    assert version >= (3,4,4)
+    assert tuple(int(x) for x in p.groups()) == version

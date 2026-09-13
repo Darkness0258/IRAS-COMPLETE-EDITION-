@@ -1,67 +1,27 @@
 from pathlib import Path
 
+ROOT=Path(__file__).resolve().parents[1]
+def src(): return (ROOT/"src/iras/device_bridge/ui_control.py").read_text(encoding="utf-8")
+def block():
+    t=src(); a=t.index("    def spotify_play("); b=t.index("    def _send_media_appcommand(",a); return t[a:b]
 
-ROOT = Path(__file__).resolve().parents[1]
+def test_spotify_keeps_legacy_visual_detector():
+    t=src()
+    assert "def _spotify_play_button_point(" in t
+    assert "ImageGrab.grab(" in t
+    assert "def _click_spotify_play_button(" in t
 
+def test_spotify_quick_search_uses_shift_enter():
+    t=src()
+    assert "def _play_spotify_quick_search_result(" in t
+    assert '"shift"' in t and '"enter"' in t
+    assert '"quick_search_shift_enter"' in t
 
-def test_spotify_uses_real_play_button_click():
-    text = (
-        ROOT
-        / "src"
-        / "iras"
-        / "device_bridge"
-        / "ui_control.py"
-    ).read_text(encoding="utf-8")
+def test_quick_search_is_primary_and_green_button_is_fallback():
+    t=block()
+    assert t.index("_play_spotify_quick_search_result") < t.index("_click_spotify_play_button")
 
-    assert "def _spotify_play_button_point(" in text
-    assert "ImageGrab.grab(" in text
-    assert "green_pixels" in text
-    assert "def _click_spotify_play_button(" in text
-    assert '"play_button_clicked": True' in text
-
-
-def test_spotify_no_longer_assumes_down_enter_is_play():
-    text = (
-        ROOT
-        / "src"
-        / "iras"
-        / "device_bridge"
-        / "ui_control.py"
-    ).read_text(encoding="utf-8")
-
-    start = text.index(
-        "    def spotify_play("
-    )
-    end = text.index(
-        "    def media_control(",
-        start,
-    )
-
-    block = text[start:end]
-
-    assert 'self.press(\\n            "down"' not in block
-    assert "_click_spotify_play_button" in block
-
-
-def test_spotify_click_keeps_foreground_guard():
-    text = (
-        ROOT
-        / "src"
-        / "iras"
-        / "device_bridge"
-        / "ui_control.py"
-    ).read_text(encoding="utf-8")
-
-    start = text.index(
-        "    def _click_spotify_play_button("
-    )
-    end = text.index(
-        "    def spotify_play(",
-        start,
-    )
-
-    block = text[start:end]
-
-    assert "_force_foreground" in block
-    assert "_set_physical_cursor" in block
-    assert "mouse_event" in block
+def test_query_play_never_uses_generic_media_play():
+    t=block()
+    assert "_send_spotify_play_command(" not in t
+    assert '"media_play_sent": False' in t

@@ -758,12 +758,22 @@ def direct_device_intent(
     return None
 
 
+def _clean_device_error(value) -> str:
+    error = str(value or "unknown device error").strip()
+    prefix = re.compile(
+        r"^(?:(?:RuntimeError|ValueError|PermissionError|"
+        r"FileNotFoundError|TimeoutError|OSError):\s*)+"
+    )
+    cleaned = prefix.sub("", error).strip()
+    return cleaned or "unknown device error"
+
+
 def result_message(action: dict, result) -> str:
     tool = action.get("tool", "")
     arguments = action.get("arguments", {})
 
     if not result.ok:
-        error = str(result.error or "unknown device error")
+        error = _clean_device_error(result.error)
         return "I couldn't complete that action on your PC: " + error
 
     if tool == "device_detect_apps":
@@ -793,7 +803,7 @@ def result_message(action: dict, result) -> str:
 
     if tool == "device_spotify_play":
         query = str(arguments.get("query", "that track"))
-        return f"I searched Spotify and started “{query}”."
+        return f"I searched Spotify and sent Play for “{query}”."
 
     if tool == "device_media_control":
         command = str(arguments.get("command", "media")).replace("_", " ")
