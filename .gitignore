@@ -10,3 +10,5 @@ voice-cache/
 *.egg-info/
 build/
 dist/
+
+.iras-v*-backup-*/
