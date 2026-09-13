@@ -16,6 +16,7 @@ STATE_CHANGING_DEVICE_TOOLS = {
     "device_app_control",
     "device_interact_app",
     "device_semantic_action",
+    "device_computer_action",
     "device_spotify_play",
     "device_media_control",
     "device_open_url",
@@ -26,6 +27,9 @@ STATE_CHANGING_DEVICE_TOOLS = {
 
 READ_VERIFY_TOOLS = {
     "device_observe_ui",
+    "device_computer_status",
+    "device_computer_observe",
+    "device_computer_verify",
     "device_capture_screen",
     "device_detect_apps",
     "device_list",
@@ -278,6 +282,35 @@ class TaskTracker:
                 self.goal_checkpoint_required = False
             return
 
+        if name == "device_computer_observe":
+            self.needs_verification = False
+            uia_available = output.get("uia_available") is True
+            vision_available = output.get("vision_available") is True
+            self.accessibility_limited = not (uia_available or vision_available)
+            self.accessibility_reason = (
+                "Neither Windows UI Automation nor configured visual grounding "
+                "returned actionable controls for the current desktop."
+                if self.accessibility_limited
+                else ""
+            )
+            return
+
+        if name == "device_computer_action":
+            # Fresh post-action observation proves input delivery only. The
+            # user's desired end state still requires device_computer_verify.
+            self.needs_verification = True
+            self.learning_blocked = True
+            self.learning_block_reason = (
+                "workflow used universal visual/keyboard computer control; "
+                "v3.5 does not persist raw visual action traces as learned skills"
+            )
+            return
+
+        if name == "device_computer_verify":
+            status = str(output.get("status") or "").upper()
+            self.needs_verification = status != "PASS"
+            return
+
         if name == "device_semantic_action":
             observation = output.get("verification_observation")
             verified = bool(observation)
@@ -401,9 +434,20 @@ class TaskTracker:
 
         if self.last_tool == "device_observe_ui" and self.accessibility_limited:
             return (
-                "WORKFLOW ACCESSIBILITY LIMIT: Windows UI Automation returned no usable semantic controls for the rendered app window. "
-                "This does NOT mean the visual interface is blank. A screenshot may have been captured as fallback evidence, but v3.4.2 "
-                "must not pretend it can read screenshot pixels. Do not invent coordinates; report the limitation unless another bounded semantic route exists."
+                "WORKFLOW ACCESSIBILITY LIMIT: Windows UI Automation returned "
+                "no usable semantic controls. This does NOT mean the visual "
+                "interface is blank. In v3.5, call device_computer_observe; if "
+                "OmniParser is configured it can ground visual-only controls. "
+                "Never invent coordinates."
+            )
+
+        if self.last_tool == "device_computer_action":
+            return (
+                "WORKFLOW OUTCOME CHECK: the universal computer action was "
+                "injected, but the user's requested state is not yet proven. "
+                "Call device_computer_verify with a semantic condition. PASS "
+                "means the outcome is supported; FAIL means adapt/recover; "
+                "INCONCLUSIVE is not success."
             )
 
         if self.goal_checkpoint_required:

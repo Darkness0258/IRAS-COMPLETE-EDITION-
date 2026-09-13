@@ -38,6 +38,6 @@ def test_task_tracker_persists_only_verified_semantic_trace():
     assert "learnable_steps" in source
 
 
-def test_version_is_345():
-    assert "3.4.5" in text("src/iras/__init__.py")
-    assert 'version = "3.4.5"' in text("pyproject.toml")
+def test_version_is_350():
+    assert "3.5.0" in text("src/iras/__init__.py")
+    assert 'version = "3.5.0"' in text("pyproject.toml")

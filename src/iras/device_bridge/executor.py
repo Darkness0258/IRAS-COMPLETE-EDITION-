@@ -21,6 +21,9 @@ from iras.device_bridge.universal_control import (
 from iras.device_bridge.visual_control import (
     SemanticVisualController,
 )
+from iras.device_bridge.computer_use import (
+    UniversalComputerController,
+)
 
 
 DEFAULT_CAPABILITIES = [
@@ -38,6 +41,10 @@ DEFAULT_CAPABILITIES = [
     "interact_app",
     "observe_ui",
     "semantic_action",
+    "computer_status",
+    "computer_observe",
+    "computer_action",
+    "computer_verify",
     "spotify_search",
     "spotify_play",
     "media_control",
@@ -98,6 +105,10 @@ class DeviceExecutor:
         self.ui = UniversalWindowsController()
         self.visual = SemanticVisualController(
             self.ui
+        )
+        self.computer = UniversalComputerController(
+            self.ui,
+            self.visual,
         )
 
     @staticmethod
@@ -193,6 +204,10 @@ class DeviceExecutor:
             "interact_app": self.interact_app,
             "observe_ui": self.observe_ui,
             "semantic_action": self.semantic_action,
+            "computer_status": self.computer_status,
+            "computer_observe": self.computer_observe,
+            "computer_action": self.computer_action,
+            "computer_verify": self.computer_verify,
             "spotify_search": self.spotify_search,
             "spotify_play": self.spotify_play,
             "media_control": self.media_control,
@@ -671,6 +686,61 @@ class DeviceExecutor:
             verify=bool(
                 verify
             ),
+        )
+
+    def computer_status(self):
+        return self.computer.status()
+
+    def computer_observe(
+        self,
+        vision: str = "auto",
+        max_elements: int = 180,
+    ):
+        return self.computer.observe(
+            vision=vision,
+            max_elements=max_elements,
+        )
+
+    def computer_action(
+        self,
+        observation_id: str,
+        action: str,
+        element_id: str = "",
+        target_element_id: str = "",
+        text: str = "",
+        key: str = "",
+        keys=None,
+        amount: int = 0,
+        replace: bool = False,
+        seconds: float = 0.5,
+        verify: bool = True,
+    ):
+        return self.computer.action(
+            observation_id=observation_id,
+            action=action,
+            element_id=element_id,
+            target_element_id=target_element_id,
+            text=text,
+            key=key,
+            keys=keys,
+            amount=amount,
+            replace=replace,
+            seconds=seconds,
+            verify=verify,
+        )
+
+    def computer_verify(
+        self,
+        condition: str,
+        target: str = "",
+        prior_observation_id: str = "",
+        vision: str = "auto",
+    ):
+        return self.computer.verify(
+            condition=condition,
+            target=target,
+            prior_observation_id=prior_observation_id,
+            vision=vision,
         )
 
     def spotify_search(
