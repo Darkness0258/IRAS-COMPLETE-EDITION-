@@ -517,31 +517,90 @@ def chat_stream(
 
         try:
             try:
-                lock_wait = float(
+                queue_wait = float(
                     os.getenv(
-                        "IRAS_CHAT_LOCK_TIMEOUT",
-                        "12",
+                        "IRAS_CHAT_QUEUE_TIMEOUT",
+                        "180",
                     )
                 )
             except ValueError:
-                lock_wait = 12.0
+                queue_wait = 180.0
 
-            lock_wait = max(
-                3.0,
+            queue_wait = max(
+                15.0,
                 min(
-                    lock_wait,
-                    30.0,
+                    queue_wait,
+                    300.0,
                 ),
             )
 
+            queue_started = time.perf_counter()
             acquired = agent_lock.acquire(
-                timeout=lock_wait
+                blocking=False
+            )
+
+            if not acquired:
+                yield _sse(
+                    "queued",
+                    {
+                        "request_id": request_id,
+                        "message": (
+                            "IRAS is finishing the previous request. "
+                            "Your request is queued."
+                        ),
+                        "queue_timeout_ms": int(queue_wait * 1000),
+                    },
+                )
+
+                runtime.audit.record(
+                    "cloud_chat_queued",
+                    {
+                        "request_id": request_id,
+                        "device_id": device_id,
+                        "queue_timeout_ms": int(queue_wait * 1000),
+                    },
+                )
+
+                deadline = time.perf_counter() + queue_wait
+                while not acquired:
+                    remaining = deadline - time.perf_counter()
+                    if remaining <= 0:
+                        break
+                    acquired = agent_lock.acquire(
+                        timeout=min(5.0, remaining)
+                    )
+                    if not acquired:
+                        waited_ms = int(
+                            (time.perf_counter() - queue_started) * 1000
+                        )
+                        yield _sse(
+                            "queued",
+                            {
+                                "request_id": request_id,
+                                "message": (
+                                    "IRAS is still working on the previous request. "
+                                    "This request remains queued."
+                                ),
+                                "waited_ms": waited_ms,
+                                "queue_timeout_ms": int(queue_wait * 1000),
+                            },
+                        )
+
+            queue_wait_ms = int(
+                (time.perf_counter() - queue_started) * 1000
             )
 
             if not acquired:
                 raise RuntimeError(
-                    "IRAS is still finishing a previous request. "
-                    "Retry in a moment."
+                    "IRAS request queue timed out while waiting for "
+                    "the previous request to finish."
+                )
+
+            if queue_wait_ms >= 50:
+                print(
+                    "[IRAS QUEUE] "
+                    f"waited={queue_wait_ms}ms request_id={request_id}",
+                    flush=True,
                 )
 
             if not direct_stream:
@@ -637,6 +696,7 @@ def chat_stream(
                             False,
                         )
                     ),
+                    "queue_wait_ms": queue_wait_ms,
                 },
             )
 
@@ -665,12 +725,12 @@ def chat_stream(
             error_text = str(exc)
 
             if (
-                "still finishing a previous request"
-                in error_text
+                "request queue timed out" in error_text.lower()
+                or "still finishing a previous request" in error_text
             ):
                 user_message = (
-                    "IRAS is still finishing a previous request. "
-                    "Retry in a moment."
+                    "IRAS is handling a long-running request and the "
+                    "queue wait limit was reached. Try again in a moment."
                 )
                 error_code = "request_busy"
             elif (

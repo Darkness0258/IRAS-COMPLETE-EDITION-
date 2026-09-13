@@ -32,8 +32,8 @@ def test_chat_lock_is_bounded():
         encoding="utf-8"
     )
 
-    assert "IRAS_CHAT_LOCK_TIMEOUT" in text
-    assert "timeout=lock_wait" in text
+    assert "IRAS_CHAT_QUEUE_TIMEOUT" in text
+    assert "blocking=False" in text
 
 def test_tool_stream_releases_lock_before_single_result_is_yielded():
     text = (
@@ -85,3 +85,16 @@ def test_stream_busy_has_distinct_error_code_and_web_status():
     assert 'err.code=data.code||"request_failed"' in web
     assert 'e.code==="request_busy"' in web
     assert "IRAS busy · retry in a moment" in web
+
+def test_stream_queue_has_heartbeat_and_long_workflow_backpressure():
+    text = (ROOT / "src" / "iras" / "cloud_api.py").read_text(encoding="utf-8")
+    web = (ROOT / "clients" / "web" / "index.html").read_text(encoding="utf-8")
+    assert '"IRAS_CHAT_QUEUE_TIMEOUT"' in text
+    assert '"180"' in text
+    assert '"queued"' in text
+    assert "deadline" in text
+    assert "5.0" in text
+    assert "queue_wait_ms" in text
+    assert 'event==="queued"' in web
+    assert "IRAS queued" in web
+
