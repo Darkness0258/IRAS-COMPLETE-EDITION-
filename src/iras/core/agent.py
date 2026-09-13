@@ -18,6 +18,11 @@ from iras.device_bridge.planner import (
     planner_system_nudge,
     should_use_device_planner,
 )
+from iras.device_bridge.task_engine import (
+    TaskTracker,
+    planner_step_budget,
+    workflow_system_nudge,
+)
 from iras.social_style import (
     empty_reply_fallback,
     is_social_turn,
@@ -928,12 +933,39 @@ class IRASAgent:
                 },
             )
 
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        workflow_system_nudge(
+                            user_text
+                        )
+                    ),
+                }
+            )
+
         tool_schemas = (
             self.tools.schemas(
                 tool_names
             )
             if tool_names is not None
             else self.tools.schemas()
+        )
+
+        task_tracker = (
+            TaskTracker(
+                str(user_text)
+            )
+            if planner_mode
+            else None
+        )
+
+        step_budget = (
+            planner_step_budget(
+                self.max_steps
+            )
+            if planner_mode
+            else self.max_steps
         )
 
         required_tool_turn = bool(
@@ -962,7 +994,7 @@ class IRASAgent:
         tool_rounds = 0
 
         for step in range(
-            self.max_steps
+            step_budget
         ):
             model_started = (
                 time.perf_counter()
@@ -1021,6 +1053,29 @@ class IRASAgent:
                     )
                     break
 
+                if task_tracker is not None:
+                    finalization_nudge = (
+                        task_tracker
+                        .finalization_nudge()
+                    )
+
+                    if (
+                        finalization_nudge
+                        and (
+                            step + 1
+                            < step_budget
+                        )
+                    ):
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": (
+                                    finalization_nudge
+                                ),
+                            }
+                        )
+                        continue
+
                 final = (
                     reply.text
                     or empty_reply_fallback(
@@ -1039,6 +1094,34 @@ class IRASAgent:
                 reply.tool_calls
             ):
                 blocked_error = None
+
+                if task_tracker is not None:
+                    allowed_call, tracker_error = (
+                        task_tracker.before_call(
+                            call.name,
+                            dict(
+                                call.arguments
+                            ),
+                        )
+                    )
+
+                    if not allowed_call:
+                        blocked_error = (
+                            tracker_error
+                        )
+
+                        self.audit.record(
+                            "workflow_repeat_blocked",
+                            {
+                                "tool": call.name,
+                                "arguments": (
+                                    call.arguments
+                                ),
+                                "user_text": (
+                                    user_text
+                                ),
+                            },
+                        )
 
                 guarded_app = ""
 
@@ -1071,7 +1154,8 @@ class IRASAgent:
                     )
 
                 if (
-                    guarded_app
+                    blocked_error is None
+                    and guarded_app
                     and not self._device_app_allowed(
                         user_text,
                         guarded_app,
@@ -1148,11 +1232,50 @@ class IRASAgent:
                     }
                 )
 
+                if task_tracker is not None:
+                    task_tracker.record(
+                        call.name,
+                        dict(
+                            call.arguments
+                        ),
+                        payload,
+                    )
+
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                task_tracker
+                                .after_result_nudge(
+                                    payload
+                                )
+                            ),
+                        }
+                    )
+
         else:
             final = (
                 "I reached the maximum "
                 "tool-step limit before "
                 "completing the task."
+            )
+
+        if task_tracker is not None:
+            self.audit.record(
+                "autonomous_workflow_finished",
+                {
+                    **(
+                        task_tracker
+                        .audit_summary()
+                    ),
+                    "step_budget": (
+                        step_budget
+                    ),
+                    "tool_rounds": (
+                        tool_rounds
+                    ),
+                    "final_text": final,
+                },
             )
 
         self.memory.add_message(
@@ -1189,6 +1312,8 @@ class IRASAgent:
                 len(messages)
             ),
             "streamed": False,
+            "workflow_mode": planner_mode,
+            "step_budget": step_budget,
             "model": getattr(
                 self.provider,
                 "last_model",
