@@ -382,6 +382,11 @@ async function streamReply(base,c,text,bubble,session,signal){
 
       if(event==="start"){
         status.textContent=data.streaming?"IRAS is thinking...":"IRAS is working...";
+      }else if(event==="queued"){
+        const waited=data.waited_ms||0;
+        status.textContent=waited>0
+          ?`IRAS queued · waiting ${(waited/1000).toFixed(0)}s for the current task...`
+          :"IRAS queued · waiting for the current task...";
       }else if(event==="token"){
         const chunk=data.text||"";
         if(!chunk)continue;
@@ -403,11 +408,12 @@ async function streamReply(base,c,text,bubble,session,signal){
         conversationUntil=Date.now()+20000;
 
         const first=data.first_token_ms||0,total=data.timing_ms||0;
+        const queueWait=data.queue_wait_ms||0;
         status.textContent=handsFree
           ?"Listening for your next sentence..."
           :(first>0
-            ?`Reply started in ${(first/1000).toFixed(2)}s · total ${(total/1000).toFixed(2)}s`
-            :`Completed in ${(total/1000).toFixed(2)}s`);
+            ?`Reply started in ${(first/1000).toFixed(2)}s · total ${(total/1000).toFixed(2)}s${queueWait>0?` · queued ${(queueWait/1000).toFixed(1)}s`:""}`
+            :`Completed in ${(total/1000).toFixed(2)}s${queueWait>0?` · queued ${(queueWait/1000).toFixed(1)}s`:""}`);
       }else if(event==="error"){
         bubble.classList.remove("cursor");
         const err=new Error(data.message||"Streaming failed.");

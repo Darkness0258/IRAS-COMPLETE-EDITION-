@@ -73,7 +73,9 @@ def test_busy_lock_is_not_mislabeled_as_ai_provider_failure():
     assert "IRAS busy · retry in a moment" in web
 
 
-def test_v343_version_contract():
+def test_v343_or_newer_version_contract():
+    import re
+
     init = (
         ROOT
         / "src"
@@ -89,5 +91,26 @@ def test_v343_version_contract():
         encoding="utf-8"
     )
 
-    assert "3.4.3" in init
-    assert 'version = "3.4.3"' in pyproject
+    init_match = re.search(
+        r'__version__\s*=\s*"(\d+)\.(\d+)\.(\d+)"',
+        init,
+    )
+    pyproject_match = re.search(
+        r'(?m)^version\s*=\s*"(\d+)\.(\d+)\.(\d+)"',
+        pyproject,
+    )
+
+    assert init_match is not None
+    assert pyproject_match is not None
+
+    init_version = tuple(
+        int(part)
+        for part in init_match.groups()
+    )
+    pyproject_version = tuple(
+        int(part)
+        for part in pyproject_match.groups()
+    )
+
+    assert init_version >= (3, 4, 3)
+    assert pyproject_version == init_version
