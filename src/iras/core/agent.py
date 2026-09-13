@@ -484,6 +484,26 @@ class IRASAgent:
                 "device_media_control"
             }
 
+        compound_gui_workflow = (
+            bool(requested_apps)
+            and should_use_device_planner(
+                user_text
+            )
+            and cls._contains_any(
+                q,
+                (
+                    " and ",
+                    " then ",
+                    " after that ",
+                ),
+            )
+        )
+
+        if compound_gui_workflow:
+            return set(
+                SAFE_DEVICE_PLANNER_TOOLS
+            )
+
         interaction_intent = (
             requested_apps
             and cls._contains_any(
@@ -973,6 +993,7 @@ class IRASAgent:
         )
         tool_attempted = False
         forced_tool_retry = False
+        forced_final_retry = False
 
         if required_tool_turn:
             messages.append(
@@ -1076,12 +1097,41 @@ class IRASAgent:
                         )
                         continue
 
-                final = (
-                    reply.text
-                    or empty_reply_fallback(
-                        user_text
+                if (
+                    tool_attempted
+                    and not str(reply.text or "").strip()
+                    and not forced_final_retry
+                    and (step + 1 < step_budget)
+                ):
+                    forced_final_retry = True
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                "The requested device workflow already used real "
+                                "tools, but the previous final assistant message "
+                                "was empty. Give one concise final status now "
+                                "using only existing tool/verification evidence. "
+                                "Do not fabricate success. Call another tool only "
+                                "if verification is still genuinely required."
+                            ),
+                        }
                     )
-                )
+                    continue
+
+                if (
+                    not str(reply.text or "").strip()
+                    and tool_attempted
+                    and task_tracker is not None
+                ):
+                    final = task_tracker.empty_final_response()
+                else:
+                    final = (
+                        reply.text
+                        or empty_reply_fallback(
+                            user_text
+                        )
+                    )
                 final = normalize_social_reply(
                     user_text,
                     final,

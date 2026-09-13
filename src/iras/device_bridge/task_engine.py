@@ -348,6 +348,37 @@ class TaskTracker:
             "safe step. If complete, give a concise truthful result."
         )
 
+    def empty_final_response(self) -> str:
+        # Evidence-aware fallback when the model returns no final text.
+        if self.needs_verification:
+            return (
+                "I executed part of that device workflow, but the final "
+                "state is still unverified, so I won't claim it succeeded."
+            )
+
+        if self.consecutive_failures > 0:
+            detail = (
+                f" Last error: {self.last_error}"
+                if self.last_error
+                else ""
+            )
+            return (
+                "The device workflow did not finish cleanly, so I won't "
+                "claim success." + detail
+            )
+
+        if self.successful_calls > 0:
+            return (
+                "The device workflow completed verified tool steps, but the "
+                "model returned no final message. I won't claim anything "
+                "beyond the verified tool evidence."
+            )
+
+        return (
+            "I couldn't complete that device workflow, and I won't claim "
+            "that it succeeded."
+        )
+
     def finalization_nudge(self) -> str:
         if self.needs_verification:
             return (
