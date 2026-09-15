@@ -596,6 +596,35 @@ def app_control_intent(text: str) -> dict | None:
 def app_interaction_intent(text: str) -> dict | None:
     command = normalize_command(text)
 
+    # Natural one-turn edit workflow, e.g.
+    # "Open Notepad, type exactly: hello". Keep the typed payload separate
+    # from the app name so app launch routing cannot swallow the whole command.
+    match = re.match(
+        r"^(?:open|launch|start)\s+(?:the\s+)?(.+?)\s*[,;]\s*"
+        r"(?:and\s+)?(?:type|write)\s+(?:exactly\s*:?[\s]*)?(.+)$",
+        command,
+        flags=re.IGNORECASE,
+    )
+
+    if match:
+        app = _clean_query(match.group(1))
+        payload = str(match.group(2) or "").strip()
+        if app and payload:
+            return {
+                "tool": "device_interact_app",
+                "arguments": {
+                    "app": app,
+                    "actions": [
+                        {
+                            "action": "type",
+                            "text": payload,
+                        }
+                    ],
+                    "ensure_open": True,
+                },
+                "kind": "app_open_and_type",
+            }
+
     match = re.match(
         r"^(?:open|launch|start)\s+(?:the\s+)?(.+?)"
         r"\s+and\s+search(?:\s+for)?\s+(.+)$",

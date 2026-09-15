@@ -136,8 +136,11 @@ REQUIRED = {
     "scripts/validate_v360_integrated.py",
     "scripts/validate_v360_real_device.py",
     "src/iras/__init__.py",
+    "src/iras/autonomy.py",
+    "docs/AUTONOMOUS_DECISION_LAYER_V3.6.0.md",
     "tests/__init__.py",
     "tests/test_cross_app_workflow_memory_v360.py",
+    "tests/test_autonomy_supervisor_v360.py",
 }
 
 SECRET_PATTERNS = (

@@ -134,4 +134,3 @@ def test_focusable_custom_search_control_remains_actionable_uia():
         UniversalComputerController._uia_has_actionable_elements(elements)
         is True
     )
-

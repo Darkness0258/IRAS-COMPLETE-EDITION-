@@ -17,6 +17,7 @@ The current stable baseline is **v3.6.0**. Historical milestone notes and one-of
 - Closed-loop `observe -> ground -> act -> re-observe -> verify` execution.
 - Bounded recovery, adaptive route scoring, context-aware route learning, confidence calibration, stale-learning quarantine, and no failed-action replay.
 - v3.6 ephemeral cross-app workflow memory with verification provenance and fresh destination grounding.
+- Bounded autonomous decision supervisor: resolves safe session context, chooses next reversible steps, suppresses planner scratchpad, and keeps permissions/verification authoritative.
 
 ## Safety model
 

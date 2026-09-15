@@ -18,3 +18,5 @@ Current documents:
 - `SELF_ADAPTING_PERSONALITY.md` — bounded personality adaptation.
 
 Top-level `ARCHITECTURE.md` describes the current system architecture.
+
+- `AUTONOMOUS_DECISION_LAYER_V3.6.0.md` — bounded self-directed decision policy, session context, and safety invariants.

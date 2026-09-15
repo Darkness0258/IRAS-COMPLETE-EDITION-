@@ -695,9 +695,20 @@ class UniversalWindowsController(
                     app
                 )
             )
-            hwnd = self._find_window(
-                canonical
-            )
+            # Window enumeration can briefly miss a media app while its title
+            # or Chromium/WebView surface is transitioning (for example right
+            # after pause). Re-resolve for a short bounded interval before
+            # declaring the app absent. This is observation only; no command is
+            # replayed during the retry window.
+            hwnd = None
+            deadline = time.monotonic() + 0.9
+            while time.monotonic() < deadline:
+                hwnd = self._find_window(
+                    canonical
+                )
+                if hwnd is not None:
+                    break
+                time.sleep(0.08)
 
             if hwnd is not None:
                 return (

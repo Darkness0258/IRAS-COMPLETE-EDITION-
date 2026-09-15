@@ -137,3 +137,9 @@ or forbidden-route guards, auto-execute app focus, or enable action replay.
 The autonomous task tracker now owns an ephemeral `CrossAppWorkflowMemory`. Only semantically verified facts enter this memory. App transitions preserve those facts with provenance so the next planner turn can use them, but the destination app must still be observed and re-grounded before action. The memory is never persisted and does not grant permission or action replay.
 
 Recovery-route persistence also tracks consecutive semantic outcome streaks. Repeated contextual failures degrade/quarantine only the learned score contribution; current live UI candidate generation remains authoritative and controller exclusions remain hard.
+## Bounded autonomous decision supervisor
+
+The local/cloud agent keeps a small session-scoped autonomy context (current app, previous app, last media app, and verified semantic target). It is advisory context for planning and deterministic follow-ups; it is not a permission grant. The supervisor may choose the next safe step within the user's current goal, resolve obvious deictic follow-ups, request read-only state probes, and reject leaked planner scratchpad. Live UI state, the permission engine, fresh observation bindings, semantic verification, bounded recovery, and the no-action-replay invariant remain authoritative.
+
+For custom-rendered/WebView applications, an inaccessible UIA snapshot can trigger one controller-level read-only computer observation. If neither UIA nor configured visual grounding is actionable, state-changing actions are not guessed.
+

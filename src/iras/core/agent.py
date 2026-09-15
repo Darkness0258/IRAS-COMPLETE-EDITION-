@@ -3,6 +3,13 @@ from __future__ import annotations
 import json
 import time
 
+from iras import __version__
+from iras.autonomy import (
+    AutonomySupervisor,
+    local_identity_reply,
+    looks_like_private_deliberation,
+)
+
 from iras.persona import (
     SYSTEM_PROMPT,
     build_system_prompt,
@@ -42,6 +49,7 @@ from iras.device_bridge.verification_replanning import (
 )
 from iras.device_bridge.replan_guard import materially_different_replan_message
 from iras.device_bridge.recovery_learning import RecoveryRoutePerformanceStore
+from iras.device_bridge.workflow_memory import CrossAppWorkflowMemory
 from iras.social_style import (
     empty_reply_fallback,
     is_social_turn,
@@ -95,6 +103,8 @@ class IRASAgent:
         self.last_metrics = {}
         self._last_device_action = None
         self.recovery_performance_store = recovery_performance_store
+        self.autonomy = AutonomySupervisor()
+        self.workflow_memory = CrossAppWorkflowMemory()
 
     def set_voice_profile(
         self,
@@ -137,7 +147,19 @@ class IRASAgent:
                     self
                     ._current_system_prompt()
                 ),
-            }
+            },
+            {
+                "role": "system",
+                "content": (
+                    f"RUNTIME IDENTITY: You are IRAS {__version__}. "
+                    "This value is authoritative for this running process. "
+                    "If asked for your current IRAS version, report it exactly."
+                ),
+            },
+            {
+                "role": "system",
+                "content": self.autonomy.system_message(),
+            },
         ]
 
         facts = (
@@ -866,28 +888,38 @@ class IRASAgent:
                 }
             return None
 
+        contextual = self.autonomy.contextual_direct_action(
+            user_text
+        )
+        if contextual:
+            return contextual
+
         spotify_context = bool(
-            self._last_device_action
-            and (
-                (
-                    self._last_device_action
-                    .get("tool")
-                )
-                in {
-                    "device_spotify_play",
-                    "device_spotify_search",
-                    "device_media_control",
-                }
-                or (
-                    self._last_device_action
-                    .get("tool")
-                    == "device_open_app"
-                    and (
+            self.autonomy.current_app == "spotify"
+            or self.autonomy.last_media_app == "spotify"
+            or (
+                self._last_device_action
+                and (
+                    (
                         self._last_device_action
-                        .get("arguments")
-                        or {}
-                    ).get("app")
-                    == "spotify"
+                        .get("tool")
+                    )
+                    in {
+                        "device_spotify_play",
+                        "device_spotify_search",
+                        "device_media_control",
+                    }
+                    or (
+                        self._last_device_action
+                        .get("tool")
+                        == "device_open_app"
+                        and (
+                            self._last_device_action
+                            .get("arguments")
+                            or {}
+                        ).get("app")
+                        == "spotify"
+                    )
                 )
             )
         )
@@ -908,6 +940,16 @@ class IRASAgent:
         result = self.tools.execute(
             tool_name,
             arguments,
+        )
+
+        self.autonomy.note_tool_result(
+            tool_name,
+            arguments,
+            {
+                "ok": bool(result.ok),
+                "output": result.output,
+                "error": result.error,
+            },
         )
 
         self._last_device_action = {
@@ -989,6 +1031,7 @@ class IRASAgent:
         user_text,
     ):
         started = time.perf_counter()
+        self.autonomy.begin_turn()
 
         self.memory.add_message(
             "user",
@@ -1026,6 +1069,36 @@ class IRASAgent:
             self.personality.observe_user(
                 user_text
             )
+
+        identity_reply = local_identity_reply(
+            user_text
+        )
+        if identity_reply:
+            self.memory.add_message(
+                "assistant",
+                identity_reply,
+            )
+            self.audit.record(
+                "assistant_message",
+                {
+                    "text": identity_reply,
+                    "local_identity_reply": True,
+                },
+            )
+            total_ms = int(
+                (time.perf_counter() - started) * 1000
+            )
+            self.last_metrics = {
+                "total_ms": total_ms,
+                "model_ms": 0,
+                "first_token_ms": 0,
+                "tool_rounds": 0,
+                "tool_schema_count": 0,
+                "context_messages": 0,
+                "streamed": False,
+                "model": "local-runtime-identity",
+            }
+            return identity_reply
 
         direct_action = (
             self._resolve_direct_device_action(
@@ -1120,6 +1193,19 @@ class IRASAgent:
                 }
             )
 
+            if (
+                self.workflow_memory.revision > 0
+                and self.autonomy.should_use_workflow_memory(
+                    user_text
+                )
+            ):
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": self.workflow_memory.planner_message(),
+                    }
+                )
+
         tool_schemas = (
             self.tools.schemas(
                 tool_names
@@ -1132,10 +1218,16 @@ class IRASAgent:
             TaskTracker(
                 str(user_text),
                 recovery_performance_store=self.recovery_performance_store,
+                workflow_memory=self.workflow_memory,
             )
             if planner_mode
             else None
         )
+
+        if task_tracker is not None:
+            task_tracker.workflow_memory_last_emitted_revision = (
+                self.workflow_memory.revision
+            )
 
         step_budget = (
             planner_step_budget(
@@ -1206,6 +1298,26 @@ class IRASAgent:
             messages.append(am)
 
             if not reply.tool_calls:
+                if (
+                    planner_mode
+                    and looks_like_private_deliberation(
+                        reply.text or ""
+                    )
+                    and (step + 1 < step_budget)
+                ):
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                "Your previous text exposed planner scratchpad/self-talk. "
+                                "Do not narrate private deliberation. Continue by calling the "
+                                "next smallest safe tool, or if the goal is truly complete, "
+                                "give only a concise evidence-backed result."
+                            ),
+                        }
+                    )
+                    continue
+
                 if (
                     required_tool_turn
                     and not tool_attempted
@@ -1439,6 +1551,13 @@ class IRASAgent:
                     }
                 )
 
+                if call.name.startswith("device_"):
+                    self.autonomy.note_tool_result(
+                        call.name,
+                        dict(call.arguments),
+                        payload,
+                    )
+
                 if task_tracker is not None:
                     task_tracker.record(
                         call.name,
@@ -1447,6 +1566,88 @@ class IRASAgent:
                         ),
                         payload,
                     )
+
+                    # Controller-level autonomous observation: when a GUI is
+                    # custom-rendered and UIA exposes no actionable controls,
+                    # immediately gather one fresh read-only computer snapshot.
+                    # This is the only automatic recovery class permitted here;
+                    # it never clicks, types, focuses, sends, or replays an action.
+                    if (
+                        call.name == "device_observe_ui"
+                        and payload.get("ok")
+                        and task_tracker.accessibility_limited
+                        and (
+                            tool_names is None
+                            or "device_computer_observe" in set(tool_names)
+                        )
+                    ):
+                        probe_args = {
+                            "vision": "auto",
+                            "scope": "foreground",
+                            "max_elements": 180,
+                        }
+                        probe_result = self.tools.execute(
+                            "device_computer_observe",
+                            probe_args,
+                        )
+                        probe_payload = {
+                            "ok": probe_result.ok,
+                            "output": probe_result.output,
+                            "error": probe_result.error,
+                        }
+                        task_tracker.record(
+                            "device_computer_observe",
+                            probe_args,
+                            probe_payload,
+                        )
+                        self.autonomy.note_tool_result(
+                            "device_computer_observe",
+                            probe_args,
+                            probe_payload,
+                        )
+                        self.audit.record(
+                            "autonomy_read_only_grounding_probe",
+                            {
+                                "trigger": "uia_not_actionable",
+                                "arguments": probe_args,
+                                "ok": bool(probe_result.ok),
+                                "action_replay_allowed": False,
+                                "state_changing_action": False,
+                            },
+                        )
+                        probe_output = (
+                            probe_result.output
+                            if isinstance(probe_result.output, dict)
+                            else {}
+                        )
+                        no_grounding = bool(
+                            probe_result.ok
+                            and probe_output.get("uia_actionable") is not True
+                            and probe_output.get("vision_available") is not True
+                        )
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": (
+                                    "AUTONOMY READ-ONLY GROUNDING PROBE: "
+                                    + json.dumps(
+                                        probe_payload,
+                                        ensure_ascii=False,
+                                        default=str,
+                                    )[:18000]
+                                    + (
+                                        "\nNo actionable UIA or visual grounding is available. "
+                                        "Do not guess coordinates, type blindly, or keep looping. "
+                                        "Report the concrete visual-grounding blocker unless a different "
+                                        "read-only observation can resolve it."
+                                        if no_grounding
+                                        else
+                                        "\nUse this fresh observation to choose the next smallest safe step. "
+                                        "Do not replay any prior state-changing action."
+                                    )
+                                ),
+                            }
+                        )
 
                     if (
                         call.name == "device_computer_action"
