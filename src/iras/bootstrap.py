@@ -22,6 +22,7 @@ from iras.providers.demo import DemoProvider
 from iras.providers.openai_compatible import OpenAICompatibleProvider
 from iras.providers.openrouter import OpenRouterProvider
 from iras.core.agent import IRASAgent
+from iras.device_bridge.recovery_learning import RecoveryRoutePerformanceStore
 from iras.persona import build_system_prompt
 
 class Runtime:
@@ -42,5 +43,5 @@ def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.
         provider = OpenAICompatibleProvider(s.base_url, s.api_key, s.model, s.request_timeout)
     else:
         raise ValueError(f'Unknown IRAS_PROVIDER={s.provider}')
-    agent=IRASAgent(provider,reg,memory,audit,s.max_agent_steps,system_prompt=build_system_prompt(s.voice_profile),personality=personality,voice_profile=s.voice_profile)
+    agent=IRASAgent(provider,reg,memory,audit,s.max_agent_steps,system_prompt=build_system_prompt(s.voice_profile),personality=personality,voice_profile=s.voice_profile,recovery_performance_store=RecoveryRoutePerformanceStore(s.data_dir / 'recovery_route_performance.json'))
     return Runtime(s,agent,reg,memory,audit,browser,autos,personality)

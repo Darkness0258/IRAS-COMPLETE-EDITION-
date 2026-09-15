@@ -23,6 +23,25 @@ from iras.device_bridge.task_engine import (
     planner_step_budget,
     workflow_system_nudge,
 )
+from iras.device_bridge.recovery_runtime import (
+    build_recovery_directive,
+    execute_recovery_route,
+    recovery_route_message,
+    recovery_system_message,
+)
+from iras.device_bridge.fresh_action_planning import (
+    build_fresh_action_plan,
+    fresh_action_plan_message,
+)
+from iras.device_bridge.fresh_action_execution import (
+    chained_verification_message,
+)
+from iras.device_bridge.verification_replanning import (
+    plan_verification_replanning,
+    verification_replanning_message,
+)
+from iras.device_bridge.replan_guard import materially_different_replan_message
+from iras.device_bridge.recovery_learning import RecoveryRoutePerformanceStore
 from iras.social_style import (
     empty_reply_fallback,
     is_social_turn,
@@ -48,6 +67,7 @@ class IRASAgent:
         context_fact_limit=20,
         context_message_limit=12,
         smart_tools=False,
+        recovery_performance_store=None,
     ):
         self.provider = provider
         self.tools = tools
@@ -74,6 +94,7 @@ class IRASAgent:
         )
         self.last_metrics = {}
         self._last_device_action = None
+        self.recovery_performance_store = recovery_performance_store
 
     def set_voice_profile(
         self,
@@ -974,7 +995,8 @@ class IRASAgent:
 
         task_tracker = (
             TaskTracker(
-                str(user_text)
+                str(user_text),
+                recovery_performance_store=self.recovery_performance_store,
             )
             if planner_mode
             else None
@@ -1291,6 +1313,426 @@ class IRASAgent:
                         payload,
                     )
 
+                    if (
+                        call.name == "device_computer_action"
+                        and payload.get("ok")
+                        and task_tracker.chained_verification_pending
+                        and task_tracker.chained_verification_call
+                    ):
+                        verification_call = dict(task_tracker.chained_verification_call)
+                        verification_args = dict(verification_call.get("arguments") or {})
+                        verification_result = self.tools.execute(
+                            "device_computer_verify",
+                            verification_args,
+                        )
+                        verification_payload = {
+                            "ok": verification_result.ok,
+                            "output": verification_result.output,
+                            "error": verification_result.error,
+                        }
+                        task_tracker.record(
+                            "device_computer_verify",
+                            verification_args,
+                            verification_payload,
+                        )
+                        self.audit.record(
+                            "fresh_action_automatic_verification",
+                            {
+                                "fresh_action_tool": call.name,
+                                "fresh_action_arguments": dict(call.arguments),
+                                "verification_call": verification_call,
+                                "verification_payload": verification_payload,
+                                "action_replay_allowed": False,
+                            },
+                        )
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": chained_verification_message(
+                                    verification_call,
+                                    verification_payload,
+                                ),
+                            }
+                        )
+
+                        # v3.5.16: the result of the automatically chained
+                        # verification now drives the next workflow transition.
+                        # Only read-only recovery observations may execute
+                        # automatically; the prior state-changing action is never
+                        # replayed.
+                        transition = plan_verification_replanning(
+                            verification_payload,
+                            verification_args,
+                            automatic_recovery_available=(
+                                task_tracker.can_run_automatic_recovery()
+                            ),
+                            planner_constraints=(
+                                task_tracker.recovery_planner_constraints()
+                            ),
+                        )
+                        self.audit.record(
+                            "fresh_action_verification_replanning",
+                            {
+                                "transition": transition,
+                                "verification_call": verification_call,
+                                "verification_payload": verification_payload,
+                                "action_replay_allowed": False,
+                            },
+                        )
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": verification_replanning_message(transition),
+                            }
+                        )
+
+                        transition_status = str(transition.get("status") or "")
+                        chained_directive = transition.get("directive")
+                        if not isinstance(chained_directive, dict):
+                            chained_directive = None
+
+                        if (
+                            transition_status == "SAFE_RECOVERY_READY"
+                            and chained_directive is not None
+                        ):
+                            recovery_guard = task_tracker.automatic_recovery_guard(
+                                chained_directive
+                            )
+                            if not recovery_guard.get("allowed"):
+                                contract = task_tracker.require_material_replan(
+                                    directive=chained_directive,
+                                    reason_codes=[
+                                        str(
+                                            recovery_guard.get("reason")
+                                            or "recovery_route_cycle_detected"
+                                        )
+                                    ],
+                                )
+                                self.audit.record(
+                                    "fresh_action_verification_recovery_cycle_blocked",
+                                    {
+                                        "transition": transition,
+                                        "recovery_guard": recovery_guard,
+                                        "material_replan_contract": contract,
+                                        "action_replay_allowed": False,
+                                    },
+                                )
+                                messages.append(
+                                    {
+                                        "role": "system",
+                                        "content": materially_different_replan_message(
+                                            contract
+                                        ),
+                                    }
+                                )
+                                orchestration = {
+                                    "executed": False,
+                                    "blocked_reason": recovery_guard.get("reason"),
+                                }
+                            else:
+                                orchestration = execute_recovery_route(
+                                    chained_directive,
+                                    self.tools.execute,
+                                )
+                            if orchestration.get("executed"):
+                                recovery_payload = orchestration["payload"]
+                                recovery_handoff = orchestration["handoff"]
+                                fresh_plan = build_fresh_action_plan(
+                                    recovery_handoff,
+                                    verification_context=chained_directive.get(
+                                        "verification_context"
+                                    ),
+                                )
+                                task_tracker.record_automatic_recovery(
+                                    chained_directive,
+                                    recovery_payload,
+                                    handoff=recovery_handoff,
+                                    fresh_plan=fresh_plan,
+                                )
+                                self.audit.record(
+                                    "fresh_action_verification_automatic_recovery",
+                                    {
+                                        "decision": chained_directive.get("decision"),
+                                        "route": chained_directive.get("route"),
+                                        "tool": chained_directive.get("tool"),
+                                        "arguments": chained_directive.get("arguments") or {},
+                                        "ok": recovery_payload.get("ok"),
+                                        "error": recovery_payload.get("error"),
+                                        "handoff": recovery_handoff,
+                                        "fresh_action_plan": fresh_plan,
+                                        "action_replay_allowed": False,
+                                    },
+                                )
+                                messages.append(
+                                    {
+                                        "role": "system",
+                                        "content": recovery_system_message(
+                                            chained_directive,
+                                            recovery_payload,
+                                            handoff=recovery_handoff,
+                                        ),
+                                    }
+                                )
+                                messages.append(
+                                    {
+                                        "role": "system",
+                                        "content": fresh_action_plan_message(fresh_plan),
+                                    }
+                                )
+                                messages.append(
+                                    {
+                                        "role": "system",
+                                        "content": task_tracker.recovery_planner_message(),
+                                    }
+                                )
+                            else:
+                                messages.append(
+                                    {
+                                        "role": "system",
+                                        "content": (
+                                            "CHAINED VERIFICATION RECOVERY BLOCKED: "
+                                            + str(
+                                                orchestration.get("blocked_reason")
+                                                or "safety_gate"
+                                            )
+                                            + ". Re-plan without replaying the prior state-changing action."
+                                        ),
+                                    }
+                                )
+                        elif (
+                            transition_status == "PLANNER_ROUTE_REQUIRED"
+                            and chained_directive is not None
+                        ):
+                            if transition.get("requires_materially_different_plan"):
+                                contract = task_tracker.require_material_replan(
+                                    directive=chained_directive,
+                                    reason_codes=list(transition.get("reason_codes") or []),
+                                )
+                                messages.append(
+                                    {
+                                        "role": "system",
+                                        "content": materially_different_replan_message(
+                                            contract
+                                        ),
+                                    }
+                                )
+                            self.audit.record(
+                                "fresh_action_verification_planner_route",
+                                {
+                                    "decision": chained_directive.get("decision"),
+                                    "route": chained_directive.get("route"),
+                                    "automatic": False,
+                                    "action_replay_allowed": False,
+                                },
+                            )
+                            messages.append(
+                                {
+                                    "role": "system",
+                                    "content": recovery_route_message(chained_directive),
+                                }
+                            )
+                        elif transition_status in {
+                            "MATERIAL_REPLAN_REQUIRED",
+                            "VERIFICATION_ERROR_REPLAN",
+                            "RECOVERY_BUDGET_EXHAUSTED",
+                        }:
+                            contract = task_tracker.require_material_replan(
+                                directive=chained_directive,
+                                reason_codes=list(transition.get("reason_codes") or []),
+                            )
+                            messages.append(
+                                {
+                                    "role": "system",
+                                    "content": materially_different_replan_message(contract),
+                                }
+                            )
+                            messages.append(
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "FRESH-ACTION REPLAN REQUIRED: verification did not prove "
+                                        "the semantic goal strongly enough for completion. Choose a "
+                                        "materially different safe plan/checkpoint from current state. "
+                                        "Do not replay the preceding state-changing action."
+                                    ),
+                                }
+                            )
+
+                    if (
+                        call.name == "device_computer_verify"
+                        and payload.get("ok")
+                    ):
+                        directive = build_recovery_directive(
+                            payload.get("output"),
+                            dict(call.arguments),
+                            planner_constraints=(
+                                task_tracker.recovery_planner_constraints()
+                            ),
+                        )
+                        if directive is not None and not directive.get("automatic", True):
+                            if directive.get("requires_different_route"):
+                                contract = task_tracker.require_material_replan(
+                                    directive=directive,
+                                    reason_codes=list(directive.get("reason_codes") or []),
+                                )
+                                messages.append(
+                                    {
+                                        "role": "system",
+                                        "content": materially_different_replan_message(contract),
+                                    }
+                                )
+                            self.audit.record(
+                                "automatic_outcome_recovery_route_selected",
+                                {
+                                    "decision": directive["decision"],
+                                    "route": directive.get("route"),
+                                    "tool": directive.get("tool"),
+                                    "arguments": directive.get("arguments") or {},
+                                    "automatic": False,
+                                },
+                            )
+                            messages.append(
+                                {
+                                    "role": "system",
+                                    "content": recovery_route_message(directive),
+                                }
+                            )
+                        elif (
+                            directive is not None
+                            and task_tracker.can_run_automatic_recovery()
+                        ):
+                            recovery_guard = task_tracker.automatic_recovery_guard(directive)
+                            if not recovery_guard.get("allowed"):
+                                contract = task_tracker.require_material_replan(
+                                    directive=directive,
+                                    reason_codes=[
+                                        str(
+                                            recovery_guard.get("reason")
+                                            or "recovery_route_cycle_detected"
+                                        )
+                                    ],
+                                )
+                                self.audit.record(
+                                    "automatic_outcome_recovery_cycle_blocked",
+                                    {
+                                        "decision": directive.get("decision"),
+                                        "route": directive.get("route"),
+                                        "recovery_guard": recovery_guard,
+                                        "material_replan_contract": contract,
+                                        "action_replay_allowed": False,
+                                    },
+                                )
+                                messages.append(
+                                    {
+                                        "role": "system",
+                                        "content": materially_different_replan_message(contract),
+                                    }
+                                )
+                                orchestration = {
+                                    "executed": False,
+                                    "blocked_reason": recovery_guard.get("reason"),
+                                }
+                            else:
+                                orchestration = execute_recovery_route(
+                                    directive,
+                                    self.tools.execute,
+                                )
+                            if orchestration.get("executed"):
+                                recovery_payload = orchestration["payload"]
+                                recovery_handoff = orchestration["handoff"]
+                                fresh_plan = build_fresh_action_plan(
+                                    recovery_handoff,
+                                    verification_context=directive.get("verification_context"),
+                                )
+                                task_tracker.record_automatic_recovery(
+                                    directive,
+                                    recovery_payload,
+                                    handoff=recovery_handoff,
+                                    fresh_plan=fresh_plan,
+                                )
+                                self.audit.record(
+                                    "automatic_outcome_recovery",
+                                    {
+                                        "decision": directive["decision"],
+                                        "route": directive.get("route"),
+                                        "tool": directive["tool"],
+                                        "arguments": directive["arguments"],
+                                        "ok": recovery_payload.get("ok"),
+                                        "error": recovery_payload.get("error"),
+                                        "handoff": recovery_handoff,
+                                        "fresh_action_plan": fresh_plan,
+                                        "action_replay_allowed": False,
+                                    },
+                                )
+                                self.audit.record(
+                                    "recovery_aware_fresh_action_plan",
+                                    fresh_plan,
+                                )
+                                messages.append(
+                                    {
+                                        "role": "system",
+                                        "content": recovery_system_message(
+                                            directive,
+                                            recovery_payload,
+                                            handoff=recovery_handoff,
+                                        ),
+                                    }
+                                )
+                                messages.append(
+                                    {
+                                        "role": "system",
+                                        "content": fresh_action_plan_message(fresh_plan),
+                                    }
+                                )
+                                messages.append(
+                                    {
+                                        "role": "system",
+                                        "content": task_tracker.recovery_planner_message(),
+                                    }
+                                )
+                            else:
+                                self.audit.record(
+                                    "automatic_outcome_recovery_blocked",
+                                    {
+                                        "decision": directive.get("decision"),
+                                        "route": directive.get("route"),
+                                        "reason": orchestration.get("blocked_reason"),
+                                    },
+                                )
+                                messages.append(
+                                    {
+                                        "role": "system",
+                                        "content": (
+                                            "AUTOMATIC OUTCOME RECOVERY BLOCKED: "
+                                            + str(orchestration.get("blocked_reason") or "safety_gate")
+                                            + ". Re-plan from fresh state; do not replay the failed state-changing action."
+                                        ),
+                                    }
+                                )
+                        elif directive is not None:
+                            contract = task_tracker.require_material_replan(
+                                directive=directive,
+                                reason_codes=["automatic_recovery_budget_exhausted"],
+                            )
+                            messages.append(
+                                {
+                                    "role": "system",
+                                    "content": materially_different_replan_message(contract),
+                                }
+                            )
+                            messages.append(
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "AUTOMATIC OUTCOME RECOVERY LIMIT: "
+                                        "the bounded read-only recovery budget "
+                                        "for this workflow is exhausted. Do not "
+                                        "repeat the failed route; re-plan or "
+                                        "report the concrete blocker."
+                                    ),
+                                }
+                            )
+
                     messages.append(
                         {
                             "role": "system",
@@ -1302,6 +1744,16 @@ class IRASAgent:
                             ),
                         }
                     )
+                    workflow_memory_message = (
+                        task_tracker.workflow_memory_message_if_changed()
+                    )
+                    if workflow_memory_message:
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": workflow_memory_message,
+                            }
+                        )
 
         else:
             final = (

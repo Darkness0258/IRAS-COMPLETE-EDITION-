@@ -73,8 +73,14 @@ def test_spotify_success_message_does_not_claim_verified_playback():
     assert message == 'I searched Spotify and sent Play for “Majboor song”.'
 
 
-def test_v345_version_contract():
+def test_v345_or_newer_version_contract():
+    import re
+
     init = (ROOT / 'src/iras/__init__.py').read_text(encoding='utf-8')
     project = (ROOT / 'pyproject.toml').read_text(encoding='utf-8')
-    assert '3.4.5' in init
-    assert 'version = "3.4.5"' in project
+    im = re.search(r'__version__\s*=\s*"(\d+)\.(\d+)\.(\d+)"', init)
+    pm = re.search(r'(?m)^version\s*=\s*"(\d+)\.(\d+)\.(\d+)"', project)
+    assert im is not None and pm is not None
+    version = tuple(int(x) for x in im.groups())
+    assert version >= (3, 4, 5)
+    assert tuple(int(x) for x in pm.groups()) == version

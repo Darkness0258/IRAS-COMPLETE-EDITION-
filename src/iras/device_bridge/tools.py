@@ -143,6 +143,87 @@ def make_tools(store):
             timeout=55,
         )
 
+    def device_computer_status(
+        device_id=None,
+    ):
+        return request(
+            "computer_status",
+            {},
+            device_id,
+            timeout=20,
+        )
+
+    def device_computer_observe(
+        vision="auto",
+        scope="auto",
+        max_elements=180,
+        device_id=None,
+    ):
+        return request(
+            "computer_observe",
+            {
+                "vision": vision,
+                "scope": scope,
+                "max_elements": max_elements,
+            },
+            device_id,
+            timeout=150,
+        )
+
+    def device_computer_action(
+        observation_id,
+        action,
+        element_id="",
+        target_element_id="",
+        text="",
+        key="",
+        keys=None,
+        amount=0,
+        replace=False,
+        seconds=0.5,
+        verify=True,
+        device_id=None,
+    ):
+        return request(
+            "computer_action",
+            {
+                "observation_id": observation_id,
+                "action": action,
+                "element_id": element_id,
+                "target_element_id": target_element_id,
+                "text": text,
+                "key": key,
+                "keys": keys or [],
+                "amount": amount,
+                "replace": replace,
+                "seconds": seconds,
+                "verify": verify,
+            },
+            device_id,
+            timeout=160,
+        )
+
+    def device_computer_verify(
+        condition,
+        target="",
+        prior_observation_id="",
+        vision="auto",
+        scope="auto",
+        device_id=None,
+    ):
+        return request(
+            "computer_verify",
+            {
+                "condition": condition,
+                "target": target,
+                "prior_observation_id": prior_observation_id,
+                "vision": vision,
+                "scope": scope,
+            },
+            device_id,
+            timeout=150,
+        )
+
     def device_spotify_search(
         query,
         device_id=None,
@@ -341,8 +422,9 @@ def make_tools(store):
             "device_app_control",
             (
                 "Control an auto-detected installed/running GUI app. Supports "
-                "focus, minimize, maximize, restore and graceful close. Shells "
-                "and administrative consoles remain blocked."
+                "focus, minimize, maximize, restore and graceful close, and "
+                "returns verified_state when Windows confirms the requested state. "
+                "Shells and administrative consoles remain blocked."
             ),
             {
                 "type": "object",
@@ -577,6 +659,149 @@ def make_tools(store):
             },
             device_semantic_action,
             PermissionLevel.SAFE_ACTION,
+        ),
+        Tool(
+            "device_computer_status",
+            (
+                "Report universal Windows computer-use capabilities, including "
+                "whether the optional OmniParser visual grounding backend is "
+                "configured and reachable."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    **optional_device,
+                },
+            },
+            device_computer_status,
+            PermissionLevel.READ,
+        ),
+        Tool(
+            "device_computer_observe",
+            (
+                "Observe the current Windows desktop for universal computer use. "
+                "Returns the foreground window, screenshot metadata, Windows UI "
+                "Automation controls and, when configured/needed, OmniParser "
+                "visual elements. Every actionable element has an element_id and "
+                "grounded screen bounds. Use scope='desktop' for taskbar, desktop, "
+                "system-tray, or multi-window visual tasks; otherwise foreground "
+                "scope is preferred. Use vision='always' for custom-rendered "
+                "interfaces that UIA cannot describe. Never invent coordinates."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "vision": {
+                        "type": "string",
+                        "enum": ["off", "auto", "always"],
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["auto", "foreground", "desktop"],
+                    },
+                    "max_elements": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 300,
+                    },
+                    **optional_device,
+                },
+            },
+            device_computer_observe,
+            PermissionLevel.READ,
+        ),
+        Tool(
+            "device_computer_action",
+            (
+                "Perform one universal keyboard/mouse action grounded in a fresh "
+                "device_computer_observe result. Mouse actions use element_id, "
+                "never model-invented x/y coordinates. Supports move, click, "
+                "double_click, right_click, type_into, press, hotkey, scroll, "
+                "drag and wait. The action re-observes by default, but that only "
+                "verifies input delivery; use device_computer_verify for the "
+                "user's actual requested outcome."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "observation_id": {"type": "string"},
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "move", "click", "double_click", "right_click",
+                            "type_into", "press", "hotkey", "scroll", "drag",
+                            "wait"
+                        ],
+                    },
+                    "element_id": {"type": "string"},
+                    "target_element_id": {"type": "string"},
+                    "text": {"type": "string"},
+                    "key": {"type": "string"},
+                    "keys": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 3,
+                    },
+                    "amount": {
+                        "type": "integer",
+                        "minimum": -10,
+                        "maximum": 10,
+                    },
+                    "replace": {"type": "boolean"},
+                    "seconds": {
+                        "type": "number",
+                        "minimum": 0.05,
+                        "maximum": 5.0,
+                    },
+                    "verify": {"type": "boolean"},
+                    **optional_device,
+                },
+                "required": ["observation_id", "action"],
+            },
+            device_computer_action,
+            PermissionLevel.SAFE_ACTION,
+        ),
+        Tool(
+            "device_computer_verify",
+            (
+                "Freshly re-observe the desktop and verify a semantic computer "
+                "outcome. Returns PASS, FAIL or INCONCLUSIVE. Conditions include "
+                "element_exists, element_absent, text_contains, "
+                "window_title_contains, screen_changed, screen_stable, "
+                "visual_changed, visual_stable and foreground_changed. In auto "
+                "mode semantic checks can escalate to OmniParser when UIA alone "
+                "cannot prove the result. v3.5.6 also returns an explicit outcome "
+                "decision: ACCEPT, RETRY, ESCALATE_VISION or RECOVER, with a "
+                "bounded retry budget and goal-sufficiency signal."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "condition": {
+                        "type": "string",
+                        "enum": [
+                            "element_exists", "element_absent", "text_contains",
+                            "window_title_contains", "screen_changed",
+                            "screen_stable", "visual_changed", "visual_stable",
+                            "foreground_changed"
+                        ],
+                    },
+                    "target": {"type": "string"},
+                    "prior_observation_id": {"type": "string"},
+                    "vision": {
+                        "type": "string",
+                        "enum": ["off", "auto", "always"],
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["auto", "foreground", "desktop"],
+                    },
+                    **optional_device,
+                },
+                "required": ["condition"],
+            },
+            device_computer_verify,
+            PermissionLevel.READ,
         ),
         Tool(
             "device_spotify_search",
