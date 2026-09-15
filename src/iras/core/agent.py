@@ -991,11 +991,37 @@ class IRASAgent:
             "model": "deterministic-device-router",
         }
 
+        fastpath_extra = ""
+        if bool(result.ok) and isinstance(result.output, dict):
+            perception = result.output.get("perception") or []
+            if isinstance(perception, list):
+                perception_ms = 0
+                modes = []
+                for item in perception:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        perception_ms += int(item.get("total_ms") or 0)
+                    except (TypeError, ValueError):
+                        pass
+                    mode = str(item.get("vision_parse_mode") or item.get("parse_mode") or "").strip()
+                    if mode and mode not in modes:
+                        modes.append(mode)
+                if perception:
+                    fastpath_extra += f" perception={perception_ms}ms"
+                if modes:
+                    fastpath_extra += " vision=" + ",".join(modes[:3])
+            if result.output.get("observations") is not None:
+                fastpath_extra += f" observations={result.output.get('observations')}"
+            if result.output.get("roi_fastpath") is not None:
+                fastpath_extra += f" roi={bool(result.output.get('roi_fastpath'))}"
+
         print(
             "[IRAS DEVICE FASTPATH] "
             f"tool={tool_name} "
             f"ok={bool(result.ok)} "
-            f"total={total_ms}ms",
+            f"total={total_ms}ms"
+            f"{fastpath_extra}",
             flush=True,
         )
         return final

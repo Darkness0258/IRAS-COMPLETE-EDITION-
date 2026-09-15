@@ -151,7 +151,7 @@ def main():
             if vision_intent == 'status':
                 status = vision_runtime.status()
                 c.print('[bold]OmniParser vision runtime[/bold]')
-                for key in ('status', 'ready', 'autostart_enabled', 'local_endpoint', 'base_url', 'pid', 'started_by_iras', 'log_path', 'reason', 'last_start_error'):
+                for key in ('status', 'ready', 'autostart_enabled', 'local_endpoint', 'base_url', 'pid', 'started_by_iras', 'bridge_enabled', 'text_parse_url', 'log_path', 'reason', 'last_start_error'):
                     if key in status and status.get(key) is not None:
                         c.print(f'  {key}: {status.get(key)}')
             else:

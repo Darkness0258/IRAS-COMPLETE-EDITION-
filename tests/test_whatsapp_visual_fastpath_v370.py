@@ -281,3 +281,101 @@ def test_controller_fastpath_searches_then_clicks_with_fresh_observations(monkey
     assert computer.actions[1]["allow_controller_disambiguation"] is True
     assert result["messages_sent"] == 0
     assert result["typed_into_composer"] is False
+
+class _ROIFakeComputer(_FakeComputer):
+    def __init__(self, roi_observations):
+        super().__init__([])
+        self.roi_observations = list(roi_observations)
+        self.roi_calls = []
+
+    def observe_region(self, **kwargs):
+        self.roi_calls.append(dict(kwargs))
+        assert self.roi_observations, "unexpected extra ROI observation"
+        item = dict(self.roi_observations.pop(0))
+        item.setdefault("foreground", self._foreground())
+        item.setdefault("performance", {"total_ms": 12, "parse_mode": "text_roi"})
+        item.setdefault("roi_label", kwargs.get("label"))
+        item.setdefault("vision_parse_mode", "text_roi")
+        return item
+
+    def observe(self, **kwargs):
+        raise AssertionError("R4 ROI fast path should not broaden on successful flow")
+
+
+def test_r4_roi_fastpath_uses_text_regions_and_preserves_fresh_action_binding(monkeypatch):
+    from iras.device_bridge.whatsapp_workflow import open_chat_and_verify
+    import iras.device_bridge.whatsapp_workflow as workflow
+
+    monkeypatch.setattr(workflow.time, "sleep", lambda *_: None)
+    search = {
+        "element_id": "vision:search-roi",
+        "source": "vision",
+        "label": "Search or start new chat",
+        "role": "text",
+        "confidence": 0.96,
+        "rect": {"left": 95, "top": 90, "width": 220, "height": 28},
+    }
+    contact = {
+        "element_id": "vision:contact-roi",
+        "source": "vision",
+        "label": "Darkness",
+        "role": "text",
+        "confidence": 0.94,
+        "rect": {"left": 110, "top": 190, "width": 120, "height": 28},
+    }
+    header = {
+        "element_id": "vision:header-roi",
+        "source": "vision",
+        "label": "DARKNESS",
+        "role": "text",
+        "confidence": 0.97,
+        "rect": {"left": 610, "top": 48, "width": 140, "height": 30},
+    }
+    computer = _ROIFakeComputer(
+        [
+            _obs("roi-top", [search]),
+            _obs("roi-results", [contact]),
+            _obs("roi-header", [header]),
+        ]
+    )
+
+    result = open_chat_and_verify(_FakeUI(), computer, contact="Darkness")
+
+    assert result["verified"] is True
+    assert result["roi_fastpath"] is True
+    assert result["verification_source"] == "vision_roi_text"
+    assert result["observations"] == 3
+    assert [call["label"] for call in computer.roi_calls] == [
+        "whatsapp_top",
+        "whatsapp_results",
+        "whatsapp_header",
+    ]
+    assert all(call["mode"] == "text" for call in computer.roi_calls)
+    assert [item["action"] for item in computer.actions] == ["type_into", "click"]
+    assert computer.actions[0]["observation_id"] == "roi-top"
+    assert computer.actions[1]["observation_id"] == "roi-results"
+    assert result["messages_sent"] == 0
+    assert result["typed_into_composer"] is False
+    assert result["action_replay_allowed"] is False
+
+
+def test_r4_roi_fastpath_finishes_after_top_band_when_chat_already_open():
+    from iras.device_bridge.whatsapp_workflow import open_chat_and_verify
+
+    header = {
+        "element_id": "vision:header-roi",
+        "source": "vision",
+        "label": "DARKNESS",
+        "role": "text",
+        "confidence": 0.98,
+        "rect": {"left": 610, "top": 48, "width": 140, "height": 30},
+    }
+    computer = _ROIFakeComputer([_obs("roi-top", [header])])
+
+    result = open_chat_and_verify(_FakeUI(), computer, contact="Darkness")
+
+    assert result["verified"] is True
+    assert result["observations"] == 1
+    assert result["actions"] == []
+    assert len(computer.roi_calls) == 1
+    assert computer.roi_calls[0]["label"] == "whatsapp_top"

@@ -146,3 +146,26 @@ provenance. Mouse actions still require a fresh observed element ID. Low-
 confidence or ambiguous visual targets fail closed, raw model coordinates are
 not accepted, and one state-changing input consumes its observation binding so
 it cannot be replayed.
+
+## R4 IRAS bridge and ROI acceleration
+
+When IRAS starts a discovered local OmniParser installation, the default R4
+launcher uses `src/iras/vision/omniparser_bridge_server.py` with OmniParser's own
+Python environment. The bridge still provides `/probe/` and `/parse/`, but also
+adds `/parse_text/` for lightweight EasyOCR-only text grounding. Full
+Florence/YOLO models are initialized lazily on the first full parse instead of at
+server startup.
+
+This behavior is controlled by:
+
+```text
+IRAS_OMNIPARSER_BRIDGE=true
+IRAS_OMNIPARSER_ROI_MAX_WIDTH=960
+IRAS_OMNIPARSER_ROI_MAX_HEIGHT=720
+IRAS_WHATSAPP_ROI_FASTPATH=true
+```
+
+Set `IRAS_OMNIPARSER_BRIDGE=false` only to force the older upstream-server
+bootstrap. If a manually started upstream server is already listening, IRAS
+reuses it; ROI text requests automatically fall back to `/parse/` if
+`/parse_text/` is not supported.

@@ -192,3 +192,13 @@ Current deployment/build documentation is under `docs/`:
 ## Development rule
 
 Keep the active tree focused on current code, current docs, regression tests, and current release tooling. Historical release notes belong in Git history rather than as duplicated root files or executable one-off validators.
+
+### v3.7 R4 performance hardening
+
+The deterministic WhatsApp visual-navigation path now uses controller-owned
+regions of interest plus a lightweight text-only OmniParser bridge when IRAS
+starts the local vision service. This avoids full Florence/icon captioning for
+simple search-result/header text, preserves absolute grounded coordinates, keeps
+fresh single-use action observations, and falls back to normal full OmniParser
+when richer semantics are necessary. ROI timing telemetry is returned internally
+for benchmarking cold vs warm Windows performance.

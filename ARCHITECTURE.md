@@ -181,3 +181,20 @@ screenshot with the exact same SHA-256. Observation IDs remain fresh per capture
 so cached perception does not reuse action authorization. OmniParser runs as a
 single non-reloading child process, and IRAS persists only local PID/base-URL
 ownership metadata so CLI/controller instances agree on runtime ownership.
+
+### v3.7 R4 ROI perception fast path
+
+Bounded controller-owned workflows may request a foreground-clamped region of
+interest instead of a full-window visual parse. ROI observations are not exposed
+as free-form model coordinates: the controller authors the region, captures fresh
+pixels, builds ordinary stable scene elements, and stores a fresh observation
+that is subject to the same foreground-freshness and one-state-changing-input
+consumption rules.
+
+For local OmniParser, IRAS can launch its own lightweight bridge inside the
+OmniParser virtual environment. The bridge becomes ready without eagerly loading
+the full Florence/YOLO stack. Its `/parse_text/` endpoint performs EasyOCR-only
+text grounding for narrow ROIs; `/parse/` lazily initializes the full upstream
+OmniParser when richer icon semantics are required. Existing external/upstream
+servers remain supported because a missing text endpoint falls back to full
+parsing of the same bounded image.

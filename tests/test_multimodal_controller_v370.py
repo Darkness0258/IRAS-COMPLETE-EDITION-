@@ -279,3 +279,81 @@ def test_v370_identical_screen_observations_still_receive_fresh_ids(monkeypatch)
 
     assert first["screenshot"]["sha256"] == second["screenshot"]["sha256"]
     assert first["observation_id"] != second["observation_id"]
+
+
+def test_r4_roi_observation_preserves_absolute_geometry_and_fresh_id(monkeypatch):
+    controller = UniversalComputerController(FakeUI(), FakeVisual())
+    monkeypatch.setattr(controller, "_require_windows", lambda: None)
+    monkeypatch.setattr(
+        controller,
+        "_foreground",
+        lambda: {
+            "hwnd": 10,
+            "title": "WhatsApp",
+            "rect": {"left": 100, "top": 50, "width": 1200, "height": 800},
+        },
+    )
+    monkeypatch.setattr(controller, "_cursor", lambda: {"x": 0, "y": 0})
+    monkeypatch.setattr(controller, "_prune_capture_files", lambda: None)
+    monkeypatch.setattr(
+        controller,
+        "_capture_region",
+        lambda region, **_: {
+            "path": "roi.png",
+            "sha256": "roi-hash",
+            "bytes": 10,
+            "image_width": 600,
+            "image_height": 200,
+            "source_width": 600,
+            "source_height": 200,
+            "desktop_rect": dict(region),
+            "capture_scope": "roi",
+            "capture_ms": 2,
+        },
+    )
+    monkeypatch.setattr(
+        controller,
+        "_run_omniparser",
+        lambda screenshot, mode="full": {
+            "status": "available",
+            "available": True,
+            "elements": [
+                {
+                    "source": "omniparser",
+                    "label": "DARKNESS",
+                    "name": "DARKNESS",
+                    "role": "text",
+                    "interactive": True,
+                    "enabled": True,
+                    "confidence": 0.96,
+                    "rect": {"left": 620, "top": 70, "width": 140, "height": 28},
+                }
+            ],
+            "latency": 0.01,
+            "http_ms": 12,
+            "parse_mode": "text_roi",
+            "requested_parse_mode": mode,
+            "fallback_to_full": False,
+            "runtime": {"ready": True},
+            "cache_hit": False,
+        },
+    )
+
+    first = controller.observe_region(
+        region={"left": 450, "top": 50, "width": 850, "height": 180},
+        label="whatsapp_header",
+        mode="text",
+    )
+    second = controller.observe_region(
+        region={"left": 450, "top": 50, "width": 850, "height": 180},
+        label="whatsapp_header",
+        mode="text",
+    )
+
+    assert first["vision_scope"] == "roi:whatsapp_header"
+    assert first["vision_parse_mode"] == "text_roi"
+    assert first["roi"]["left"] == 450
+    assert first["elements"][0]["rect"]["left"] == 620
+    assert first["observation_id"] != second["observation_id"]
+    assert first["performance"]["input_pixels"] == 120000
+    assert first["action_policy"].startswith("Controller-internal ROI observation")

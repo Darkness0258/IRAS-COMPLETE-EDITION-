@@ -16,7 +16,9 @@ def test_v370_omniparser_defaults_to_lazy_local_autostart(monkeypatch):
     assert OmniParserRuntimeManager.autostart_enabled() is True
     assert OmniParserRuntimeManager.base_url() == DEFAULT_BASE_URL
     assert OmniParserRuntimeManager.parse_url().endswith("/parse/")
+    assert OmniParserRuntimeManager.text_parse_url().endswith("/parse_text/")
     assert OmniParserRuntimeManager.probe_url().endswith("/probe/")
+    assert OmniParserRuntimeManager.bridge_enabled() is True
 
 
 def test_v370_omniparser_can_be_fully_disabled(monkeypatch):
@@ -129,7 +131,7 @@ def test_v370_missing_installation_fails_with_one_time_setup_hint(monkeypatch):
     assert "IRAS_OMNIPARSER_ROOT" in text
     assert "automatically" in text
 
-def test_v370_default_server_command_preloads_torch_before_omniparser(monkeypatch, tmp_path):
+def test_v370_default_server_command_uses_lazy_iras_bridge(monkeypatch, tmp_path):
     root = tmp_path / "OmniParser"
     server = root / "omnitool" / "omniparserserver"
     python = root / ".venv" / ("Scripts/python.exe" if __import__("os").name == "nt" else "bin/python")
@@ -140,16 +142,38 @@ def test_v370_default_server_command_preloads_torch_before_omniparser(monkeypatc
     monkeypatch.setenv("IRAS_OMNIPARSER_ROOT", str(root))
     monkeypatch.delenv("IRAS_OMNIPARSER_START_JSON", raising=False)
     monkeypatch.delenv("IRAS_OMNIPARSER_START_COMMAND", raising=False)
+    monkeypatch.delenv("IRAS_OMNIPARSER_BRIDGE", raising=False)
     manager = OmniParserRuntimeManager()
 
     command, cwd = manager._build_command()
 
     assert command[0] == str(python.resolve())
+    assert command[1].endswith("omniparser_bridge_server.py")
+    assert "--omniparser-root" in command
+    assert str(root.resolve()) in command
+    assert "--caption-model-name" in command
+    assert "--host" in command
+    assert cwd == server.resolve()
+
+
+def test_v370_upstream_fallback_preloads_torch_and_disables_reloader(monkeypatch, tmp_path):
+    root = tmp_path / "OmniParser"
+    server = root / "omnitool" / "omniparserserver"
+    python = root / ".venv" / ("Scripts/python.exe" if __import__("os").name == "nt" else "bin/python")
+    server.mkdir(parents=True)
+    python.parent.mkdir(parents=True)
+    python.write_text("", encoding="utf-8")
+    monkeypatch.setenv("IRAS_OMNIPARSER_ROOT", str(root))
+    monkeypatch.setenv("IRAS_OMNIPARSER_BRIDGE", "false")
+    monkeypatch.delenv("IRAS_OMNIPARSER_START_JSON", raising=False)
+    monkeypatch.delenv("IRAS_OMNIPARSER_START_COMMAND", raising=False)
+
+    command, _ = OmniParserRuntimeManager()._build_command()
+
     assert command[1] == "-c"
     assert "import runpy, torch" in command[2]
     assert "run_module('omniparserserver'" in command[2]
-    assert "--caption_model_name" in command
-    assert cwd == server.resolve()
+    assert "reload=False" in command[2]
 
 
 
@@ -172,20 +196,3 @@ def test_v370_runtime_ownership_survives_manager_instance_boundary(monkeypatch):
     )
 
     assert manager._owned_runtime_pid() == 4242
-
-
-def test_v370_default_server_bootstrap_disables_upstream_reloader(monkeypatch, tmp_path):
-    root = tmp_path / "OmniParser"
-    server = root / "omnitool" / "omniparserserver"
-    python = root / ".venv" / ("Scripts/python.exe" if __import__("os").name == "nt" else "bin/python")
-    server.mkdir(parents=True)
-    python.parent.mkdir(parents=True)
-    python.write_text("", encoding="utf-8")
-    monkeypatch.setenv("IRAS_OMNIPARSER_ROOT", str(root))
-    monkeypatch.delenv("IRAS_OMNIPARSER_START_JSON", raising=False)
-    monkeypatch.delenv("IRAS_OMNIPARSER_START_COMMAND", raising=False)
-
-    command, _ = OmniParserRuntimeManager()._build_command()
-
-    assert "run_name='iras_omniparser_runtime'" in command[2]
-    assert "reload=False" in command[2]

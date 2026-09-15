@@ -95,3 +95,35 @@ of the upstream development reloader. IRAS persists only runtime ownership
 metadata (PID/base URL/start time) under `%USERPROFILE%\.iras\omniparser` so a
 new CLI/runtime-manager instance can correctly report `started_by_iras` for an
 already-running IRAS-owned service.
+
+## R4 ROI grounding and lightweight text perception
+
+R4 reduces CPU vision cost for bounded workflows whose semantic target can only
+exist in a known portion of the foreground application. The universal computer
+controller now has an internal `observe_region(...)` path that captures only a
+foreground-bounded region of interest (ROI), preserves absolute screen geometry,
+and still produces a fresh single-use observation ID.
+
+IRAS-managed local OmniParser startup now prefers a small bridge process running
+inside the user's OmniParser virtual environment. The bridge exposes the normal
+full `/parse/` contract plus `/parse_text/`, an EasyOCR-only path intended for
+text-heavy ROIs such as WhatsApp search results and chat headers. Florence/YOLO
+full semantics are loaded lazily only when full parsing is actually requested.
+If `/parse_text/` is unavailable (for example, an already-running upstream
+OmniParser server), IRAS falls back once to full parsing of the same ROI.
+
+The WhatsApp navigation fast path uses three bounded regions when needed:
+
+1. top band — detect an already-open target or the global chat-search field;
+2. left results pane — ground the requested contact after search typing;
+3. right header band — prove the destination chat header after the click.
+
+A click or type still consumes the exact observation that authorized it. The
+contact click is never replayed automatically. Header retries are read-only, and
+the older full-scene path remains a compatibility fallback when ROI grounding is
+unavailable or inconclusive.
+
+R4 observations include timing telemetry (`capture_ms`, HTTP/vision time, server
+latency, cache hit, source/input pixels, and total ROI observation time) so real
+Windows runs can identify whether remaining latency is capture, OCR, model load,
+or full semantic parsing.

@@ -380,6 +380,76 @@ class UniversalComputerController:
             "desktop_rect": region_rect,
             "capture_scope": "foreground",
         }
+
+    def _capture_region(
+        self,
+        region_rect: dict,
+        *,
+        label: str = "roi",
+        max_width: int | None = None,
+        max_height: int | None = None,
+    ) -> dict:
+        """Capture a bounded desktop ROI while preserving absolute geometry."""
+        from PIL import ImageGrab
+
+        started = time.perf_counter()
+        desktop = self._desktop_rect()
+        left = max(int(desktop["left"]), int(region_rect.get("left", desktop["left"]) or desktop["left"]))
+        top = max(int(desktop["top"]), int(region_rect.get("top", desktop["top"]) or desktop["top"]))
+        right = min(
+            int(desktop["right"]),
+            left + max(1, int(region_rect.get("width", 1) or 1)),
+        )
+        bottom = min(
+            int(desktop["bottom"]),
+            top + max(1, int(region_rect.get("height", 1) or 1)),
+        )
+        if right <= left or bottom <= top:
+            raise RuntimeError("Requested vision ROI is outside the virtual desktop.")
+
+        try:
+            image = ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True)
+        except TypeError:
+            # Older Pillow versions do not combine bbox + all_screens.
+            full = ImageGrab.grab(all_screens=True)
+            dl, dt = int(desktop["left"]), int(desktop["top"])
+            image = full.crop((left - dl, top - dt, right - dl, bottom - dt))
+
+        source_width, source_height = image.size
+        if max_width is None:
+            max_width = int(os.getenv("IRAS_OMNIPARSER_ROI_MAX_WIDTH", "960"))
+        if max_height is None:
+            max_height = int(os.getenv("IRAS_OMNIPARSER_ROI_MAX_HEIGHT", "720"))
+        max_width = max(320, min(int(max_width), 1600))
+        max_height = max(160, min(int(max_height), 1200))
+        vision_image = image.copy()
+        vision_image.thumbnail((max_width, max_height))
+
+        safe_label = "".join(ch for ch in str(label or "roi") if ch.isalnum() or ch in "-_")[:32] or "roi"
+        root = self._capture_root()
+        target = root / f"foreground-roi-{safe_label}-{int(time.time() * 1000)}.png"
+        # Low PNG compression keeps OCR lossless while avoiding needless CPU work.
+        vision_image.convert("RGB").save(target, "PNG", compress_level=2)
+        raw = target.read_bytes()
+        return {
+            "path": str(target),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+            "image_width": int(vision_image.width),
+            "image_height": int(vision_image.height),
+            "source_width": int(source_width),
+            "source_height": int(source_height),
+            "desktop_rect": {
+                "left": left,
+                "top": top,
+                "width": right - left,
+                "height": bottom - top,
+            },
+            "capture_scope": "roi",
+            "roi_label": safe_label,
+            "capture_ms": int((time.perf_counter() - started) * 1000),
+        }
+
     @staticmethod
     def _rect_center(rect: dict) -> tuple[int, int]:
         return (
@@ -568,6 +638,9 @@ class UniversalComputerController:
     def _omniparser_endpoint(self) -> str:
         return self.omniparser.parse_url()
 
+    def _omniparser_text_endpoint(self) -> str:
+        return self.omniparser.text_parse_url()
+
     def _omniparser_probe_url(self) -> str:
         return self.omniparser.probe_url()
 
@@ -621,8 +694,14 @@ class UniversalComputerController:
             expired = self._vision_cache_order.pop(0)
             self._vision_cache.pop(expired, None)
 
-    def _run_omniparser(self, screenshot: dict) -> dict:
-        endpoint = self._omniparser_endpoint()
+    def _run_omniparser(self, screenshot: dict, *, mode: str = "full") -> dict:
+        mode = str(mode or "full").strip().lower()
+        if mode not in {"full", "text"}:
+            raise ValueError("OmniParser mode must be full or text.")
+
+        endpoint = (
+            self._omniparser_text_endpoint() if mode == "text" else self._omniparser_endpoint()
+        )
         if not endpoint:
             return {
                 "status": "disabled",
@@ -630,12 +709,14 @@ class UniversalComputerController:
                 "elements": [],
                 "reason": "OmniParser visual grounding is disabled.",
                 "runtime": self.omniparser.status(),
+                "parse_mode": mode,
             }
 
-        cache_key = str(screenshot.get("sha256") or "")
+        cache_key = f"{mode}:{str(screenshot.get('sha256') or '')}"
         cached = self._vision_cache_get(cache_key)
         if cached is not None:
             cached["runtime"] = self.omniparser.status()
+            cached["parse_mode"] = mode
             return cached
 
         runtime = self.omniparser.ensure_ready(start=True)
@@ -646,20 +727,18 @@ class UniversalComputerController:
                 "elements": [],
                 "reason": runtime.reason,
                 "runtime": runtime.as_dict(),
+                "parse_mode": mode,
             }
 
-        payload = base64.b64encode(
-            Path(screenshot["path"]).read_bytes()
-        ).decode("ascii")
-
+        payload = base64.b64encode(Path(screenshot["path"]).read_bytes()).decode("ascii")
         timeout = max(
             10.0,
-            min(
-                float(os.getenv("IRAS_OMNIPARSER_TIMEOUT", "120")),
-                300.0,
-            ),
+            min(float(os.getenv("IRAS_OMNIPARSER_TIMEOUT", "120")), 300.0),
         )
 
+        request_started = time.perf_counter()
+        used_endpoint = endpoint
+        fallback_to_full = False
         try:
             with httpx.Client(timeout=timeout) as client:
                 response = client.post(
@@ -667,6 +746,17 @@ class UniversalComputerController:
                     json={"base64_image": payload},
                     headers=self._omniparser_headers(),
                 )
+                # Existing manually-started upstream OmniParser does not expose
+                # /parse_text/. Fall back once to the full endpoint rather than
+                # making ROI performance support a compatibility requirement.
+                if mode == "text" and response.status_code in {404, 405}:
+                    fallback_to_full = True
+                    used_endpoint = self._omniparser_endpoint()
+                    response = client.post(
+                        used_endpoint,
+                        json={"base64_image": payload},
+                        headers=self._omniparser_headers(),
+                    )
                 response.raise_for_status()
                 data = response.json()
         except Exception as exc:
@@ -675,8 +765,13 @@ class UniversalComputerController:
                 "available": False,
                 "elements": [],
                 "reason": f"{type(exc).__name__}: {exc}",
+                "runtime": runtime.as_dict(),
+                "parse_mode": "full" if fallback_to_full else mode,
+                "requested_parse_mode": mode,
+                "http_ms": int((time.perf_counter() - request_started) * 1000),
             }
 
+        http_ms = int((time.perf_counter() - request_started) * 1000)
         parsed = data.get("parsed_content_list")
         if not isinstance(parsed, list):
             parsed = data.get("elements")
@@ -695,10 +790,7 @@ class UniversalComputerController:
         if isinstance(som, str) and som.strip():
             try:
                 raw = base64.b64decode(som)
-                target = (
-                    self._capture_root()
-                    / f"omniparser-{int(time.time() * 1000)}.png"
-                )
+                target = self._capture_root() / f"omniparser-{int(time.time() * 1000)}.png"
                 target.write_bytes(raw)
                 annotated = {
                     "path": str(target),
@@ -708,19 +800,154 @@ class UniversalComputerController:
             except Exception:
                 annotated = None
 
+        effective_mode = str(data.get("mode") or ("full" if fallback_to_full else mode))
         result = {
             "status": "available",
             "available": True,
             "elements": elements,
             "element_count": len(elements),
             "latency": data.get("latency"),
+            "http_ms": http_ms,
             "annotated_screenshot": annotated,
             "runtime": runtime.as_dict(),
             "cache_hit": False,
             "cache_age_ms": 0,
+            "parse_mode": effective_mode,
+            "requested_parse_mode": mode,
+            "fallback_to_full": fallback_to_full,
+            "endpoint": used_endpoint,
         }
         self._vision_cache_put(cache_key, result)
         return result
+
+    def observe_region(
+        self,
+        *,
+        region: dict,
+        label: str = "roi",
+        mode: str = "text",
+        max_elements: int = 120,
+    ) -> dict:
+        """Create a fresh action-bindable observation from a narrow visual ROI.
+
+        This is controller-internal and intentionally not exposed as a model tool.
+        It is used by bounded workflows that already know which portion of the
+        foreground app can contain the semantic target.  Absolute screen geometry
+        is preserved, action authorization is still one-use, and failed actions
+        are never replayed.
+        """
+        self._require_windows()
+        started = time.perf_counter()
+        foreground = self._foreground()
+        foreground_rect = foreground.get("rect") or {}
+        if not foreground.get("hwnd") or not foreground_rect:
+            raise RuntimeError("A foreground window is required for ROI grounding.")
+
+        # Clamp the caller-provided ROI to the current foreground window so a
+        # stale/malformed internal region cannot escape the intended app.
+        fl = int(foreground_rect.get("left", 0) or 0)
+        ft = int(foreground_rect.get("top", 0) or 0)
+        fr = fl + max(1, int(foreground_rect.get("width", 1) or 1))
+        fb = ft + max(1, int(foreground_rect.get("height", 1) or 1))
+        rl = max(fl, int(region.get("left", fl) or fl))
+        rt = max(ft, int(region.get("top", ft) or ft))
+        rr = min(fr, rl + max(1, int(region.get("width", fr - rl) or (fr - rl))))
+        rb = min(fb, rt + max(1, int(region.get("height", fb - rt) or (fb - rt))))
+        if rr <= rl or rb <= rt:
+            raise RuntimeError("Vision ROI does not intersect the foreground window.")
+        roi = {"left": rl, "top": rt, "width": rr - rl, "height": rb - rt}
+
+        capture = self._capture_region(roi, label=label)
+        vision_result = self._run_omniparser(capture, mode=mode)
+        scene_graph = build_scene_graph(
+            [],
+            vision_result.get("elements", []) or [],
+            region=capture["desktop_rect"],
+            capture_sha256=str(capture.get("sha256") or ""),
+        )
+        elements = list(scene_graph.get("elements") or [])[: max(1, min(int(max_elements), 300))]
+        captured_at = time.time()
+        identity = {
+            "foreground_hwnd": foreground.get("hwnd"),
+            "visual_sha256": capture.get("sha256"),
+            "roi": capture.get("desktop_rect"),
+            "label": label,
+            "captured_at_ns": time.time_ns(),
+        }
+        observation_id = hashlib.sha256(
+            json.dumps(identity, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:24]
+        output = {
+            "observation_id": observation_id,
+            "captured_at": captured_at,
+            "foreground": foreground,
+            "cursor": self._cursor(),
+            "screenshot": capture,
+            "uia_available": False,
+            "uia_actionable": False,
+            "uia_status": "not_requested",
+            "uia_error": None,
+            "uia_element_count": 0,
+            "vision_requested": "always",
+            "observation_scope": "foreground",
+            "vision_scope": f"roi:{label}",
+            "vision_capture": capture,
+            "visual_sha256": capture.get("sha256"),
+            "vision_available": bool(vision_result.get("available")),
+            "vision_status": vision_result.get("status"),
+            "vision_reason": vision_result.get("reason"),
+            "vision_element_count": len(vision_result.get("elements", []) or []),
+            "vision_cache_hit": bool(vision_result.get("cache_hit")),
+            "vision_cache_age_ms": vision_result.get("cache_age_ms"),
+            "vision_latency": vision_result.get("latency"),
+            "vision_http_ms": vision_result.get("http_ms"),
+            "vision_parse_mode": vision_result.get("parse_mode"),
+            "vision_requested_parse_mode": vision_result.get("requested_parse_mode"),
+            "vision_fallback_to_full": bool(vision_result.get("fallback_to_full")),
+            "vision_attempts": [
+                {
+                    "scope": f"roi:{label}",
+                    "status": vision_result.get("status"),
+                    "available": bool(vision_result.get("available")),
+                    "element_count": len(vision_result.get("elements", []) or []),
+                    "cache_hit": bool(vision_result.get("cache_hit")),
+                    "parse_mode": vision_result.get("parse_mode"),
+                    "http_ms": vision_result.get("http_ms"),
+                }
+            ],
+            "vision_fallback_chain": [f"roi:{label}"],
+            "annotated_screenshot": vision_result.get("annotated_screenshot"),
+            "omniparser_runtime": vision_result.get("runtime") or self.omniparser.status(),
+            "scene_graph": scene_graph,
+            "scene_graph_version": scene_graph.get("version"),
+            "scene_actionable_count": scene_graph.get("actionable_count"),
+            "scene_visual_only_count": scene_graph.get("visual_only_count"),
+            "element_count": len(elements),
+            "elements": elements,
+            "roi": capture.get("desktop_rect"),
+            "roi_label": label,
+            "performance": {
+                "capture_ms": capture.get("capture_ms"),
+                "vision_http_ms": vision_result.get("http_ms"),
+                "server_latency_ms": (
+                    int(float(vision_result.get("latency")) * 1000)
+                    if vision_result.get("latency") not in (None, "")
+                    else None
+                ),
+                "total_ms": int((time.perf_counter() - started) * 1000),
+                "cache_hit": bool(vision_result.get("cache_hit")),
+                "parse_mode": vision_result.get("parse_mode"),
+                "source_pixels": int(capture.get("source_width", 0)) * int(capture.get("source_height", 0)),
+                "input_pixels": int(capture.get("image_width", 0)) * int(capture.get("image_height", 0)),
+            },
+            "action_policy": (
+                "Controller-internal ROI observation. Use only element_id values "
+                "from this fresh observation; one state-changing input consumes it."
+            ),
+        }
+        self._save_observation(output)
+        self._prune_capture_files()
+        return output
 
     def _save_observation(self, observation: dict) -> None:
         observation_id = str(observation["observation_id"])
@@ -748,6 +975,9 @@ class UniversalComputerController:
             "coordinate_policy": "fresh_observation_element_ids_only",
             "foreground_freshness_guard": True,
             "visual_action_confidence_guard": True,
+            "roi_grounding": True,
+            "text_roi_grounding": bool(self.omniparser.bridge_enabled()),
+            "vision_cache": "exact_sha256",
             "actions": sorted(self.ACTIONS),
             "verification_conditions": sorted(self.VERIFY_CONDITIONS),
             "vision_scopes": ["auto", "foreground", "desktop"],
@@ -943,6 +1173,10 @@ class UniversalComputerController:
             "vision_cache_hit": bool(vision_result.get("cache_hit")),
             "vision_cache_age_ms": vision_result.get("cache_age_ms"),
             "vision_latency": vision_result.get("latency"),
+            "vision_http_ms": vision_result.get("http_ms"),
+            "vision_parse_mode": vision_result.get("parse_mode"),
+            "vision_requested_parse_mode": vision_result.get("requested_parse_mode"),
+            "vision_fallback_to_full": bool(vision_result.get("fallback_to_full")),
             "vision_attempts": vision_attempts,
             "vision_fallback_chain": [
                 str(item.get("scope") or "") for item in vision_attempts

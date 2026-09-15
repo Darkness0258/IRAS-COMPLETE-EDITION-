@@ -87,6 +87,15 @@ class OmniParserRuntimeManager:
         return raw + "/parse/"
 
     @classmethod
+    def text_parse_url(cls) -> str:
+        raw = cls.base_url()
+        if not raw:
+            return ""
+        if raw.endswith("/parse"):
+            raw = raw[:-6].rstrip("/")
+        return raw + "/parse_text/"
+
+    @classmethod
     def probe_url(cls) -> str:
         raw = cls.base_url()
         if not raw:
@@ -373,6 +382,10 @@ class OmniParserRuntimeManager:
             return shlex.split(raw, posix=os.name != "nt")
         return None
 
+    @staticmethod
+    def bridge_enabled() -> bool:
+        return _truthy("IRAS_OMNIPARSER_BRIDGE", default=True)
+
     def _build_command(self) -> tuple[list[str], Path | None]:
         custom = self._custom_command()
         roots = self._candidate_roots()
@@ -406,17 +419,36 @@ class OmniParserRuntimeManager:
         ).strip()
         box_threshold = os.getenv("IRAS_OMNIPARSER_BOX_THRESHOLD", "0.05").strip() or "0.05"
 
-        # PaddleOCR 2.x and PyTorch can conflict on Windows if Paddle loads
-        # its DLLs before torch. OmniParser requires torch anyway, so preload it
-        # explicitly before importing/running the server module. This preserves
-        # the normal argv contract while avoiding the WinError 127/shm.dll
-        # loader failure seen when PaddleOCR imports albumentations -> torch.
-        # Import the OmniParser server module without executing its ``__main__``
-        # block, then run uvicorn ourselves with reload disabled. The upstream
-        # module enables ``reload=True`` when run as a script, which creates a
-        # watcher/child-process pair and makes ownership/PID reporting brittle.
-        # A single production server process is faster, easier to supervise, and
-        # lets IRAS preserve the exact PID across CLI/runtime-manager instances.
+        bridge_path = Path(__file__).resolve().with_name("omniparser_bridge_server.py")
+        if self.bridge_enabled() and bridge_path.exists():
+            # R4: launch the IRAS bridge inside OmniParser's own venv.  The
+            # bridge becomes ready without eagerly loading Florence/YOLO and
+            # exposes a lightweight EasyOCR-only ROI endpoint.  Full OmniParser
+            # remains available and is loaded lazily on the first /parse/ call.
+            # This preserves upstream compatibility while making text-heavy
+            # WebView navigation materially faster on CPU-only Windows hosts.
+            command = [
+                python,
+                str(bridge_path),
+                "--omniparser-root",
+                str(root),
+                "--caption-model-name",
+                caption_model,
+                "--caption-model-path",
+                caption_path,
+                "--device",
+                device,
+                "--box-threshold",
+                box_threshold,
+                "--host",
+                self._host(),
+                "--port",
+                str(self._port()),
+            ]
+            return command, workdir
+
+        # Compatibility fallback: preload torch before importing the upstream
+        # server module and run a single non-reloading uvicorn process.
         bootstrap = (
             "import runpy, torch, uvicorn; "
             "ns=runpy.run_module('omniparserserver', "
@@ -604,6 +636,8 @@ class OmniParserRuntimeManager:
                 "last_start_error": self._last_start_error or None,
                 "log_path": str(self._log_path()),
                 "runtime_state_path": str(self._runtime_state_path()),
+                "bridge_enabled": self.bridge_enabled(),
+                "text_parse_url": self.text_parse_url() or None,
             }
         )
         return data

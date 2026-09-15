@@ -19,6 +19,7 @@ REQUIRED_370 = {
     "src/iras/autonomy.py",
     "src/iras/vision/__init__.py",
     "src/iras/vision/omniparser_runtime.py",
+    "src/iras/vision/omniparser_bridge_server.py",
     "src/iras/vision/scene_graph.py",
     "src/iras/device_bridge/whatsapp_workflow.py",
     "docs/MULTIMODAL_GROUNDING_V3.7.0.md",
