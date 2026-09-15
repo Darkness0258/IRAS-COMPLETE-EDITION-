@@ -142,4 +142,3 @@ Recovery-route persistence also tracks consecutive semantic outcome streaks. Rep
 The local/cloud agent keeps a small session-scoped autonomy context (current app, previous app, last media app, and verified semantic target). It is advisory context for planning and deterministic follow-ups; it is not a permission grant. The supervisor may choose the next safe step within the user's current goal, resolve obvious deictic follow-ups, request read-only state probes, and reject leaked planner scratchpad. Live UI state, the permission engine, fresh observation bindings, semantic verification, bounded recovery, and the no-action-replay invariant remain authoritative.
 
 For custom-rendered/WebView applications, an inaccessible UIA snapshot can trigger one controller-level read-only computer observation. If neither UIA nor configured visual grounding is actionable, state-changing actions are not guessed.
-
