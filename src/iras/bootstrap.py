@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 from iras.config import Settings
 from iras.models import PermissionLevel
 from iras.security.audit import AuditLogger
@@ -23,6 +24,10 @@ from iras.providers.openai_compatible import OpenAICompatibleProvider
 from iras.providers.openrouter import OpenRouterProvider
 from iras.core.agent import IRASAgent
 from iras.device_bridge.recovery_learning import RecoveryRoutePerformanceStore
+from iras.device_bridge.local_store import LocalDeviceBridgeStore
+from iras.device_bridge.tools import make_tools as device_bridge_tools
+from iras.device_bridge.skill_tools import make_tools as device_skill_tools
+from iras.device_bridge.skills import PersistentSkillStore
 from iras.persona import build_system_prompt
 
 class Runtime:
@@ -31,7 +36,11 @@ class Runtime:
 def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.CRITICAL):
     s=settings or Settings.load(); audit=AuditLogger(s.audit_path); memory=MemoryStore(s.db_path); auto=PermissionLevel(max(0,min(s.auto_permission_level,3)))
     perms=PermissionEngine(auto,approval_callback,s.always_confirm_critical,hard_cap); reg=ToolRegistry(perms,audit); browser=BrowserSession(); autos=AutomationStore(memory); personality=AdaptivePersonality(memory,audit,enabled=s.adaptive_personality)
-    for t in [*FILES,*SHELL,*SYSTEM,*WEB,*GIT,*API_ACCESS,*REMOTE,*memory_tools(memory),*personality_tools(personality),*browser_tools(browser),*automation_tools(autos)]: reg.register(t)
+    local_device = LocalDeviceBridgeStore()
+    skill_path = s.data_dir / "app_skills.json"
+    app_skills = PersistentSkillStore(skill_path)
+    os.environ["IRAS_SKILL_STORE"] = str(skill_path)
+    for t in [*FILES,*SHELL,*SYSTEM,*WEB,*GIT,*API_ACCESS,*REMOTE,*memory_tools(memory),*personality_tools(personality),*browser_tools(browser),*automation_tools(autos),*device_bridge_tools(local_device),*device_skill_tools(local_device, app_skills)]: reg.register(t)
     if s.provider == 'demo':
         provider = DemoProvider()
     elif s.provider == 'openrouter':

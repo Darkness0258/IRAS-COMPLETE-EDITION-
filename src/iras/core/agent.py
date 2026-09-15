@@ -344,6 +344,41 @@ class IRASAgent:
                 deterministic["tool"]
             }
 
+        # Explicit read-only observation requests must never expose generic
+        # state-changing computer actions merely because they mention a window
+        # or UI Automation. This is especially important for weaker/free tool
+        # calling models: constrain capability at the schema layer, not only in
+        # the prompt.
+        foreground_observation = (
+            cls._contains_any(
+                q,
+                (
+                    "observe the current foreground",
+                    "observe current foreground",
+                    "current foreground window",
+                    "foreground window",
+                    "ui automation",
+                    "uia actionable",
+                ),
+            )
+            and cls._contains_any(
+                q,
+                (
+                    "observe",
+                    "inspect",
+                    "tell me its title",
+                    "whether ui automation",
+                    "whether uia",
+                ),
+            )
+        )
+
+        if foreground_observation:
+            return {
+                "device_computer_status",
+                "device_computer_observe",
+            }
+
         device_context = cls._contains_any(
             q,
             (
@@ -471,10 +506,22 @@ class IRASAgent:
             in requested_apps
         )
 
-        if (
+        spotify_play_requested = (
             spotify_requested
             and "play " in q
-        ):
+            and not cls._contains_any(
+                q,
+                (
+                    "do not play",
+                    "don't play",
+                    "dont play",
+                    "not play",
+                    "without playing",
+                ),
+            )
+        )
+
+        if spotify_play_requested:
             return {
                 "device_spotify_play"
             }
@@ -519,6 +566,51 @@ class IRASAgent:
                 ),
             )
         )
+
+        # Opening/focusing an app while explicitly forbidding interaction is a
+        # narrow SAFE_ACTION workflow. Do not hand the model typing/clicking,
+        # shell, media, or arbitrary computer-action schemas for this turn.
+        focus_only_workflow = (
+            bool(requested_apps)
+            and cls._contains_any(
+                q,
+                (
+                    "open ",
+                    "launch ",
+                    "start ",
+                ),
+            )
+            and cls._contains_any(
+                q,
+                (
+                    "bring it to the foreground",
+                    "bring to the foreground",
+                    "bring it to front",
+                    "bring to front",
+                    "focus",
+                ),
+            )
+            and cls._contains_any(
+                q,
+                (
+                    "do not type",
+                    "don't type",
+                    "do not click",
+                    "don't click",
+                    "do not play",
+                    "don't play",
+                ),
+            )
+        )
+
+        if focus_only_workflow:
+            return {
+                "device_open_app",
+                "device_app_control",
+                "device_computer_status",
+                "device_computer_observe",
+                "device_computer_verify",
+            }
 
         if compound_gui_workflow:
             return set(
@@ -610,7 +702,50 @@ class IRASAgent:
         self,
         user_text: str,
     ):
+        # Local desktop/CLI runtimes historically expose the complete tool set
+        # (smart_tools=False). Device/computer-use turns are the exception: they
+        # must still be narrowed to the bounded device contract so the model
+        # cannot bypass semantic computer-use via run_shell or other generic
+        # state-changing tools. Non-device turns retain the legacy full-tool
+        # behavior.
         if not self.smart_tools:
+            local_q = " ".join(
+                str(user_text or "")
+                .lower()
+                .split()
+            )
+            explicit_device_scope = bool(
+                self._requested_device_apps(user_text)
+            ) or self._contains_any(
+                local_q,
+                (
+                    "my pc",
+                    "my computer",
+                    "my laptop",
+                    "my desktop",
+                    "foreground window",
+                    "current window",
+                    "ui automation",
+                    "uia",
+                    "screenshot",
+                    "screen",
+                    "spotify",
+                    "whatsapp",
+                    "discord",
+                    "telegram",
+                    "notepad",
+                    "chrome",
+                    "edge",
+                    "firefox",
+                    "explorer",
+                    "vlc",
+                    "steam",
+                ),
+            )
+            if explicit_device_scope:
+                device_names = self._device_tool_names(user_text)
+                if device_names:
+                    return sorted(device_names)
             return None
 
         q = " ".join(

@@ -57,3 +57,45 @@ def test_real_device_smoke_path_is_read_only(monkeypatch, capsys):
 
     assert calls == ["init", "system_info", "computer_status", "computer_observe"]
     assert "STATE-CHANGING ACTIONS EXECUTED: False" in capsys.readouterr().out
+
+
+def test_clean_tree_allows_ignored_untracked_local_env(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=local-only\n", encoding="utf-8")
+
+    class Result:
+        def __init__(self, returncode=0, stdout=""):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    def fake_git_check(root, *args):
+        assert root == tmp_path
+        if args[:2] == ("rev-parse", "--is-inside-work-tree"):
+            return Result(0, "true\n")
+        if args[:2] == ("ls-files", "--error-unmatch"):
+            return Result(1, "")
+        if args[:2] == ("check-ignore", "-q"):
+            return Result(0, "")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(clean_tree, "_git_check", fake_git_check)
+    assert clean_tree.local_env_release_problem(tmp_path) is None
+
+
+def test_clean_tree_rejects_tracked_local_env(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=bad-release\n", encoding="utf-8")
+
+    class Result:
+        def __init__(self, returncode=0, stdout=""):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    def fake_git_check(root, *args):
+        assert root == tmp_path
+        if args[:2] == ("rev-parse", "--is-inside-work-tree"):
+            return Result(0, "true\n")
+        if args[:2] == ("ls-files", "--error-unmatch"):
+            return Result(0, ".env\n")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(clean_tree, "_git_check", fake_git_check)
+    assert clean_tree.local_env_release_problem(tmp_path) == "local .env is tracked by git"

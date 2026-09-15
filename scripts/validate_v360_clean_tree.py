@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -147,6 +148,45 @@ SECRET_PATTERNS = (
 TEXT_SUFFIXES = {".py", ".ps1", ".md", ".toml", ".yml", ".yaml", ".json", ".html", ".java", ".xml", ".gradle", ".txt"}
 
 
+def _git_check(root: Path, *args: str) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+
+
+def local_env_release_problem(root: Path = ROOT) -> str | None:
+    """Allow a developer's ignored .env while rejecting release leakage.
+
+    The validator runs inside the real checkout as well as CI. A local .env is
+    expected in the former and must survive ZIP extraction/updates. What matters
+    for release hygiene is that it is not tracked and remains ignored. If this is
+    not a Git checkout, any .env is treated as packaged release content.
+    """
+    env_path = root / ".env"
+    if not env_path.exists():
+        return None
+
+    repo = _git_check(root, "rev-parse", "--is-inside-work-tree")
+    if repo is None or repo.returncode != 0 or repo.stdout.strip().lower() != "true":
+        return "local .env must not be part of a packaged release tree"
+
+    tracked = _git_check(root, "ls-files", "--error-unmatch", "--", ".env")
+    if tracked is not None and tracked.returncode == 0:
+        return "local .env is tracked by git"
+
+    ignored = _git_check(root, "check-ignore", "-q", "--", ".env")
+    if ignored is None or ignored.returncode != 0:
+        return "local .env exists but is not ignored by git"
+
+    return None
+
+
 def main() -> None:
     problems: list[str] = []
 
@@ -161,8 +201,9 @@ def main() -> None:
         if not (ROOT / rel).exists():
             problems.append(f"required release file missing: {rel}")
 
-    if (ROOT / ".env").exists():
-        problems.append("local .env must not be part of the release tree")
+    env_problem = local_env_release_problem(ROOT)
+    if env_problem:
+        problems.append(env_problem)
 
     for path in ROOT.rglob("*"):
         if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
@@ -192,7 +233,8 @@ def main() -> None:
     print("OBSOLETE HISTORICAL RUNNERS PRESENT: False")
     print("REAL-MESSAGE ONE-OFF VALIDATORS PRESENT: False")
     print("DOCS HISTORY PRESENT: False")
-    print("LOCAL .ENV PRESENT: False")
+    print(f"LOCAL .ENV PRESENT: {(ROOT / '.env').exists()}")
+    print(f"LOCAL .ENV RELEASE SAFE: {local_env_release_problem(ROOT) is None}")
     print("OBVIOUS SECRET PATTERNS FOUND: False")
     print("CURRENT RELEASE FILES PRESENT: True")
     print("RESULT: PASS")

@@ -180,6 +180,39 @@ def _clean_query(value: str) -> str:
     return query
 
 
+def _strip_verification_suffix(value: str) -> str:
+    """Remove an explicit follow-up verification clause from a command.
+
+    The verifier belongs to the closed-loop planner; it must not leak into a
+    Spotify search/play query or prevent a deterministic media-control parse.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return text
+
+    parts = re.split(
+        r"(?:\s*[,;]\s*|\s+)(?:(?:and\s+)?then\s+|and\s+)?"
+        r"(?:verify|check|confirm)\b",
+        text,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )
+    return parts[0].strip(" \t,;.-")
+
+
+def _clean_spotify_query(value: str) -> str:
+    query = _clean_query(
+        _strip_verification_suffix(value)
+    )
+    query = re.sub(
+        r"\s+(?:on|in)\s+spotify$",
+        "",
+        query,
+        flags=re.IGNORECASE,
+    ).strip()
+    return query
+
+
 def _normalize_voice_music_form(command: str) -> str:
     match = re.match(
         r"^(?:yeah|yah|ya)\s+(.+\b(?:song|track|music|playlist|album)\b.*)$",
@@ -208,7 +241,7 @@ def media_control_from_text(text: str) -> str | None:
 
 
 def media_control_request_from_text(text: str) -> dict | None:
-    command = normalize_command(text)
+    command = _strip_verification_suffix(normalize_command(text))
     lower = command.lower()
 
     # A request such as "play video on YouTube" is a content/navigation
@@ -226,6 +259,26 @@ def media_control_request_from_text(text: str) -> dict | None:
     if exact:
         return {
             "command": exact,
+        }
+
+    spotify_transport = re.match(
+        r"^(pause|hold|resume|continue|stop|next|skip|previous|prev|mute|unmute)"
+        r"\s+(?:the\s+)?spotify$",
+        command,
+        flags=re.IGNORECASE,
+    )
+    if spotify_transport:
+        verb = spotify_transport.group(1).lower()
+        mapping = {
+            "hold": "pause",
+            "resume": "play",
+            "continue": "play",
+            "skip": "next",
+            "prev": "previous",
+        }
+        return {
+            "command": mapping.get(verb, verb),
+            "app": "spotify",
         }
 
     target_patterns = (
@@ -304,7 +357,7 @@ def spotify_search_query_from_text(
     spotify_context: bool = False,
 ) -> str | None:
     command = _normalize_voice_music_form(
-        normalize_command(text)
+        _strip_verification_suffix(normalize_command(text))
     )
 
     for pattern in SEARCH_PATTERNS:
@@ -315,7 +368,7 @@ def spotify_search_query_from_text(
         )
 
         if match:
-            query = _clean_query(
+            query = _clean_spotify_query(
                 match.group(1)
             )
             return query if query else None
@@ -338,7 +391,7 @@ def spotify_search_query_from_text(
             )
 
             if match:
-                query = _clean_query(
+                query = _clean_spotify_query(
                     match.group(1)
                 )
 
@@ -353,7 +406,9 @@ def spotify_query_from_text(
     *,
     spotify_context: bool = False,
 ) -> str | None:
-    command = _normalize_voice_music_form(normalize_command(text))
+    command = _normalize_voice_music_form(
+        _strip_verification_suffix(normalize_command(text))
+    )
     lower = command.lower()
 
     if any(destination in lower for destination in NON_SPOTIFY_DESTINATIONS):
@@ -366,7 +421,7 @@ def spotify_query_from_text(
         match = re.match(pattern, command, flags=re.IGNORECASE)
 
         if match:
-            query = _clean_query(match.group(1))
+            query = _clean_spotify_query(match.group(1))
             break
 
     if not query:
