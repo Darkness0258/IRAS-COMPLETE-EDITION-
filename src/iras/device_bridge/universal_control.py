@@ -526,38 +526,15 @@ class UniversalWindowsController(
         app: str,
         action: str,
     ) -> dict:
-        canonical = (
-            self.canonical_app(
-                app
-            )
-        )
-
-        action = (
-            str(
-                action
-                or ""
-            )
-            .strip()
-            .lower()
-        )
+        canonical = self.canonical_app(app)
+        action = str(action or "").strip().lower()
 
         if action == "open":
-            result = (
-                self.catalog.launch(
-                    canonical
-                )
-            )
-            result[
-                "action"
-            ] = "open"
+            result = self.catalog.launch(canonical)
+            result["action"] = "open"
             return result
 
-        hwnd = (
-            self._find_window(
-                canonical
-            )
-        )
-
+        hwnd = self._find_window(canonical)
         if hwnd is None:
             raise RuntimeError(
                 f"IRAS could not find an open window for '{app}'."
@@ -565,40 +542,66 @@ class UniversalWindowsController(
 
         user32 = self._user32()
 
+        def wait_for(predicate, timeout: float = 1.2) -> bool:
+            deadline = time.monotonic() + max(0.1, float(timeout))
+            while time.monotonic() < deadline:
+                try:
+                    if bool(predicate()):
+                        return True
+                except Exception:
+                    return False
+                time.sleep(0.05)
+            try:
+                return bool(predicate())
+            except Exception:
+                return False
+
+        verification = {"window": int(hwnd)}
+
         if action == "focus":
-            if not self._force_foreground(
-                hwnd
-            ):
+            if not self._force_foreground(hwnd):
                 raise RuntimeError(
                     f"Windows refused to focus '{app}'."
                 )
+            verified = wait_for(
+                lambda: int(user32.GetForegroundWindow() or 0) == int(hwnd),
+                timeout=0.5,
+            )
+            verification["foreground"] = verified
 
         elif action == "minimize":
-            user32.ShowWindowAsync(
-                hwnd,
-                6,
-            )
+            user32.ShowWindowAsync(hwnd, 6)
+            verified = wait_for(lambda: bool(user32.IsIconic(hwnd)))
+            verification["minimized"] = verified
 
         elif action == "maximize":
-            user32.ShowWindowAsync(
-                hwnd,
-                3,
-            )
+            user32.ShowWindowAsync(hwnd, 3)
+            verified = wait_for(lambda: bool(user32.IsZoomed(hwnd)))
+            verification["maximized"] = verified
 
         elif action == "restore":
-            user32.ShowWindowAsync(
-                hwnd,
-                9,
+            user32.ShowWindowAsync(hwnd, 9)
+            verified = wait_for(
+                lambda: (
+                    bool(user32.IsWindow(hwnd))
+                    and not bool(user32.IsIconic(hwnd))
+                    and not bool(user32.IsZoomed(hwnd))
+                )
             )
+            verification["restored"] = verified
 
         elif action == "close":
             WM_CLOSE = 0x0010
-            user32.PostMessageW(
-                hwnd,
-                WM_CLOSE,
-                0,
-                0,
+            user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+            verified = wait_for(
+                lambda: not bool(user32.IsWindow(hwnd)),
+                timeout=1.5,
             )
+            verification["closed"] = verified
+            if not verified:
+                verification["reason"] = (
+                    "The window remained open; it may be showing a save/confirmation dialog."
+                )
 
         else:
             raise PermissionError(
@@ -610,6 +613,8 @@ class UniversalWindowsController(
             "action": action,
             "window": hwnd,
             "command_sent": True,
+            "verified_state": bool(verified),
+            "verification": verification,
         }
 
     def spotify_search(
@@ -690,9 +695,20 @@ class UniversalWindowsController(
                     app
                 )
             )
-            hwnd = self._find_window(
-                canonical
-            )
+            # Window enumeration can briefly miss a media app while its title
+            # or Chromium/WebView surface is transitioning (for example right
+            # after pause). Re-resolve for a short bounded interval before
+            # declaring the app absent. This is observation only; no command is
+            # replayed during the retry window.
+            hwnd = None
+            deadline = time.monotonic() + 0.9
+            while time.monotonic() < deadline:
+                hwnd = self._find_window(
+                    canonical
+                )
+                if hwnd is not None:
+                    break
+                time.sleep(0.08)
 
             if hwnd is not None:
                 return (

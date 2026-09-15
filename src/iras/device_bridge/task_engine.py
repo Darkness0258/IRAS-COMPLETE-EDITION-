@@ -9,6 +9,7 @@ from iras.device_bridge.skills import (
     LearnedStep,
     PersistentSkillStore,
 )
+from iras.device_bridge.workflow_memory import CrossAppWorkflowMemory
 
 
 STATE_CHANGING_DEVICE_TOOLS = {
@@ -16,6 +17,7 @@ STATE_CHANGING_DEVICE_TOOLS = {
     "device_app_control",
     "device_interact_app",
     "device_semantic_action",
+    "device_computer_action",
     "device_spotify_play",
     "device_media_control",
     "device_open_url",
@@ -26,6 +28,9 @@ STATE_CHANGING_DEVICE_TOOLS = {
 
 READ_VERIFY_TOOLS = {
     "device_observe_ui",
+    "device_computer_status",
+    "device_computer_observe",
+    "device_computer_verify",
     "device_capture_screen",
     "device_detect_apps",
     "device_list",
@@ -147,6 +152,35 @@ class TaskTracker:
     last_semantic_target: str = ""
     accessibility_limited: bool = False
     accessibility_reason: str = ""
+    last_outcome_decision: str = ""
+    outcome_retry_count: int = 0
+    outcome_retry_budget_remaining: int = 0
+    outcome_recovery_required: bool = False
+    outcome_goal_sufficient: bool = False
+    automatic_recovery_steps: int = 0
+    last_automatic_recovery_decision: str = ""
+    last_automatic_recovery_ok: bool | None = None
+    last_automatic_recovery_observation_id: str = ""
+    last_automatic_recovery_route: str = ""
+    last_automatic_recovery_next_step: str = ""
+    automatic_action_replay_allowed: bool = False
+    recovery_fresh_plan_pending: bool = False
+    recovery_fresh_observation_id: str = ""
+    recovery_fresh_element_ids: list[str] = field(default_factory=list)
+    recovery_fresh_plan: dict[str, Any] = field(default_factory=dict)
+    fresh_action_binding_validated: bool = False
+    chained_verification_pending: bool = False
+    chained_verification_call: dict[str, Any] = field(default_factory=dict)
+    recovery_route_history: list[dict[str, Any]] = field(default_factory=list)
+    recovery_performance_store: Any | None = None
+    recovery_learning_pending_route: str = ""
+    recovery_learning_pending_context: dict[str, Any] = field(default_factory=dict)
+    material_replan_required: bool = False
+    material_replan_contract: dict[str, Any] = field(default_factory=dict)
+    recovery_loop_terminated: bool = False
+    recovery_loop_block_reason: str = ""
+    workflow_memory: CrossAppWorkflowMemory = field(default_factory=CrossAppWorkflowMemory)
+    workflow_memory_last_emitted_revision: int = 0
     skill_store: PersistentSkillStore = field(default_factory=PersistentSkillStore)
     _learning_finalized: bool = False
 
@@ -155,6 +189,46 @@ class TaskTracker:
         name: str,
         arguments: dict[str, Any],
     ) -> tuple[bool, str]:
+        # v3.5.17: once an exhausted recovery route forces a material replan,
+        # the controller rejects the exact exhausted tool+argument route. The
+        # model may still inspect state or choose another safe strategy.
+        if self.material_replan_required:
+            from iras.device_bridge.replan_guard import tool_call_signature
+
+            signature = tool_call_signature(name, arguments)
+            forbidden = {
+                str(value)
+                for value in (
+                    self.material_replan_contract.get("forbidden_tool_signatures") or []
+                )
+            }
+            if signature in forbidden:
+                return (
+                    False,
+                    "Blocked exhausted recovery route: a materially different plan is required.",
+                )
+
+        # v3.5.15: after automatic recovery, a universal computer action must
+        # bind to the fresh recovery observation. Stale observation/element ids
+        # are rejected before the tool can receive input.
+        if self.recovery_fresh_plan_pending and name == "device_computer_action":
+            from iras.device_bridge.fresh_action_execution import (
+                build_chained_verification_call,
+                validate_fresh_plan_execution,
+            )
+
+            allowed, reason = validate_fresh_plan_execution(
+                self.recovery_fresh_plan,
+                name,
+                arguments,
+            )
+            if not allowed:
+                return (False, f"Blocked fresh post-recovery action: {reason}.")
+            self.fresh_action_binding_validated = True
+            self.chained_verification_call = (
+                build_chained_verification_call(self.recovery_fresh_plan) or {}
+            )
+
         signature = stable_call_signature(name, arguments)
         count = self.call_counts.get(signature, 0)
         previous_failed = self.call_results.get(signature) is False
@@ -171,6 +245,159 @@ class TaskTracker:
 
         self.call_counts[signature] = count + 1
         return (True, "")
+
+    def can_run_automatic_recovery(self) -> bool:
+        # Keep the recovery-step budget defined in one place. Import lazily to
+        # avoid coupling the task tracker to recovery route selection at module load.
+        from iras.device_bridge.recovery_runtime import MAX_AUTOMATIC_RECOVERY_STEPS
+
+        return self.automatic_recovery_steps < MAX_AUTOMATIC_RECOVERY_STEPS
+
+    def automatic_recovery_guard(self, directive: dict[str, Any]) -> dict[str, Any]:
+        from iras.device_bridge.replan_guard import recovery_route_cycle_guard
+
+        if not self.can_run_automatic_recovery():
+            return {
+                "allowed": False,
+                "reason": "automatic_recovery_budget_exhausted",
+                "requires_materially_different_plan": True,
+                "action_replay_allowed": False,
+            }
+        return recovery_route_cycle_guard(self.recovery_route_history, directive)
+
+    def can_execute_automatic_recovery(self, directive: dict[str, Any]) -> bool:
+        return bool(self.automatic_recovery_guard(directive).get("allowed"))
+
+    def require_material_replan(
+        self,
+        *,
+        directive: dict[str, Any] | None = None,
+        reason_codes: list[str] | None = None,
+    ) -> dict[str, Any]:
+        from iras.device_bridge.replan_guard import material_replan_contract
+
+        contract = material_replan_contract(
+            self.recovery_route_history,
+            blocked_directive=directive,
+            reason_codes=reason_codes,
+        )
+        self.material_replan_required = True
+        self.material_replan_contract = contract
+        self.recovery_loop_terminated = True
+        self.recovery_loop_block_reason = str(
+            (reason_codes or ["materially_different_plan_required"])[0]
+        )
+        return contract
+
+    def recovery_planner_constraints(self) -> dict[str, Any]:
+        """Return v3.5.18 history-aware constraints for the next planner turn."""
+        from iras.device_bridge.replan_guard import recovery_history_planner_constraints
+
+        contract = self.material_replan_contract if self.material_replan_required else {}
+        constraints = recovery_history_planner_constraints(
+            self.recovery_route_history,
+            exhausted_routes=list(contract.get("exhausted_routes") or []),
+            forbidden_tool_signatures=list(
+                contract.get("forbidden_tool_signatures") or []
+            ),
+        )
+        if self.recovery_performance_store is not None:
+            try:
+                priors = self.recovery_performance_store.snapshot()
+            except Exception:
+                priors = {}
+            try:
+                context_priors = self.recovery_performance_store.context_snapshot()
+            except Exception:
+                context_priors = {}
+            if isinstance(priors, dict):
+                constraints["learned_route_priors"] = priors
+                constraints["learned_route_priors_version"] = "3.6.0"
+            if isinstance(context_priors, dict):
+                constraints["learned_context_route_priors"] = context_priors
+                constraints["learned_context_route_priors_version"] = "3.6.0"
+        return constraints
+
+    def recovery_planner_message(self) -> str:
+        from iras.device_bridge.replan_guard import recovery_history_planner_message
+
+        return recovery_history_planner_message(self.recovery_planner_constraints())
+
+    def record_automatic_recovery(
+        self,
+        directive: dict[str, Any],
+        payload: dict[str, Any],
+        *,
+        handoff: dict[str, Any] | None = None,
+        fresh_plan: dict[str, Any] | None = None,
+    ) -> None:
+        """Record controller-driven read-only recovery without clearing verification.
+
+        A recovery observation is evidence for the next decision, not proof that
+        the user's semantic goal is complete, so ``needs_verification`` remains
+        unchanged.
+        """
+
+        self.automatic_recovery_steps += 1
+        from iras.device_bridge.replan_guard import (
+            recovery_route_signature,
+            tool_call_signature,
+        )
+
+        route_entry = {
+            "route": str(directive.get("route") or ""),
+            "route_signature": recovery_route_signature(directive),
+            "tool": str(directive.get("tool") or ""),
+            "tool_signature": tool_call_signature(
+                str(directive.get("tool") or ""),
+                directive.get("arguments") if isinstance(directive.get("arguments"), dict) else {},
+            ),
+            "automatic_step": self.automatic_recovery_steps,
+            "ok": bool(payload.get("ok")),
+        }
+        self.recovery_route_history.append(route_entry)
+        # v3.5.20 credits/blames a recovery route only after the next semantic
+        # verification result is known. A successful observation alone is not
+        # treated as proof that the route solved the user's goal.
+        if bool(payload.get("ok")):
+            self.recovery_learning_pending_route = str(directive.get("route") or "")
+            raw_context = directive.get("learning_context")
+            self.recovery_learning_pending_context = (
+                dict(raw_context) if isinstance(raw_context, dict) else {}
+            )
+        self.last_automatic_recovery_decision = str(
+            directive.get("decision") or ""
+        ).upper()
+        self.last_automatic_recovery_ok = bool(payload.get("ok"))
+        output = payload.get("output")
+        if isinstance(output, dict):
+            self.last_automatic_recovery_observation_id = str(
+                output.get("observation_id") or ""
+            )
+        self.last_automatic_recovery_route = str(directive.get("route") or "")
+        handoff = handoff if isinstance(handoff, dict) else {}
+        self.last_automatic_recovery_next_step = str(handoff.get("next_step") or "")
+        self.recovery_fresh_observation_id = str(handoff.get("fresh_observation_id") or "")
+        grounded = handoff.get("grounded_elements")
+        self.recovery_fresh_element_ids = [
+            str(item.get("element_id") or "")
+            for item in grounded
+            if isinstance(item, dict) and str(item.get("element_id") or "")
+        ] if isinstance(grounded, list) else []
+        self.recovery_fresh_plan_pending = bool(
+            handoff.get("fresh_state_available") and self.recovery_fresh_observation_id
+        )
+        if isinstance(fresh_plan, dict):
+            self.recovery_fresh_plan = fresh_plan
+        else:
+            from iras.device_bridge.fresh_action_planning import build_fresh_action_plan
+            self.recovery_fresh_plan = build_fresh_action_plan(handoff)
+        self.fresh_action_binding_validated = False
+        self.chained_verification_pending = False
+        self.chained_verification_call = {}
+        # v3.5.15 never grants the controller permission to replay the action
+        # that failed verification. A new action must be planned from fresh state.
+        self.automatic_action_replay_allowed = False
 
     def _capture_skill_lookup(self, output: dict[str, Any]) -> None:
         match = output.get("match")
@@ -240,6 +467,38 @@ class TaskTracker:
             return
 
         output = _result_output(payload)
+        # v3.6.0 session-scoped cross-app workflow memory. Only successful
+        # tool results are captured; semantic facts enter memory only after
+        # verification proves them. This memory never grants tool permission.
+        try:
+            self.workflow_memory.capture_tool_result(name, arguments, output)
+        except Exception:
+            pass
+
+        if self.material_replan_required and ok:
+            from iras.device_bridge.replan_guard import tool_call_signature
+
+            replan_tools = {
+                "device_computer_observe",
+                "device_observe_ui",
+                "device_app_control",
+                "device_open_app",
+                "device_semantic_action",
+                "device_computer_action",
+            }
+            if name in replan_tools:
+                signature = tool_call_signature(name, arguments)
+                forbidden = {
+                    str(value)
+                    for value in (
+                        self.material_replan_contract.get("forbidden_tool_signatures") or []
+                    )
+                }
+                if signature not in forbidden:
+                    self.material_replan_required = False
+                    self.material_replan_contract = {}
+                    self.recovery_loop_terminated = False
+                    self.recovery_loop_block_reason = ""
 
         if (
             name in STATE_CHANGING_DEVICE_TOOLS
@@ -278,6 +537,91 @@ class TaskTracker:
                 self.goal_checkpoint_required = False
             return
 
+        if name == "device_computer_observe":
+            self.needs_verification = False
+            uia_actionable = output.get("uia_actionable") is True
+            vision_available = output.get("vision_available") is True
+            observation_scope = str(output.get("observation_scope") or "auto").lower()
+            if observation_scope == "desktop":
+                # UIA describes only the foreground application. Desktop-wide
+                # grounding therefore requires the visual backend.
+                self.accessibility_limited = not vision_available
+            else:
+                self.accessibility_limited = not (uia_actionable or vision_available)
+            self.accessibility_reason = (
+                "Neither Windows UI Automation nor configured visual grounding "
+                "returned actionable controls for the current desktop."
+                if self.accessibility_limited
+                else ""
+            )
+            return
+
+        if name == "device_computer_action":
+            # A validated fresh post-recovery action consumes the binding but
+            # immediately arms the read-only verification chain.
+            self.chained_verification_pending = bool(
+                self.fresh_action_binding_validated and self.chained_verification_call
+            )
+            self.recovery_fresh_plan_pending = False
+            self.recovery_fresh_observation_id = ""
+            self.recovery_fresh_element_ids = []
+            self.recovery_fresh_plan = {}
+            self.fresh_action_binding_validated = False
+            # Fresh post-action observation proves input delivery only. The
+            # user's desired end state still requires device_computer_verify.
+            self.needs_verification = True
+            self.learning_blocked = True
+            self.learning_block_reason = (
+                "workflow used universal visual/keyboard computer control; "
+                "v3.4.6 does not persist raw visual action traces as learned skills"
+            )
+            return
+
+        if name == "device_computer_verify":
+            self.chained_verification_pending = False
+            self.chained_verification_call = {}
+            status = str(output.get("status") or "").upper()
+            decision = output.get("decision")
+            if not isinstance(decision, dict):
+                decision = {}
+            action = str(decision.get("action") or "").upper()
+            self.last_outcome_decision = action
+            self.outcome_retry_count = int(decision.get("failure_count") or 0)
+            self.outcome_retry_budget_remaining = int(
+                decision.get("retry_budget_remaining") or 0
+            )
+            self.outcome_recovery_required = action == "RECOVER"
+            self.outcome_goal_sufficient = bool(decision.get("goal_sufficient"))
+
+            # v3.5.20 route learning is tied to semantic verification, not merely
+            # to whether the read-only recovery observation tool returned.
+            learned_route = self.recovery_learning_pending_route
+            if learned_route and self.recovery_performance_store is not None:
+                semantic_verified = bool(
+                    output.get("semantic_goal_verified")
+                    or (action == "ACCEPT" and self.outcome_goal_sufficient)
+                )
+                try:
+                    self.recovery_performance_store.record(
+                        learned_route,
+                        success=semantic_verified,
+                        context=self.recovery_learning_pending_context,
+                    )
+                except Exception:
+                    pass
+                self.recovery_learning_pending_route = ""
+                self.recovery_learning_pending_context = {}
+
+            if action == "ACCEPT":
+                # A state-only predicate may be true without proving the user's
+                # semantic end goal. Keep verification pending in that case.
+                self.needs_verification = not self.outcome_goal_sufficient
+            elif action in {"RETRY", "ESCALATE_VISION", "RECOVER"}:
+                self.needs_verification = True
+            else:
+                self.needs_verification = status != "PASS"
+            return
+
         if name == "device_semantic_action":
             observation = output.get("verification_observation")
             verified = bool(observation)
@@ -300,7 +644,11 @@ class TaskTracker:
             )
             return
 
-        if name in {"device_interact_app", "device_app_control"}:
+        if name == "device_app_control":
+            self.needs_verification = output.get("verified_state") is not True
+            return
+
+        if name == "device_interact_app":
             self.needs_verification = True
             return
 
@@ -375,6 +723,13 @@ class TaskTracker:
         if skill:
             self.learned_skill_id = skill.skill_id
 
+    def workflow_memory_message_if_changed(self) -> str:
+        revision = int(getattr(self.workflow_memory, "revision", 0) or 0)
+        if revision <= self.workflow_memory_last_emitted_revision:
+            return ""
+        self.workflow_memory_last_emitted_revision = revision
+        return self.workflow_memory.planner_message()
+
     def after_result_nudge(self, payload: dict[str, Any]) -> str:
         if not payload.get("ok"):
             if self.consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
@@ -392,6 +747,32 @@ class TaskTracker:
                 "call unchanged."
             )
 
+        if self.last_tool == "device_computer_verify":
+            if self.last_outcome_decision == "RECOVER":
+                return (
+                    "WORKFLOW OUTCOME RECOVERY: verification exhausted its bounded "
+                    "retry budget. Re-observe the live UI, re-ground the intended "
+                    "target, and choose a different safe route instead of repeating "
+                    "the same action."
+                )
+            if self.last_outcome_decision == "RETRY":
+                return (
+                    "WORKFLOW OUTCOME RETRY: the requested outcome is still not "
+                    "verified. Retry only after a fresh observation/re-grounding; "
+                    f"remaining bounded retry budget: {self.outcome_retry_budget_remaining}."
+                )
+            if self.last_outcome_decision == "ESCALATE_VISION":
+                return (
+                    "WORKFLOW OUTCOME ESCALATION: semantic evidence is insufficient. "
+                    "Run visual grounding/verification before retrying the action."
+                )
+            if self.last_outcome_decision == "ACCEPT" and not self.outcome_goal_sufficient:
+                return (
+                    "WORKFLOW OUTCOME PARTIAL: the requested verification predicate "
+                    "passed, but it is state-only evidence and does not prove the "
+                    "semantic user goal. Verify the semantic end state before finishing."
+                )
+
         if self.needs_verification:
             return (
                 "WORKFLOW VERIFY: the previous action was accepted but the "
@@ -401,9 +782,20 @@ class TaskTracker:
 
         if self.last_tool == "device_observe_ui" and self.accessibility_limited:
             return (
-                "WORKFLOW ACCESSIBILITY LIMIT: Windows UI Automation returned no usable semantic controls for the rendered app window. "
-                "This does NOT mean the visual interface is blank. A screenshot may have been captured as fallback evidence, but v3.4.2 "
-                "must not pretend it can read screenshot pixels. Do not invent coordinates; report the limitation unless another bounded semantic route exists."
+                "WORKFLOW ACCESSIBILITY LIMIT: Windows UI Automation returned "
+                "no usable semantic controls. This does NOT mean the visual "
+                "interface is blank. In v3.4.6, call device_computer_observe; if "
+                "OmniParser is configured it can ground visual-only controls. "
+                "Never invent coordinates."
+            )
+
+        if self.last_tool == "device_computer_action":
+            return (
+                "WORKFLOW OUTCOME CHECK: the universal computer action was "
+                "injected, but the user's requested state is not yet proven. "
+                "Call device_computer_verify with a semantic condition. PASS "
+                "means the outcome is supported; FAIL means adapt/recover; "
+                "INCONCLUSIVE is not success."
             )
 
         if self.goal_checkpoint_required:
@@ -468,6 +860,13 @@ class TaskTracker:
         )
 
     def finalization_nudge(self) -> str:
+        if self.outcome_recovery_required:
+            return (
+                "Do not finalize yet. Strong outcome verification exhausted its "
+                "bounded retry budget. Re-observe and re-plan using a different "
+                "safe route before claiming success."
+            )
+
         if self.needs_verification:
             return (
                 "The last state-changing action is not verified yet. Do not "
@@ -518,6 +917,28 @@ class TaskTracker:
             "last_semantic_target": self.last_semantic_target or None,
             "accessibility_limited": self.accessibility_limited,
             "accessibility_reason": self.accessibility_reason or None,
+            "last_outcome_decision": self.last_outcome_decision or None,
+            "outcome_retry_count": self.outcome_retry_count,
+            "outcome_retry_budget_remaining": self.outcome_retry_budget_remaining,
+            "outcome_recovery_required": self.outcome_recovery_required,
+            "outcome_goal_sufficient": self.outcome_goal_sufficient,
+            "automatic_recovery_steps": self.automatic_recovery_steps,
+            "last_automatic_recovery_decision": self.last_automatic_recovery_decision or None,
+            "last_automatic_recovery_ok": self.last_automatic_recovery_ok,
+            "last_automatic_recovery_observation_id": self.last_automatic_recovery_observation_id or None,
+            "last_automatic_recovery_route": self.last_automatic_recovery_route or None,
+            "last_automatic_recovery_next_step": self.last_automatic_recovery_next_step or None,
+            "automatic_action_replay_allowed": self.automatic_action_replay_allowed,
+            "recovery_fresh_plan_pending": self.recovery_fresh_plan_pending,
+            "recovery_fresh_observation_id": self.recovery_fresh_observation_id or None,
+            "recovery_fresh_element_ids": list(self.recovery_fresh_element_ids),
+            "recovery_route_history": list(self.recovery_route_history),
+            "recovery_planner_constraints": self.recovery_planner_constraints(),
+            "material_replan_required": self.material_replan_required,
+            "material_replan_contract": dict(self.material_replan_contract),
+            "recovery_loop_terminated": self.recovery_loop_terminated,
+            "recovery_loop_block_reason": self.recovery_loop_block_reason or None,
+            "workflow_memory": self.workflow_memory.snapshot(),
         }
 
 
@@ -525,8 +946,12 @@ def workflow_system_nudge(user_text: str) -> str:
     return (
         "AUTONOMOUS WORKFLOW MODE: Treat the user's request as one goal, not "
         "as isolated commands. Privately maintain a small plan and execute it "
-        "step by step using only the supplied bounded tools. Do not reveal "
-        "hidden chain-of-thought or a private plan. Use this loop: PLAN the "
+        "step by step using only the supplied bounded tools. Within the user's "
+        "goal, choose the next safe action yourself; prefer observing live state "
+        "over asking the user how to proceed when the ambiguity is resolvable. "
+        "Do not invent a new goal or extend the task beyond the user's intent. "
+        "Do not reveal hidden chain-of-thought, a private plan, scratchpad, or "
+        "self-talk. Use this loop: PLAN the "
         "next smallest safe step -> EXECUTE -> INSPECT real results -> VERIFY "
         "state -> ADAPT/RECOVER -> FINISH only when tool evidence supports the "
         "requested outcome. For app GUI work, check device_skill_find first. "
@@ -540,6 +965,7 @@ def workflow_system_nudge(user_text: str) -> str:
         "change, verify before claiming completion. A successful semantic action verifies only that one interaction; it does not prove the whole user goal is complete. "
         "For compound GUI goals, perform a fresh device_observe_ui checkpoint after semantic actions and continue when the terminal requested control/destination has not yet been acted on. "
         "If observation reports accessibility_available=false, do not call the interface blank: Windows UI Automation is unavailable for that rendered window. Never invent coordinates or claim screenshot pixels were read. "
+        "Honor device_computer_verify outcome decisions: ACCEPT may still be state-only, RETRY requires fresh re-observation, ESCALATE_VISION requires visual grounding, and RECOVER means stop repeating the route and re-plan. "
         "Never repeat the same failed call over and over; re-observe and change approach. Prefer "
         "specialized tools over generic UI actions. Stay inside current-turn "
         "app/device scope and the existing permission system. Learned skills "

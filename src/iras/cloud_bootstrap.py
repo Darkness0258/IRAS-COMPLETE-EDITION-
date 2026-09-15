@@ -4,6 +4,7 @@ import os
 
 from iras.config import Settings
 from iras.core.agent import IRASAgent
+from iras.device_bridge.recovery_learning import RecoveryRoutePerformanceStore
 from iras.memory.store import MemoryStore
 from iras.memory.postgres_store import PostgresMemoryStore
 from iras.models import PermissionLevel
@@ -155,6 +156,9 @@ def build_cloud_runtime(settings: Settings | None = None) -> CloudRuntime:
         context_fact_limit=_env_int("IRAS_CONTEXT_FACTS", 10, 0),
         context_message_limit=_env_int("IRAS_CONTEXT_MESSAGES", 8, 2),
         smart_tools=_env_bool("IRAS_SMART_TOOLS", True),
+        recovery_performance_store=RecoveryRoutePerformanceStore(
+            s.data_dir / "recovery_route_performance.json"
+        ),
     )
 
     return CloudRuntime(

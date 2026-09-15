@@ -23,4 +23,4 @@ def test_render_blueprint_keeps_secrets_external():
 def test_supabase_database_is_generic_postgres():
     source = Path("src/iras/memory/postgres_store.py").read_text(encoding="utf-8")
     assert "psycopg.connect" in source
-    assert "DATABASE_URL" in Path("RENDER_SUPABASE_DEPLOY.md").read_text(encoding="utf-8")
+    assert "DATABASE_URL" in Path("docs/RENDER_SUPABASE_DEPLOY.md").read_text(encoding="utf-8")

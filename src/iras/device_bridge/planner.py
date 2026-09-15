@@ -20,6 +20,10 @@ SAFE_DEVICE_PLANNER_TOOLS = (
     "device_interact_app",
     "device_observe_ui",
     "device_semantic_action",
+    "device_computer_status",
+    "device_computer_observe",
+    "device_computer_action",
+    "device_computer_verify",
     "device_skill_find",
     "device_skill_validate",
     "device_skill_list",
@@ -279,10 +283,14 @@ def planner_system_nudge(
         "BOUNDED AUTONOMOUS DEVICE PLANNER MODE: "
         "The current request appears to require a real computer action that "
         "the deterministic command router did not fully understand. Infer the "
-        "user's goal and privately plan the smallest safe sequence of supplied "
-        "tools needed to complete it. You may make multiple tool calls and "
-        "adapt after each real tool result. Do not reveal hidden chain-of-"
-        "thought; report only useful actions/results. Prefer specialized tools "
+        "user's goal and privately choose the smallest safe sequence of supplied "
+        "tools needed to complete it. You have decision authority inside that "
+        "goal: decide which safe route to try, when to observe, when to adapt, "
+        "and when evidence is sufficient. Do not ask the user to micromanage a "
+        "safe reversible choice that can be resolved from live state. You may "
+        "make multiple tool calls and adapt after each real tool result. Do not "
+        "reveal hidden chain-of-thought, scratchpad, or self-talk; report only "
+        "useful actions/results. Prefer specialized tools "
         "over generic UI automation. For normal GUI workflows, first call "
         "device_skill_find with the user's current command and explicit app. "
         "If a skill matches, call device_skill_validate for each step before "
@@ -301,10 +309,32 @@ def planner_system_nudge(
         "expressible with that tool. For unfamiliar GUIs, call "
         "device_observe_ui before clicking. Reason only from returned visible "
         "UI elements. Prefer device_semantic_action for buttons, fields, tabs, "
-        "menus and list items. A successful semantic action verifies only that specific interaction, not the user's entire goal. "
-        "For compound GUI goals, re-observe after semantic actions and compare the fresh state with the original requested end state; if the terminal control is still pending, continue instead of finalizing. "
-        "If device_observe_ui returns accessibility_available=false, do not describe the app as blank. Treat it as a Windows UI Automation limitation. "
-        "Screenshot metadata is fallback evidence only in v3.4.2; do not invent coordinates or claim screenshot pixels were understood. "
+        "menus and list items when UIA exposes them. If UIA cannot describe the "
+        "interface, or the task spans the desktop rather than one app, switch to "
+        "the v3.4.6 universal loop: device_computer_observe -> "
+        "device_computer_action -> device_computer_verify. Use scope='desktop' "
+        "for taskbar, desktop-icon, system-tray, or multi-window visual tasks; "
+        "otherwise keep scope='auto'. In auto mode, UIA is preferred and "
+        "OmniParser is used only when configured and UIA has no actionable "
+        "controls; use vision='always' for custom-rendered visual UI. "
+        "Only act on element_id values returned by the current observation_id. "
+        "Never invent raw x/y coordinates. Every input action is guarded against "
+        "a foreground-window change; if the guard rejects an action, re-observe "
+        "instead of retrying stale coordinates. A successful computer action "
+        "verifies only input delivery, not the user's goal. Call "
+        "device_computer_verify and treat PASS as success; FAIL means "
+        "continue/recover; INCONCLUSIVE is not success. In auto mode, semantic "
+        "verification may escalate to visual grounding when UIA alone cannot "
+        "prove the target or its absence. "
+        "A successful semantic action likewise verifies only that "
+        "specific interaction, not the user's entire goal. For compound GUI "
+        "goals, re-observe after meaningful actions and compare the fresh state "
+        "with the original requested end state; if the terminal control is still "
+        "pending, continue instead of finalizing. If device_observe_ui returns "
+        "accessibility_available=false, do not describe the app as blank. Use "
+        "device_computer_observe for visual grounding when available. Screenshot "
+        "pixels are actionable only through returned OmniParser element_ids, not "
+        "through guessed coordinates. "
         "For URLs/websites prefer device_open_url. For files/projects "
         "use the file/project tools. Never invent a click coordinate or claim "
         "you saw screen content that no tool returned. If a tool fails, inspect "

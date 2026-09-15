@@ -1,13 +1,81 @@
-# IRAS 1.0 — Intelligent Responsive Autonomous System
+# IRAS 3.6.0 — Intelligent Responsive Autonomous System
 
-IRAS is a local-first AI agent with a female voice/persona, tool use, persistent memory, desktop UI, local API, browser/file/system/Git capabilities, scheduling, and authenticated remote-node support.
+IRAS is a local-first, permissioned AI agent for Windows and paired devices. It combines conversational AI, voice, files, browser/system tools, Windows UI control, persistent memory, automation, remote nodes, and a verified recovery loop for computer-use tasks.
 
-It is deliberately **permissioned**: IRAS can operate your devices and accounts when you authorize them, but it does not bypass authentication or silently perform destructive actions.
+The current stable baseline is **v3.6.0**. Historical milestone notes and one-off validators are intentionally not kept in the active tree; Git history is the release archive.
 
+## Core capabilities
 
-## OpenRouter setup
+- Multi-step agent/tool loop with bounded execution.
+- OpenRouter/OpenAI-compatible and Ollama-compatible providers.
+- Persistent SQLite conversation/fact memory.
+- Dynamic permission engine and audit logging with secret redaction.
+- File, Git, browser, HTTP, system, application, screenshot, and scheduling tools.
+- Voice output with Edge TTS and Windows fallback; optional local Whisper STT.
+- CLI, Tkinter desktop UI, localhost FastAPI service, remote-node service, and paired clients.
+- Windows computer control using semantic UI Automation first and foreground/desktop vision when required.
+- Closed-loop `observe -> ground -> act -> re-observe -> verify` execution.
+- Bounded recovery, adaptive route scoring, context-aware route learning, confidence calibration, stale-learning quarantine, and no failed-action replay.
+- v3.6 ephemeral cross-app workflow memory with verification provenance and fresh destination grounding.
+- Bounded autonomous decision supervisor: resolves safe session context, chooses next reversible steps, suppresses planner scratchpad, and keeps permissions/verification authoritative.
 
-OpenRouter is the default IRAS cloud brain. Copy `.env.example` to `.env`, then set:
+## Safety model
+
+IRAS is built for systems, accounts, devices, and APIs you own or are authorized to operate.
+
+Important invariants:
+
+- Live computer state is authoritative over learned history.
+- State-changing actions remain permission-gated.
+- Critical actions require confirmation.
+- Recovery observations do not prove task success by themselves.
+- Failed click/type/send/submit actions are never automatically replayed.
+- Cross-app workflow memory does not grant tool authorization.
+- Destination UI targets must be freshly observed and grounded after an app switch.
+- Persistent recovery learning stores aggregate route statistics, not screenshots, contacts, message contents, or target coordinates.
+
+## Repository layout
+
+```text
+src/                 IRAS runtime packages
+clients/             Android and web client sources
+tests/               regression suite
+scripts/              current release validators and maintenance helpers
+docs/                 current documentation
+ARCHITECTURE.md       system architecture
+pyproject.toml        Python package metadata
+run-v360-validation.ps1
+run-v360-real-device-smoke.ps1
+```
+
+## Install on Windows
+
+```powershell
+cd D:\Projects\IRAS-complete
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -e ".[dev]"
+Copy-Item .env.example .env
+iras --doctor
+```
+
+For microphone transcription:
+
+```powershell
+pip install -e ".[voice,dev]"
+```
+
+For browser automation:
+
+```powershell
+pip install -e ".[browser,dev]"
+playwright install chromium
+```
+
+## Configure a brain
+
+OpenRouter is the default provider. Put secrets only in `.env`:
 
 ```env
 IRAS_PROVIDER=openrouter
@@ -15,76 +83,7 @@ OPENROUTER_API_KEY=your_key_here
 IRAS_MODEL=openrouter/free
 ```
 
-The API key stays local in `.env` and `.env` is ignored by Git. Change `IRAS_MODEL` to any OpenRouter model ID you want to use.
-
-## What is included
-
-- Multi-step agent/tool loop
-- Demo brain (works without API keys)
-- OpenAI-compatible brain (OpenRouter and compatible endpoints)
-- Ollama-compatible local brain
-- Persistent SQLite conversation/fact memory
-- Dynamic permission engine + per-action approvals
-- JSONL audit log with secret redaction
-- File read/write/copy/move/delete tools
-- Arbitrary shell execution behind approval
-- Windows/application/process/system tools
-- Screenshot tool
-- Public HTTP fetch with private-network SSRF protection
-- OS browser opening
-- Optional persistent Playwright browser session
-- Git status/log/diff/commands with risk classification
-- Authenticated public API calls using secret-by-name references (IRAS_SECRET_*)
-- Agent-side remote-node invocation for authorized machines
-- Natural Edge TTS with Windows speech fallback
-- Optional local Whisper microphone transcription
-- CLI
-- Tkinter desktop chat UI
-- FastAPI localhost service
-- Authenticated IRAS remote node server
-- Local recurring prompt scheduler
-- Doctor/self-diagnostics
-- Automated tests
-
-## Install on Windows
-
-```powershell
-cd C:\workstation\Projects\IRAS
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -e ".[dev]"
-copy .env.example .env
-iras --doctor
-iras
-```
-
-For local microphone transcription:
-
-```powershell
-pip install -e ".[voice,dev]"
-```
-
-For full browser control:
-
-```powershell
-pip install -e ".[browser,dev]"
-playwright install chromium
-```
-
-## Connect an actual AI brain
-
-### OpenRouter / OpenAI-compatible
-Edit `.env`:
-
-```env
-IRAS_PROVIDER=openai_compatible
-IRAS_BASE_URL=https://openrouter.ai/api/v1
-IRAS_API_KEY=YOUR_KEY
-IRAS_MODEL=YOUR_TOOL_CAPABLE_MODEL_ID
-```
-
-### Ollama
+For Ollama:
 
 ```env
 IRAS_PROVIDER=ollama
@@ -93,170 +92,91 @@ IRAS_MODEL=qwen2.5-coder:7b
 IRAS_API_KEY=
 ```
 
-Choose a model that supports tool/function calling for best results.
+Use a tool/function-calling model for autonomous workflows.
 
-## Commands
+## Main commands
 
 ```powershell
 iras                 # interactive agent
 iras --doctor        # diagnostics
-iras --tools         # list capabilities
+iras --tools         # capabilities
+iras --voice-test    # TTS diagnostic
 iras-desktop         # desktop UI
-iras-api             # local HTTP API (127.0.0.1:8765)
-iras-node             # authenticated remote node (127.0.0.1:8770)
+iras-api             # localhost API
+iras-node             # authenticated remote node
 iras-scheduler        # scheduled-prompt worker
 ```
 
+Voice commands inside the CLI include `voice on`, `voice off`, `voice test`, and `listen`.
+
 ## Permission levels
 
-| Level | Meaning | Examples |
+| Level | Meaning | Typical examples |
 |---|---|---|
-| 0 | READ | read file, system info, git status |
-| 1 | SAFE_ACTION | open URL, create folder, launch normal app |
-| 2 | SYSTEM_ACTION | arbitrary shell, write/move files, browser click |
+| 0 | READ | read file, system info, Git status |
+| 1 | SAFE_ACTION | launch normal app, open URL, create folder |
+| 2 | SYSTEM_ACTION | shell execution, write/move files, browser click |
 | 3 | CRITICAL | destructive delete, force push, dangerous shell patterns |
 
-By default levels 0–1 run automatically. Levels 2–3 require interactive approval. Critical actions are always confirmed.
+Levels 0–1 may run automatically under the default policy. Levels 2–3 require approval; critical actions remain explicitly confirmed.
 
-## Voice
+## Windows computer control
 
-IRAS is voice-first. Spoken replies default to **on**. `edge-tts` provides the natural `en-US-AriaNeural` voice and MPV plays the generated audio. If Edge TTS or MPV fails on Windows, IRAS falls back to Windows SAPI and now reports the exact backend error instead of failing silently.
+IRAS uses a layered computer-use controller:
 
-Useful commands:
+1. Observe the foreground or desktop.
+2. Prefer semantic Windows UI Automation when actionable controls exist.
+3. Escalate to optional OmniParser/vision grounding when the requested target is not exposed semantically.
+4. Act only against a grounded observation/element binding.
+5. Re-observe and verify state plus semantic outcome.
+6. If verification fails, select a bounded recovery route without replaying the failed state-changing action.
 
-```text
-voice          # toggle spoken replies
-voice on       # enable spoken replies
-voice off      # disable spoken replies
-voice test     # speak a test phrase and report the backend
-listen         # record one microphone utterance and send it to IRAS
-mic            # alias for listen
-```
+See `docs/OMNIPARSER_IRAS_SETUP.md` for optional visual grounding.
 
-You can also test TTS before starting the chat:
+## v3.6 cross-app workflow memory
 
-```powershell
-iras --voice-test
-```
+Within one workflow, semantically verified facts can survive an app transition. The handoff records source-app and verification provenance, remains ephemeral, does not authorize tools, and requires the destination app to be freshly observed before the next action.
 
-Microphone speech-to-text requires the voice extras:
+See `docs/CROSS_APP_WORKFLOW_MEMORY_V3.6.0.md`.
 
-```powershell
-pip install -e ".[voice,dev]"
-```
+## Validation
 
-## API security
-
-`iras-api` binds to localhost by default. If you expose it over a network, set a strong `IRAS_API_TOKEN` and put it behind TLS/authentication. API chat does not interactively approve elevated actions.
-
-## Remote nodes
-
-Run `iras-node` on a computer you own. A bearer token is mandatory for tool execution. Remote-node permissions default to Level 1, and critical actions remain blocked.
-
-## Important boundary
-
-IRAS is designed to access **systems, accounts, devices, APIs, and machines you own or are authorized to operate**. It is not an authentication-bypass or unauthorized-access framework.
-
-## External authenticated APIs
-
-Store service tokens in `.env` using names such as `IRAS_SECRET_GITHUB=...`. IRAS can reference the variable name with `api_request`; the raw token is injected inside the tool and is not passed through the model arguments. GET/HEAD are read-only; POST/PUT/PATCH require system approval; DELETE is critical.
-
-## Calling remote IRAS nodes
-
-Put the node token on the controlling machine in an `IRAS_SECRET_*` variable, then IRAS can use `remote_invoke` with the node URL and secret variable name. The remote node enforces its own independent permission cap as a second safety layer.
-
-## Anime-inspired voice profiles (v1.2.0)
-
-IRAS now has synchronized speech + personality profiles. The default is `anime_soft`.
-
-Inside IRAS:
-
-```text
-voice styles
-voice style soft
-voice style genki
-voice style cool
-voice style normal
-voice test
-```
-
-Profiles:
-- `anime_soft` — en-US-JennyNeural, young-adult, warm, natural-pitch and gentle.
-- `anime_genki` — en-US-JennyNeural, faster/brighter and energetic.
-- `anime_cool` — en-US-AriaNeural, controlled and composed.
-- `normal` — standard Aria voice/personality.
-
-Set the startup profile in `.env`:
-
-```env
-IRAS_VOICE_PROFILE=anime_soft
-```
-
-These are original anime-inspired assistant profiles; they are not intended to imitate a specific character or actor.
-
-
-## Personality / roleplay
-
-IRAS v1.3.0 uses a young-adult, loving, concise personality by default.
-
-- Replies are normally 1-3 sentences.
-- Affection is subtle rather than repetitive.
-- Playful jealousy is rare and non-controlling.
-- Pranks are harmless and verbal only.
-- Serious work automatically overrides roleplay.
-
-See `ROLEPLAY_GUIDE.md` for the full behavior contract.
-
-
-## Autonomous personality adaptation
-
-IRAS v1.4.0 learns communication style by herself.
-
-She gradually adapts warmth, affection, humor, teasing, brevity, formality, maturity and related style traits from conversation patterns. OpenRouter can also invoke an internal bounded `adapt_personality` tool when it detects meaningful evidence.
-
-No personality sliders are required.
-
-Use `personality status` only if you want to inspect the learned profile. `personality reset` restores defaults.
-
-See `SELF_ADAPTING_PERSONALITY.md`.
-
-
-## Human-like spoken output
-
-IRAS v1.4.1 preprocesses assistant replies before TTS so she does not read emoji, Markdown syntax, raw URLs, decorative symbols, or code punctuation aloud. The original technical response remains unchanged on screen.
-
-See `HUMAN_SPEECH.md`.
-
-
-# IRAS Cloud v2.1
-
-IRAS now includes:
-- hosted FastAPI brain
-- PostgreSQL-backed shared memory
-- browser/PWA client
-- native Android client source with mic + Android TTS
-- Windows remote desktop client with IRAS voice
-- Docker deployment for Koyeb
-- GitHub Actions that build an installable debug APK and Windows EXE
-
-See `CLOUD_DEPLOY.md`, `BUILD_APPS.md`, and `CLOUD_ARCHITECTURE.md`.
-
-
-## Recommended cloud stack (v2.1)
-
-```text
-Backend  : Render Free
-Database : Supabase Free PostgreSQL
-AI       : OpenRouter
-Web app  : served by Render
-Android  : APK client
-Windows  : EXE client
-```
-
-See `RENDER_SUPABASE_DEPLOY.md`.
-
-Generate the client/server access token with:
+Run the stable-release validation before pushing:
 
 ```powershell
-.\generate-iras-token.ps1
+.\run-v360-validation.ps1
 ```
+
+It performs:
+
+- clean-tree/release hygiene checks,
+- the integrated v3.6 invariant validation,
+- Python compile validation,
+- the complete regression suite.
+
+After pushing, run the read-only Windows device smoke test:
+
+```powershell
+.\run-v360-real-device-smoke.ps1
+```
+
+The smoke test reads system/UI state only; it does not click, type, send, submit, delete, or close anything.
+
+## API and remote-node security
+
+`iras-api` binds to localhost by default. If exposed over a network, configure a strong `IRAS_API_TOKEN` and put the service behind TLS/authentication. Remote nodes require a bearer token and enforce an independent permission cap.
+
+Authenticated API secrets should be stored as `IRAS_SECRET_*` environment variables. The model references the variable name; raw secret values are injected inside the tool layer rather than placed in model tool arguments.
+
+## Cloud and client docs
+
+Current deployment/build documentation is under `docs/`:
+
+- `docs/CLOUD_ARCHITECTURE.md`
+- `docs/CLOUD_DEPLOY.md`
+- `docs/RENDER_SUPABASE_DEPLOY.md`
+- `docs/BUILD_APPS.md`
+
+## Development rule
+
+Keep the active tree focused on current code, current docs, regression tests, and current release tooling. Historical release notes belong in Git history rather than as duplicated root files or executable one-off validators.

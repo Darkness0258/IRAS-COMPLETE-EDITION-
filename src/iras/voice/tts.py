@@ -106,7 +106,7 @@ class Speaker:
 
                 if self.provider == "edge":
                     try:
-                        backend = asyncio.run(self._edge(text))
+                        backend = self._run_edge_sync(text)
                         self.last_backend = backend
                         self.last_error = None
                         return backend
@@ -138,6 +138,41 @@ class Speaker:
                 raise TTSUnavailable(self.last_error)
             finally:
                 self._speaking.clear()
+
+    def _run_edge_sync(self, text: str) -> str:
+        """Run Edge TTS from synchronous callers even inside an active loop.
+
+        ``asyncio.run(coro)`` raises when the current thread already owns an
+        event loop, and creating the coroutine before that check also produces
+        a misleading "was never awaited" RuntimeWarning. IRAS can be embedded
+        in async hosts, so use a short worker thread in that case.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self._edge(text))
+
+        result: dict[str, object] = {}
+
+        def runner() -> None:
+            try:
+                result["value"] = asyncio.run(self._edge(text))
+            except BaseException as exc:  # propagate on the calling thread
+                result["error"] = exc
+
+        thread = threading.Thread(
+            target=runner,
+            name="iras-edge-tts",
+            daemon=True,
+        )
+        thread.start()
+        thread.join()
+
+        error = result.get("error")
+        if isinstance(error, BaseException):
+            raise error
+
+        return str(result.get("value") or "edge+mpv")
 
     async def _edge(self, text: str) -> str:
         import edge_tts

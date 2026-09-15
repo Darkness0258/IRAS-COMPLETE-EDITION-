@@ -1,14 +1,49 @@
+# Secrets / local configuration
+.env
+.env.*
+!.env.example
+
+# Python
 .venv/
+venv/
 __pycache__/
 *.py[cod]
+*.pyd
 .pytest_cache/
-.env
-data/
-logs/
-screenshots/
-voice-cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 *.egg-info/
 build/
 dist/
 
-.iras-v*-backup-*/
+# IRAS runtime state
+data/
+logs/
+*.db
+*.sqlite
+*.sqlite3
+*.jsonl
+.iras/
+.iras-client.json
+
+# Browser / client build output
+playwright-report/
+test-results/
+clients/android/.gradle/
+clients/android/**/build/
+clients/web/.cache/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Archives / local artifacts
+*.zip
+*.7z
+*.tar
+*.tar.gz
