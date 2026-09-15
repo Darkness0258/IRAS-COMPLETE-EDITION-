@@ -142,3 +142,42 @@ Recovery-route persistence also tracks consecutive semantic outcome streaks. Rep
 The local/cloud agent keeps a small session-scoped autonomy context (current app, previous app, last media app, and verified semantic target). It is advisory context for planning and deterministic follow-ups; it is not a permission grant. The supervisor may choose the next safe step within the user's current goal, resolve obvious deictic follow-ups, request read-only state probes, and reject leaked planner scratchpad. Live UI state, the permission engine, fresh observation bindings, semantic verification, bounded recovery, and the no-action-replay invariant remain authoritative.
 
 For custom-rendered/WebView applications, an inaccessible UIA snapshot can trigger one controller-level read-only computer observation. If neither UIA nor configured visual grounding is actionable, state-changing actions are not guessed.
+
+## v3.7.0 Multimodal Perception and WebView Grounding
+
+The universal computer controller now emits a unified multimodal scene graph.
+Windows UI Automation remains the preferred semantic source; when UIA exposes
+no meaningful action targets, IRAS can lazily start a local OmniParser service
+and ground the foreground screenshot. In auto scope, a failed/empty foreground
+visual pass may broaden once to desktop vision.
+
+Scene elements use stable semantic/geometry-derived IDs, confidence, and
+provenance. UIA evidence is preferred when it overlaps equivalent visual
+evidence; visual-only elements remain available for WebViews, Electron, canvas,
+and other custom-rendered interfaces.
+
+Every state-changing universal computer input consumes the observation binding
+that authorized it. A second click/type/press/scroll/drag requires a fresh
+observation, including after partial failures. Low-confidence or ambiguous
+visual targets fail closed. Post-action observations include normalized image
+change evidence, but visual change never substitutes for semantic end-state
+verification. `action_replay_allowed` remains false.
+
+OmniParser process startup is bounded and local-only: IRAS probes first, starts
+only a configured/discovered local installation with `shell=False`, never
+auto-installs dependencies/weights, and reuses an already-running server.
+
+### v3.7 R3 deterministic visual-navigation fast path
+
+A narrow controller-owned WhatsApp navigation workflow bypasses the LLM for the
+explicit goal of opening one named chat and visually verifying its header without
+sending. The workflow is still closed-loop: focus/launch, fresh observation,
+optional grounded search typing, fresh observation, unique contact selection,
+fresh visual header verification. It never types into the composer or presses
+Enter. A failed click/type is never replayed automatically.
+
+The visual controller may reuse OmniParser semantics only for a newly captured
+screenshot with the exact same SHA-256. Observation IDs remain fresh per capture,
+so cached perception does not reuse action authorization. OmniParser runs as a
+single non-reloading child process, and IRAS persists only local PID/base-URL
+ownership metadata so CLI/controller instances agree on runtime ownership.

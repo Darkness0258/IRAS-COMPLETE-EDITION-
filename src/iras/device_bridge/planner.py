@@ -311,7 +311,7 @@ def planner_system_nudge(
         "UI elements. Prefer device_semantic_action for buttons, fields, tabs, "
         "menus and list items when UIA exposes them. If UIA cannot describe the "
         "interface, or the task spans the desktop rather than one app, switch to "
-        "the v3.4.6 universal loop: device_computer_observe -> "
+        "the v3.7 multimodal loop: device_computer_observe -> "
         "device_computer_action -> device_computer_verify. Use scope='desktop' "
         "for taskbar, desktop-icon, system-tray, or multi-window visual tasks; "
         "otherwise keep scope='auto'. In auto mode, UIA is preferred and "

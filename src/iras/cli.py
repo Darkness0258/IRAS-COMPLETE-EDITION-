@@ -16,6 +16,7 @@ from iras.voice.stt import Listener
 from iras.voice.tts import Speaker
 from iras.voice.profiles import PROFILES, normalize_profile
 from iras.persona import build_system_prompt
+from iras.vision.omniparser_runtime import OmniParserRuntimeManager
 
 
 def _voice_intent(text: str):
@@ -59,6 +60,15 @@ def _listen_intent(text: str) -> bool:
     return q in {'listen', '/listen', 'mic', '/mic', 'microphone'}
 
 
+def _vision_intent(text: str):
+    q = ' '.join(text.lower().strip().split())
+    if q in {'vision status', '/vision status', 'omniparser status', '/omniparser status'}:
+        return 'status'
+    if q in {'vision start', '/vision start', 'start omniparser', 'omniparser start', '/omniparser start'}:
+        return 'start'
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(prog='iras')
     ap.add_argument('--doctor', action='store_true')
@@ -74,6 +84,7 @@ def main():
     s = Settings.load()
 
     speaker = Speaker(s.tts_provider, s.voice, s.voice_profile)
+    vision_runtime = OmniParserRuntimeManager()
 
     if args.voice_test is not None:
         try:
@@ -113,7 +124,8 @@ def main():
             f'[bold]IRAS {__version__}[/bold]\n'
             f'Brain: {s.provider} / {s.model}\n'
             f'Voice profile: {speaker.profile.label} / {speaker.voice}\n'
-            'Commands: voice, voice test, voice styles, listen, personality status, /exit.'
+            f'Vision: UIA + OmniParser ({"auto-start on demand" if vision_runtime.autostart_enabled() else "manual/external"})\n'
+            'Commands: voice, voice test, voice styles, listen, vision status, vision start, personality status, /exit.'
         )
     )
     voice = s.voice_replies
@@ -133,6 +145,23 @@ def main():
             break
 
         pq = ' '.join(q.lower().strip().split())
+
+        vision_intent = _vision_intent(q)
+        if vision_intent:
+            if vision_intent == 'status':
+                status = vision_runtime.status()
+                c.print('[bold]OmniParser vision runtime[/bold]')
+                for key in ('status', 'ready', 'autostart_enabled', 'local_endpoint', 'base_url', 'pid', 'started_by_iras', 'log_path', 'reason', 'last_start_error'):
+                    if key in status and status.get(key) is not None:
+                        c.print(f'  {key}: {status.get(key)}')
+            else:
+                result = vision_runtime.ensure_ready(start=True)
+                if result.ready:
+                    c.print(f'[bold green]OmniParser ready[/bold green] — {result.status} at {result.base_url}')
+                else:
+                    c.print(f'[bold red]OmniParser unavailable[/bold red] — {result.status}: {result.reason}')
+            continue
+
         if pq in {'personality', 'personality status', '/personality'}:
             state = rt.personality.status()
             c.print('[bold]Adaptive personality[/bold]')

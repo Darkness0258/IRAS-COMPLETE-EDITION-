@@ -764,11 +764,66 @@ def app_interaction_intent(text: str) -> dict | None:
     return None
 
 
+def whatsapp_open_chat_request_from_text(text: str) -> dict | None:
+    command = normalize_command(text)
+    lower = command.lower()
+    if "whatsapp" not in lower:
+        return None
+
+    # This fast path is navigation-only. If the user also asks to compose/send,
+    # leave the request to the general planner so no requested side effect is
+    # silently dropped. Explicit negations such as "do not send anything" are
+    # allowed and reinforce the navigation-only contract.
+    positive_send = re.search(
+        r"\b(?:send|message|write|type)\b",
+        lower,
+    )
+    negated_send = re.search(
+        r"\b(?:do\s+not|don't|dont|without)\s+"
+        r"(?:send(?:ing)?|messag(?:e|ing)|writ(?:e|ing)|typ(?:e|ing))\b",
+        lower,
+    )
+    if positive_send and not negated_send:
+        return None
+
+    patterns = (
+        r"^(?:open|launch|start)\s+(?:the\s+)?whatsapp\b.*?"
+        r"\bfind\s+(.+?)\s+and\s+open\s+(?:that|the|their)\s+chat\b",
+        r"^find\s+(.+?)\s+(?:in|on)\s+whatsapp\b.*?"
+        r"\band\s+open\s+(?:that|the|their)?\s*chat\b",
+        r"^(?:open|show)\s+(?:the\s+)?(?:whatsapp\s+)?chat\s+"
+        r"(?:with|for)\s+(.+?)(?:[.!?]|$)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, command, flags=re.IGNORECASE)
+        if not match:
+            continue
+        contact = _clean_query(match.group(1)).strip('"\'')
+        contact = re.sub(
+            r"\s+(?:in|on)\s+whatsapp$",
+            "",
+            contact,
+            flags=re.IGNORECASE,
+        ).strip()
+        if not contact or contact.lower() in {"chat", "that", "the chat", "their chat"}:
+            return None
+        return {
+            "tool": "device_whatsapp_open_chat",
+            "arguments": {"contact": contact},
+            "kind": "whatsapp_open_chat_verified",
+        }
+    return None
+
+
 def direct_device_intent(
     text: str,
     *,
     spotify_context: bool = False,
 ) -> dict | None:
+    whatsapp_chat = whatsapp_open_chat_request_from_text(text)
+    if whatsapp_chat:
+        return whatsapp_chat
+
     if _open_spotify_intent(text):
         return {
             "tool": "device_open_app",
@@ -880,6 +935,20 @@ def result_message(action: dict, result) -> str:
     if tool == "device_interact_app":
         app = str(arguments.get("app", "the app"))
         return f"I completed the requested interaction in {app}."
+
+    if tool == "device_whatsapp_open_chat":
+        contact = str(arguments.get("contact", "the requested contact"))
+        output = result.output if isinstance(result.output, dict) else {}
+        header = str(output.get("verified_header") or contact)
+        if bool(output.get("verified")):
+            return (
+                f'Verified. The {contact} WhatsApp chat is open and the visual '
+                f'header shows "{header}". No message was sent.'
+            )
+        return (
+            f"I opened the WhatsApp navigation workflow for {contact}, but the "
+            "visual chat-header outcome was not verified. No message was sent."
+        )
 
     if tool == "device_spotify_search":
         query = str(arguments.get("query", ""))

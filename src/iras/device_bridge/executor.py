@@ -24,6 +24,9 @@ from iras.device_bridge.visual_control import (
 from iras.device_bridge.computer_use import (
     UniversalComputerController,
 )
+from iras.device_bridge.whatsapp_workflow import (
+    open_chat_and_verify as open_whatsapp_chat_and_verify,
+)
 
 
 DEFAULT_CAPABILITIES = [
@@ -45,6 +48,7 @@ DEFAULT_CAPABILITIES = [
     "computer_observe",
     "computer_action",
     "computer_verify",
+    "whatsapp_open_chat",
     "spotify_search",
     "spotify_play",
     "media_control",
@@ -208,6 +212,7 @@ class DeviceExecutor:
             "computer_observe": self.computer_observe,
             "computer_action": self.computer_action,
             "computer_verify": self.computer_verify,
+            "whatsapp_open_chat": self.whatsapp_open_chat,
             "spotify_search": self.spotify_search,
             "spotify_play": self.spotify_play,
             "media_control": self.media_control,
@@ -745,6 +750,16 @@ class DeviceExecutor:
             prior_observation_id=prior_observation_id,
             vision=vision,
             scope=scope,
+        )
+
+    def whatsapp_open_chat(
+        self,
+        contact: str,
+    ):
+        return open_whatsapp_chat_and_verify(
+            self.ui,
+            self.computer,
+            contact=contact,
         )
 
     def spotify_search(

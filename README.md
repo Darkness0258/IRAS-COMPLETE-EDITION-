@@ -1,8 +1,8 @@
-# IRAS 3.6.0 — Intelligent Responsive Autonomous System
+# IRAS 3.7.0 — Intelligent Responsive Autonomous System
 
 IRAS is a local-first, permissioned AI agent for Windows and paired devices. It combines conversational AI, voice, files, browser/system tools, Windows UI control, persistent memory, automation, remote nodes, and a verified recovery loop for computer-use tasks.
 
-The current stable baseline is **v3.6.0**. Historical milestone notes and one-off validators are intentionally not kept in the active tree; Git history is the release archive.
+The current development branch is **v3.7.0 multimodal**; the frozen stable release is **v3.6.0**. Historical milestone notes and one-off validators are intentionally not kept in the active tree; Git history is the release archive.
 
 ## Core capabilities
 
@@ -13,7 +13,9 @@ The current stable baseline is **v3.6.0**. Historical milestone notes and one-of
 - File, Git, browser, HTTP, system, application, screenshot, and scheduling tools.
 - Voice output with Edge TTS and Windows fallback; optional local Whisper STT.
 - CLI, Tkinter desktop UI, localhost FastAPI service, remote-node service, and paired clients.
-- Windows computer control using semantic UI Automation first and foreground/desktop vision when required.
+- Windows computer control using semantic UI Automation plus a v3.7 multimodal scene graph for foreground/desktop vision.
+- On-demand local OmniParser autostart for WebView/Electron/custom-rendered visual grounding when configured/discoverable.
+- Stable grounded element IDs with confidence/provenance and one-state-changing-input-per-observation binding.
 - Closed-loop `observe -> ground -> act -> re-observe -> verify` execution.
 - Bounded recovery, adaptive route scoring, context-aware route learning, confidence calibration, stale-learning quarantine, and no failed-action replay.
 - v3.6 ephemeral cross-app workflow memory with verification provenance and fresh destination grounding.
@@ -44,8 +46,9 @@ scripts/              current release validators and maintenance helpers
 docs/                 current documentation
 ARCHITECTURE.md       system architecture
 pyproject.toml        Python package metadata
-run-v360-validation.ps1
-run-v360-real-device-smoke.ps1
+run-v370-validation.ps1
+run-v370-real-device-smoke.ps1
+run-v360-validation.ps1          frozen v3.6 validator kept for release history
 ```
 
 ## Install on Windows
@@ -126,12 +129,20 @@ IRAS uses a layered computer-use controller:
 
 1. Observe the foreground or desktop.
 2. Prefer semantic Windows UI Automation when actionable controls exist.
-3. Escalate to optional OmniParser/vision grounding when the requested target is not exposed semantically.
-4. Act only against a grounded observation/element binding.
-5. Re-observe and verify state plus semantic outcome.
-6. If verification fails, select a bounded recovery route without replaying the failed state-changing action.
+3. Escalate to foreground OmniParser grounding when UIA is insufficient; local OmniParser is auto-started on demand when configured/discoverable.
+4. In auto scope, broaden once to desktop vision only if foreground grounding gives no usable result.
+5. Fuse UIA + vision into a stable scene graph with confidence/provenance.
+6. Act only against a fresh grounded observation/element binding; one state-changing input consumes that binding.
+7. Re-observe and verify state plus semantic outcome.
+8. If verification fails, select a bounded recovery route without replaying the failed state-changing action.
 
-See `docs/OMNIPARSER_IRAS_SETUP.md` for optional visual grounding.
+For the navigation-only WhatsApp goal “open a named chat and visually verify the
+header without sending,” v3.7 includes a deterministic controller fast path. It
+uses zero model rounds, never touches the message composer, and requires fresh
+visual header proof before claiming success. Exact repeated visual parses may be
+reused only when the freshly captured screenshot SHA-256 is identical.
+
+See `docs/OMNIPARSER_IRAS_SETUP.md` and `docs/MULTIMODAL_GROUNDING_V3.7.0.md`.
 
 ## v3.6 cross-app workflow memory
 
@@ -141,23 +152,24 @@ See `docs/CROSS_APP_WORKFLOW_MEMORY_V3.6.0.md`.
 
 ## Validation
 
-Run the stable-release validation before pushing:
+Run the current v3.7 development validation before pushing:
 
 ```powershell
-.\run-v360-validation.ps1
+.\run-v370-validation.ps1
 ```
 
 It performs:
 
 - clean-tree/release hygiene checks,
-- the integrated v3.6 invariant validation,
+- the integrated v3.6 safety-invariant validation,
+- the v3.7 multimodal/autostart invariant validation,
 - Python compile validation,
 - the complete regression suite.
 
 After pushing, run the read-only Windows device smoke test:
 
 ```powershell
-.\run-v360-real-device-smoke.ps1
+.\run-v370-real-device-smoke.ps1
 ```
 
 The smoke test reads system/UI state only; it does not click, type, send, submit, delete, or close anything.

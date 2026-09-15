@@ -39,5 +39,5 @@ def test_task_tracker_persists_only_verified_semantic_trace():
 
 
 def test_version_is_346():
-    assert "3.6.0" in text("src/iras/__init__.py")
-    assert 'version = "3.6.0"' in text("pyproject.toml")
+    assert "3.7.0" in text("src/iras/__init__.py")
+    assert 'version = "3.7.0"' in text("pyproject.toml")

@@ -72,6 +72,7 @@ def test_local_runtime_registers_computer_use_tools(tmp_path):
     assert "device_computer_observe" in names
     assert "device_computer_action" in names
     assert "device_computer_verify" in names
+    assert "device_whatsapp_open_chat" in names
 
 
 def test_local_device_turn_does_not_expose_run_shell():

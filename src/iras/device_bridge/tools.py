@@ -224,6 +224,19 @@ def make_tools(store):
             timeout=150,
         )
 
+    def device_whatsapp_open_chat(
+        contact,
+        device_id=None,
+    ):
+        return request(
+            "whatsapp_open_chat",
+            {
+                "contact": contact,
+            },
+            device_id,
+            timeout=240,
+        )
+
     def device_spotify_search(
         query,
         device_id=None,
@@ -663,9 +676,9 @@ def make_tools(store):
         Tool(
             "device_computer_status",
             (
-                "Report universal Windows computer-use capabilities, including "
-                "whether the optional OmniParser visual grounding backend is "
-                "configured and reachable."
+                "Report v3.7 universal Windows multimodal capabilities, including "
+                "OmniParser readiness/autostart state, scene-graph grounding, and "
+                "fresh-observation safety guards."
             ),
             {
                 "type": "object",
@@ -681,12 +694,15 @@ def make_tools(store):
             (
                 "Observe the current Windows desktop for universal computer use. "
                 "Returns the foreground window, screenshot metadata, Windows UI "
-                "Automation controls and, when configured/needed, OmniParser "
-                "visual elements. Every actionable element has an element_id and "
-                "grounded screen bounds. Use scope='desktop' for taskbar, desktop, "
+                "Automation controls plus a fused multimodal scene graph. When visual "
+                "grounding is needed, local OmniParser is started automatically if a "
+                "configured/discovered installation is available. Every actionable "
+                "element has a stable element_id, confidence, provenance and grounded "
+                "screen bounds. Use scope='desktop' for taskbar, desktop, "
                 "system-tray, or multi-window visual tasks; otherwise foreground "
                 "scope is preferred. Use vision='always' for custom-rendered "
-                "interfaces that UIA cannot describe. Never invent coordinates."
+                "interfaces that UIA cannot describe. Never invent coordinates, and "
+                "do not act on low-confidence visual targets."
             ),
             {
                 "type": "object",
@@ -802,6 +818,26 @@ def make_tools(store):
             },
             device_computer_verify,
             PermissionLevel.READ,
+        ),
+        Tool(
+            "device_whatsapp_open_chat",
+            (
+                "Open one WhatsApp chat by display name and visually verify the "
+                "right-pane chat header. This bounded controller fast path never "
+                "types into the message composer, never presses Enter, and never "
+                "sends a message. Each click/type is bound to a fresh observation; "
+                "failed state-changing actions are never replayed automatically."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "contact": {"type": "string"},
+                    **optional_device,
+                },
+                "required": ["contact"],
+            },
+            device_whatsapp_open_chat,
+            PermissionLevel.SAFE_ACTION,
         ),
         Tool(
             "device_spotify_search",
