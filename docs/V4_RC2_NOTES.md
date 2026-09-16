@@ -52,3 +52,18 @@ Real hosted RC2 acceptance proved cloud-to-Windows status, app launch, typing, p
 - The persistent bridge scheduled task now starts through hidden PowerShell while retaining `Interactive` logon type. This removes the long-running visible console without moving the bridge out of the desktop session required for screenshots and UI control.
 
 The complete regression suite after this hotfix is 623 passing tests.
+
+## Final acceptance safety hardening
+
+The outbound bridge now keeps polling while the local emergency stop or remote
+policy is disarmed, but execution remains blocked by the local controller gates.
+This lets the device return an explicit denial to the cloud instead of making the
+caller wait for a generic timeout. A timed-out command that was never claimed is
+also expired immediately, so it cannot execute later after the laptop reconnects
+or a local safety gate is cleared. Long device waits are bounded consistently at
+180 seconds.
+
+`iras --emergency-clear` intentionally clears only the emergency-stop controller.
+It does **not** silently re-arm remote access after an emergency. The laptop owner
+must explicitly run `iras --remote-arm <mode> ...` locally before remote actions
+can resume.

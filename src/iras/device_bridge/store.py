@@ -701,7 +701,7 @@ class DeviceBridgeStore:
                 1.0,
                 min(
                     float(timeout),
-                    90.0,
+                    180.0,
                 ),
             )
         )
@@ -755,18 +755,23 @@ class DeviceBridgeStore:
         permission_level: int | None = None,
         requester_device: str = "cloud-agent",
     ):
+        bounded_timeout = max(
+            1.0,
+            min(float(timeout), 180.0),
+        )
         queued = self.enqueue(
             action=action,
             arguments=arguments,
             device_id=device_id,
             requester_device=requester_device,
+            ttl_seconds=max(15, int(bounded_timeout + 0.999)),
             remote_session_id=remote_session_id,
             permission_level=permission_level,
         )
 
         completed = self.wait(
             queued["command_id"],
-            timeout=timeout,
+            timeout=bounded_timeout,
         )
 
         status = completed.get(
@@ -781,11 +786,33 @@ class DeviceBridgeStore:
 
         if status in {
             "queued",
-            "claimed",
             "timeout",
         }:
+            # A request that has already timed out for the caller must never
+            # remain queued and execute later after a laptop reconnects or a
+            # local safety gate is cleared. Expire only unclaimed work; claimed
+            # work may already be running and cannot be safely rolled back here.
+            self._run(
+                """
+                UPDATE iras_device_commands
+                SET status='expired', completed_at=?, error=?
+                WHERE command_id=? AND status='queued'
+                """,
+                (
+                    self._now(),
+                    "Requester timed out before the command was claimed.",
+                    queued["command_id"],
+                ),
+            )
+            if remote_session_id:
+                self._scrub_remote_command_payload(queued["command_id"])
             raise RuntimeError(
-                "The computer did not finish the command in time."
+                "The computer did not accept the command before it expired."
+            )
+
+        if status == "claimed":
+            raise RuntimeError(
+                "The computer accepted the command but did not finish it in time."
             )
 
         error = completed.get("error") or f"Device command ended with status {status}."

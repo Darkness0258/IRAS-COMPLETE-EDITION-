@@ -496,19 +496,24 @@ class DeviceBridgeAgent:
         last_disarmed_notice = 0.0
         while not self.stop_event.is_set():
             try:
-                if self.emergency_stop.tripped():
-                    if time.monotonic() - last_disarmed_notice > 30:
-                        self._status("emergency stop is active; no remote commands will run")
-                        last_disarmed_notice = time.monotonic()
-                    self.stop_event.wait(2.0)
-                    continue
+                stop_active = self.emergency_stop.tripped()
                 policy_status = self.policy.status()
-                if not policy_status.get("enabled"):
+
+                # Keep the authenticated outbound control channel alive even
+                # while local execution is blocked. Commands are still claimed
+                # and passed through _execute(), whose first gates are the
+                # emergency-stop controller and RemoteAccessPolicy. This lets
+                # IRAS return an explicit local-policy denial instead of leaving
+                # a cloud command queued until the requester times out.
+                if stop_active:
                     if time.monotonic() - last_disarmed_notice > 30:
-                        self._status("remote access is locally disarmed")
+                        self._status("emergency stop is active; remote commands will be rejected")
                         last_disarmed_notice = time.monotonic()
-                    self.stop_event.wait(2.0)
-                    continue
+                elif not policy_status.get("enabled"):
+                    if time.monotonic() - last_disarmed_notice > 30:
+                        self._status("remote access is locally disarmed; remote commands will be rejected")
+                        last_disarmed_notice = time.monotonic()
+
                 self._ensure_cloud_compatible()
                 if not self.device_token:
                     self._pair()
