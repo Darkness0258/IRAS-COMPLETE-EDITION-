@@ -104,10 +104,17 @@ def run(settings):
         orchestration_max_tasks = max(2, min(int(os.getenv("IRAS_ORCHESTRATION_MAX_TASKS", "12")), 20))
     except ValueError:
         orchestration_max_tasks = 12
+    try:
+        orchestration_provider_wait = max(0, min(int(os.getenv("IRAS_ORCHESTRATION_PROVIDER_WAIT_SECONDS", "900")), 1800))
+    except ValueError:
+        orchestration_provider_wait = 900
     add(
         "Multi-agent execution",
         orchestration_workers >= 1 and orchestration_max_tasks >= 2,
-        f"workers={orchestration_workers} max_tasks={orchestration_max_tasks} planner=enabled",
+        (
+            f"workers={orchestration_workers} max_tasks={orchestration_max_tasks} "
+            f"planner=enabled provider_wait={orchestration_provider_wait}s deterministic_file=enabled"
+        ),
     )
 
     mic = Listener.microphone_status()

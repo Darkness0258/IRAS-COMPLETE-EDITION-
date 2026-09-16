@@ -55,6 +55,10 @@ from iras.orchestration import (
     format_orchestration_result,
     parse_goal_command,
 )
+from iras.deterministic_orchestration import (
+    deterministic_exact_file_task,
+    exact_file_plan,
+)
 from iras.config import Settings
 from iras.voice.humanize import (
     speech_text,
@@ -342,13 +346,65 @@ def _remote_permission_scope(session: dict | None, permissions=None):
         permissions.always_confirm_critical = old_confirm
 
 
+def _deterministic_device_request(
+    context: dict[str, Any],
+    action: str,
+    arguments: dict[str, Any],
+    timeout: int,
+):
+    remote_session = context.get("remote_session")
+    required = int(action_permission(action, arguments))
+    if required > int(PermissionLevel.READ):
+        if not remote_session:
+            raise PermissionError(
+                "A live IRAS Remote session is required for deterministic state-changing device work."
+            )
+        if required > int(remote_session.get("max_permission") or 0):
+            raise PermissionError(
+                "The active IRAS Remote session does not permit this deterministic device action."
+            )
+    device_id = str((remote_session or {}).get("device_id") or "").strip() or None
+    session_id = str((remote_session or {}).get("session_id") or "").strip() or None
+    return runtime.device_bridge.request_and_wait(
+        action=action,
+        arguments=arguments,
+        device_id=device_id,
+        timeout=timeout,
+        remote_session_id=session_id,
+        permission_level=required if session_id else None,
+        requester_device=str(context.get("requester_device") or "cloud-agent")[:128],
+    )
+
+
 def _multitask_worker(prompt: str, context: dict[str, Any]) -> dict[str, Any]:
+    role = str(context.get("agent_role") or "general").strip().lower()
+    objective = str(context.get("objective") or "").strip()
+    deterministic = deterministic_exact_file_task(
+        role=role,
+        objective=objective,
+        dependency_results=context.get("dependency_results") or [],
+        request=lambda action, arguments, timeout: _deterministic_device_request(
+            context, action, arguments, timeout
+        ),
+    )
+    if deterministic is not None:
+        runtime.audit.record(
+            "orchestration_deterministic_fallback",
+            {
+                "orchestration_run_id": context.get("orchestration_run_id"),
+                "task_id": context.get("task_id"),
+                "agent_role": role,
+                "requester_device": str(context.get("requester_device") or "cloud-agent")[:128],
+                "action": (deterministic.get("metrics") or {}).get("action"),
+            },
+        )
+        return deterministic
+
     task_memory = TaskMemoryView(
         runtime.memory,
         seed_messages=context.get("seed_messages") or [],
     )
     role_directive = str(context.get("role_directive") or "").strip()
-    objective = str(context.get("objective") or "").strip()
     system_suffix = role_directive
     if objective:
         system_suffix += (
@@ -479,6 +535,14 @@ def _orchestration_planner(
     objective: str,
     context: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    deterministic_plan = exact_file_plan(objective)
+    if deterministic_plan is not None:
+        runtime.audit.record(
+            "orchestration_deterministic_plan",
+            {"objective": objective[:500], "task_count": len(deterministic_plan)},
+        )
+        return deterministic_plan
+
     task_memory = TaskMemoryView(
         runtime.memory,
         seed_messages=context.get("seed_messages") or [],

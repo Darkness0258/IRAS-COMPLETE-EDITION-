@@ -16,6 +16,11 @@ from iras import __version__
 from iras.models import PermissionLevel
 from iras.multitasking import MultitaskManager, TaskMemoryView, parse_parallel_command
 from iras.orchestration import OrchestrationManager, parse_goal_command
+from iras.deterministic_orchestration import (
+    deterministic_exact_file_task,
+    exact_file_plan,
+    parse_exact_file_objective,
+)
 from iras.remote_access import RemoteAccessPolicy, action_permission
 from iras.remote_protocol import REMOTE_PROTOCOL_VERSION, validate_cloud_health
 from iras.safety_runtime import EmergencyStop
@@ -52,8 +57,8 @@ class _Memory:
 
 
 def main() -> None:
-    print("=== IRAS v4.2 RC2 MULTI-AGENT INTEGRATED VALIDATION ===")
-    assert __version__ == "4.2.0-rc2"
+    print("=== IRAS v4.2 RC3 MULTI-AGENT INTEGRATED VALIDATION ===")
+    assert __version__ == "4.2.0-rc3"
     assert SCENE_GRAPH_VERSION == "3.7.0"
     assert REMOTE_PROTOCOL_VERSION == 1
     cloud_contract = validate_cloud_health({
@@ -198,6 +203,36 @@ def main() -> None:
     finally:
         provider_wait.close()
 
+    exact_objective = (
+        'Create D:\\Projects\\IRAS-complete\\multi-agent-test.txt containing exactly '
+        '"IRAS v4.2 multi-agent test". Do not modify any other file. Verify it.'
+    )
+    exact = parse_exact_file_objective(exact_objective)
+    assert exact and exact.content == "IRAS v4.2 multi-agent test"
+    plan = exact_file_plan(exact_objective)
+    assert plan and [item["role"] for item in plan] == ["coder", "tester", "reviewer"]
+    deterministic_calls = []
+
+    def deterministic_request(action, arguments, _timeout):
+        deterministic_calls.append(action)
+        if action == "write_text":
+            return {"bytes": len(arguments["content"].encode())}
+        if action == "read_text":
+            return {"content": "IRAS v4.2 multi-agent test"}
+        if action == "git_status":
+            return {"stdout": "## main\n?? multi-agent-test.txt\n"}
+        raise AssertionError(action)
+
+    for role in ("coder", "tester", "reviewer"):
+        result = deterministic_exact_file_task(
+            role=role,
+            objective=exact_objective,
+            dependency_results=[],
+            request=deterministic_request,
+        )
+        assert result and result["metrics"]["deterministic_fallback"] is True
+    assert deterministic_calls == ["write_text", "read_text", "git_status"]
+
     assert parse_parallel_command("/parallel one || two || three") == ["one", "two", "three"]
     assert parse_goal_command("/goal improve and verify IRAS") == "improve and verify IRAS"
 
@@ -225,6 +260,7 @@ def main() -> None:
     print("MULTI-AGENT DEPENDENCIES: True")
     print("MULTI-AGENT RETRIES: True")
     print("PROVIDER-AWARE COOLDOWN WAIT: True")
+    print("DETERMINISTIC EXACT-FILE FALLBACK: True")
     print("MULTI-AGENT PAUSE/RESUME/CANCEL: True")
     print("SPECIALIZED AGENT ROLES: planner/researcher/coder/tester/reviewer/coordinator")
     print("REMOTE CONTEXT DEVICE BINDING: True")

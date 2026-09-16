@@ -1,6 +1,6 @@
 # IRAS documentation
 
-This directory describes the current **v4.2 RC2** codebase. Git history is the archive for superseded implementation notes.
+This directory describes the current **v4.2 RC3** codebase. Git history is the archive for superseded implementation notes.
 
 Current documents:
 
@@ -25,3 +25,5 @@ Top-level `ARCHITECTURE.md` describes the integrated system architecture.
 - `V4_RC2_NOTES.md` — historical RC2 Render/Windows compatibility hardening notes.
 
 - `V4_2_RC1_NOTES.md` — multi-agent execution, task graphs, lifecycle controls, and acceptance contract.
+
+- `V4_2_RC3_NOTES.md` — provider-independent deterministic fallback for bounded exact-file orchestration and RC3 acceptance.

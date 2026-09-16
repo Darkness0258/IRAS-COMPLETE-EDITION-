@@ -247,7 +247,7 @@ class OrchestrationManager:
         if provider_wait_budget_seconds is None:
             provider_wait_budget_seconds = _env_int(
                 "IRAS_ORCHESTRATION_PROVIDER_WAIT_SECONDS",
-                300,
+                900,
                 0,
                 1800,
             )
