@@ -2,10 +2,11 @@ from __future__ import annotations
 
 """Remove validation/runtime cache artifacts without touching user state.
 
-v4 validation intentionally runs compileall and pytest, both of which can leave
-local caches in an existing development checkout. Those files are not release
-content and should not make the next validation run fail. Virtual environments,
-.git, node_modules, and all user state are left untouched.
+v4 validation intentionally runs compileall, pytest, and may run packaging or
+editable-install commands during development. Those operations can leave caches
+and packaging metadata in an existing checkout. They are generated artifacts, not
+release content, and should not make the next validation run fail. Virtual
+environments, .git, node_modules, and all user state are left untouched.
 """
 
 from pathlib import Path
@@ -16,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SKIP_DIRS = {".git", ".venv", "venv", "env", "node_modules"}
 CACHE_DIRS = {"__pycache__", ".pytest_cache"}
 CACHE_SUFFIXES = {".pyc", ".pyo"}
+PACKAGE_DIRS = {"build", "dist"}
+PACKAGE_SUFFIXES = (".egg-info",)
 
 
 def main() -> None:
@@ -29,7 +32,9 @@ def main() -> None:
         dirnames[:] = [name for name in dirnames if name not in SKIP_DIRS]
 
         for name in list(dirnames):
-            if name not in CACHE_DIRS:
+            is_cache = name in CACHE_DIRS
+            is_package_debris = name in PACKAGE_DIRS or name.endswith(PACKAGE_SUFFIXES)
+            if not (is_cache or is_package_debris):
                 continue
             target = current_path / name
             shutil.rmtree(target, ignore_errors=True)
@@ -47,7 +52,7 @@ def main() -> None:
                 pass
 
     print(
-        "IRAS validation cache cleanup:",
+        "IRAS validation artifact cleanup:",
         f"directories={removed_dirs}",
         f"files={removed_files}",
     )

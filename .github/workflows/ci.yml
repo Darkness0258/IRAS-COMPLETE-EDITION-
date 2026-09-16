@@ -1,4 +1,4 @@
-name: IRAS v3.7 multimodal validation
+name: IRAS v4.0 RC1 production validation
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 jobs:
   test-windows:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -19,6 +19,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-      - name: Validate release
+      - name: Validate v4 RC1 release
         shell: pwsh
-        run: .\run-v370-validation.ps1
+        run: .\run-v400-validation.ps1

@@ -35,7 +35,7 @@ Install the package first:
 .\install-v4-windows.ps1 -AllFeatures -InstallBrowser
 ```
 
-Deploy IRAS Cloud over HTTPS and configure a 32+ random-character `IRAS_API_TOKEN`. **Use the exact public URL shown by your cloud provider; example hostnames in this document are placeholders and will not work.** Before pairing a laptop, verify that `<your-real-url>/health` returns JSON containing `"ok": true`. The cloud deployment must run the same v4 code that contains the remote-device endpoints; an older stable backend may answer `/health` but cannot provide the v4 remote-control protocol. For full remote administration set the **server-side** ceiling:
+Deploy IRAS Cloud over HTTPS and configure a 32+ random-character `IRAS_API_TOKEN`. For full remote administration set the **server-side** ceiling:
 
 ```text
 IRAS_REMOTE_SESSION_MAX_PERMISSION_LEVEL=3

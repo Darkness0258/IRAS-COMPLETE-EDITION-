@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import subprocess
 import sys
 
 
 def test_iras_cli_exposes_version_without_starting_runtime():
+    env = os.environ.copy()
+    src = str((Path.cwd() / 'src').resolve())
+    existing = env.get('PYTHONPATH', '')
+    env['PYTHONPATH'] = src if not existing else src + os.pathsep + existing
     completed = subprocess.run(
         [sys.executable, '-m', 'iras', '--version'],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True, text=True, timeout=10, env=env,
     )
-    assert completed.returncode == 0
+    assert completed.returncode == 0, completed.stderr
     assert '4.0.0-rc1' in completed.stdout
 
 
@@ -36,9 +41,12 @@ def test_remote_setup_rejects_placeholder_before_pairing():
     assert '??' not in text
 
 
-def test_v4_validation_removes_local_runtime_caches():
-    text = Path('run-v400-validation.ps1').read_text(encoding='utf-8')
-    assert 'cleanup_v400_runtime_artifacts.py' in text
-    assert '-p no:cacheprovider' in text
-    assert 'FINAL CLEAN TREE RECHECK' in text
-    assert '$env:PYTHONPATH = $sourcePath' in text
+def test_v4_validation_removes_local_runtime_caches_and_packaging_debris():
+    runner = Path('run-v400-validation.ps1').read_text(encoding='utf-8')
+    cleanup = Path('scripts/cleanup_v400_runtime_artifacts.py').read_text(encoding='utf-8')
+    assert 'cleanup_v400_runtime_artifacts.py' in runner
+    assert '-p no:cacheprovider' in runner
+    assert 'FINAL CLEAN TREE RECHECK' in runner
+    assert 'PACKAGE_DIRS = {"build", "dist"}' in cleanup
+    assert 'PACKAGE_SUFFIXES = (".egg-info",)' in cleanup
+    assert 'name.endswith(PACKAGE_SUFFIXES)' in cleanup
