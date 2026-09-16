@@ -34,7 +34,7 @@
 <div class="app">
   <header>
     <div><h1>IRAS</h1><div class="sub">Online assistant · continuous voice</div></div>
-    <div style="display:flex;gap:8px"><button id="screen">Screen</button><button id="direct">Direct</button><button id="remote">Remote</button><button id="settings">Server</button></div>
+    <div style="display:flex;gap:8px"><button id="screen">Screen</button><button id="direct">Direct</button><button id="tasks">Tasks</button><button id="remote">Remote</button><button id="settings">Server</button></div>
   </header>
 
   <main id="chat"></main>
@@ -68,6 +68,16 @@
   <div class="row" style="margin-top:10px"><button id="refreshScreen">Refresh</button><button id="closeScreen">Close</button></div>
 </dialog>
 
+<dialog id="tasksDlg" style="max-width:720px">
+  <h3>Parallel tasks</h3>
+  <div class="sub" style="margin-bottom:10px">One task per line. IRAS runs independent tasks concurrently with isolated agent state; Windows device commands remain permissioned and safely queued.</div>
+  <textarea id="taskInput" placeholder="Research the latest framework changes
+Check the status of my Windows PC
+Summarize the current project state"></textarea>
+  <pre id="taskOut">Ready for 2–8 parallel tasks.</pre>
+  <div class="row"><button id="closeTasks">Close</button><button class="primary" id="runTasks">Run Parallel</button></div>
+</dialog>
+
 <dialog id="directDlg">
   <h3>Direct remote action</h3>
   <div class="sub" style="margin-bottom:10px">Model-independent control. Every action is still limited by the active remote session and the laptop's local policy.</div>
@@ -84,9 +94,10 @@ const $=s=>document.querySelector(s);
 const chat=$("#chat"),msg=$("#msg"),status=$("#status");
 const cfg=$("#cfg"),server=$("#server"),token=$("#token"),wake=$("#wake");
 const handsButton=$("#handsfree");
-const remoteButton=$("#remote"),screenButton=$("#screen"),directButton=$("#direct");
+const remoteButton=$("#remote"),screenButton=$("#screen"),directButton=$("#direct"),tasksButton=$("#tasks");
 const screenDlg=$("#screenDlg"),screenImg=$("#screenImg");
 const directDlg=$("#directDlg"),directAction=$("#directAction"),directArgs=$("#directArgs"),directOut=$("#directOut");
+const tasksDlg=$("#tasksDlg"),taskInput=$("#taskInput"),taskOut=$("#taskOut");
 
 let currentAudio=null,currentAudioUrl=null,currentChatAbort=null;
 let voiceQueue=[],voicePumping=false,voiceSession=0,voiceBuffer="",lastSpokenText="";
@@ -215,6 +226,60 @@ async function runDirectAction(){
   const result=await invokeRemoteAction(action,args,60);
   directOut.textContent=JSON.stringify(result,null,2);
   status.textContent="Direct remote action completed";
+}
+
+function renderMultitaskRun(run){
+  const lines=[`Run ${run.run_id||""} · ${run.completed_count||0}/${run.task_count||0} complete · ${run.state||""}`];
+  for(const task of run.tasks||[]){
+    const mark=task.state==="succeeded"?"✓":task.state==="failed"?"✗":task.state==="running"?"▶":"·";
+    lines.push(`\n${mark} Task ${task.index}: ${task.prompt}`);
+    if(task.result)lines.push(task.result);
+    if(task.error)lines.push(`Error: ${task.error}`);
+  }
+  return lines.join("\n");
+}
+
+async function runParallelTasks(){
+  const c=config();
+  if(!c.token){cfg.showModal();return}
+  const raw=taskInput.value.trim();
+  const tasks=(raw.includes("||")?raw.split("||"):raw.split(/\r?\n/))
+    .map(x=>x.trim()).filter(Boolean);
+  if(tasks.length<2)throw new Error("Enter at least two tasks, one per line.");
+  if(tasks.length>8)throw new Error("The web task panel accepts up to 8 tasks per run.");
+
+  const base=c.server||location.origin;
+  taskOut.textContent="Starting parallel workers...";
+  status.textContent=`Starting ${tasks.length} parallel tasks...`;
+  const response=await fetch(base+"/v1/multitask/runs",{
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      "Authorization":"Bearer "+c.token,
+      "X-Device-ID":"web",
+      ...remoteHeaders()
+    },
+    body:JSON.stringify({tasks})
+  });
+  if(!response.ok)throw new Error((await response.text())||("HTTP "+response.status));
+  let run=await response.json();
+  taskOut.textContent=renderMultitaskRun(run);
+
+  const deadline=Date.now()+10*60*1000;
+  while(Date.now()<deadline&&!['succeeded','partial_failure','cancelled'].includes(run.state)){
+    await new Promise(resolve=>setTimeout(resolve,650));
+    const r=await fetch(base+"/v1/multitask/runs/"+encodeURIComponent(run.run_id),{
+      headers:{"Authorization":"Bearer "+c.token}
+    });
+    if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
+    run=await r.json();
+    taskOut.textContent=renderMultitaskRun(run);
+    status.textContent=`Parallel tasks · ${run.completed_count}/${run.task_count} complete`;
+  }
+
+  add("You","Parallel tasks:\n"+tasks.map((t,i)=>`${i+1}. ${t}`).join("\n"));
+  add("IRAS",renderMultitaskRun(run));
+  status.textContent=run.state==="succeeded"?"Parallel run completed":"Parallel run finished with exceptions";
 }
 
 function saveConfig(){
@@ -902,6 +967,9 @@ $("#settings").onclick=()=>cfg.showModal();
 remoteButton.onclick=toggleRemote;
 screenButton.onclick=()=>refreshRemoteScreen().catch(e=>status.textContent="Screen error: "+e.message);
 directButton.onclick=()=>directDlg.showModal();
+tasksButton.onclick=()=>tasksDlg.showModal();
+$("#runTasks").onclick=()=>runParallelTasks().catch(e=>{taskOut.textContent="Error: "+e.message;status.textContent="Parallel task error"});
+$("#closeTasks").onclick=()=>tasksDlg.close();
 $("#runDirect").onclick=()=>runDirectAction().catch(e=>{directOut.textContent="Error: "+e.message;status.textContent="Direct remote error"});
 $("#closeDirect").onclick=()=>directDlg.close();
 $("#refreshScreen").onclick=()=>refreshRemoteScreen().catch(e=>status.textContent="Screen error: "+e.message);

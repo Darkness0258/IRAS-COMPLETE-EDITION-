@@ -82,6 +82,20 @@ def run(settings):
         settings.provider,
     )
 
+    try:
+        multitask_workers = max(1, min(int(os.getenv("IRAS_MULTITASK_WORKERS", "4")), 8))
+    except ValueError:
+        multitask_workers = 4
+    try:
+        multitask_max_tasks = max(2, min(int(os.getenv("IRAS_MULTITASK_MAX_TASKS", "8")), 12))
+    except ValueError:
+        multitask_max_tasks = 8
+    add(
+        "Multitasking",
+        multitask_workers >= 1 and multitask_max_tasks >= 2,
+        f"workers={multitask_workers} max_tasks={multitask_max_tasks}",
+    )
+
     mic = Listener.microphone_status()
     add("Microphone input", mic.get("available"), f"{mic.get('count', 0)} input device(s)")
 

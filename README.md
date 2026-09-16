@@ -1,8 +1,20 @@
-# IRAS 4.0.0 FINAL — Permissioned Personal Windows Agent
+# IRAS 4.1.0 RC1 — Parallel Personal Windows Agent
 
 IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, and a secure outbound bridge for controlling an authorized laptop from IRAS Cloud anywhere in the world.
 
-**Release status:** `4.0.0` is the promoted v4 production release. It incorporates the bounded-autonomy baseline, multimodal desktop grounding, secure outbound Windows control, and the hosted Render/Windows acceptance fixes validated during RC2.
+**Release status:** `4.1.0-rc1` adds bounded multitasking on top of the proven `4.0.0` production baseline. v4.0.0 remains the rollback-safe stable release while parallel execution is validated on hosted Render and the real Windows bridge.
+
+## v4.1 multitasking
+
+IRAS can now run independent jobs concurrently instead of forcing every request through one global agent turn. The hosted runtime uses isolated worker agents with request-local permission state and conversation snapshots, while durable facts, audit logs, paired devices, and learned app skills remain shared.
+
+- Open **Tasks** in the web client and enter 2–8 jobs, one per line.
+- Or use chat syntax: `/parallel task one || task two || task three`.
+- `IRAS_MULTITASK_WORKERS` controls concurrent workers (default `4`, bounded to `1..8`).
+- `IRAS_MULTITASK_MAX_TASKS` controls the per-run task cap (default `8`, bounded to `2..12`).
+- `IRAS_MULTITASK_WAIT_TIMEOUT` controls how long a chat `/parallel` turn waits for the group (default `300` seconds).
+
+Parallel workers do **not** bypass the existing safety model. Every worker gets its own permission engine; remote session identity and device targeting are carried in request-local context; emergency stop/local policy still gate the Windows executor. Windows GUI commands are naturally serialized by the device command queue, so independent cloud/network/research jobs can overlap without letting two workers fight over the same desktop action at the same instant.
 
 ## What v4 adds
 

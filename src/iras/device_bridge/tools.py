@@ -19,10 +19,11 @@ def make_tools(store):
     ):
         context = current_remote_command_context()
         remote_session_id = context.session_id or None
+        effective_device_id = device_id or context.device_id or None
         return store.request_and_wait(
             action=action,
             arguments=arguments,
-            device_id=device_id,
+            device_id=effective_device_id,
             timeout=timeout,
             remote_session_id=remote_session_id,
             permission_level=(

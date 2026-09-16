@@ -47,6 +47,19 @@ class CloudRuntime:
         self.app_skills = app_skills
 
 
+class CloudWorker:
+    def __init__(self, agent, registry, provider, personality):
+        self.agent = agent
+        self.registry = registry
+        self.provider = provider
+        self.personality = personality
+
+    def close(self) -> None:
+        close = getattr(self.provider, "close", None)
+        if callable(close):
+            close()
+
+
 def _env_bool(name: str, default: bool) -> bool:
     return os.getenv(name, str(default)).strip().lower() in {
         "1",
@@ -64,6 +77,85 @@ def _env_int(name: str, default: int, minimum: int) -> int:
         )
     except ValueError:
         return default
+
+
+def _build_provider(s: Settings):
+    if s.provider == "multi":
+        return build_multi_provider(s)
+    return OpenRouterProvider(
+        api_key=s.api_key,
+        model=s.model,
+        timeout=s.request_timeout,
+        base_url=s.base_url,
+        app_name=s.system_name,
+    )
+
+
+def _build_cloud_agent(
+    *,
+    s: Settings,
+    memory,
+    audit,
+    personality,
+    device_bridge,
+    app_skills,
+):
+    permissions = PermissionEngine(
+        auto_level=PermissionLevel.SAFE_ACTION,
+        approval_callback=None,
+        always_confirm_critical=True,
+        hard_cap=PermissionLevel.CRITICAL,
+    )
+    registry = ToolRegistry(permissions, audit)
+
+    for tool in [
+        *WEB,
+        *API_ACCESS,
+        *memory_tools(memory),
+        *personality_tools(personality),
+        *device_bridge_tools(device_bridge),
+        *device_skill_tools(device_bridge, app_skills),
+    ]:
+        registry.register(tool)
+
+    provider = _build_provider(s)
+    agent = IRASAgent(
+        provider,
+        registry,
+        memory,
+        audit,
+        s.max_agent_steps,
+        system_prompt=build_system_prompt(s.voice_profile),
+        personality=personality,
+        voice_profile=s.voice_profile,
+        context_fact_limit=_env_int("IRAS_CONTEXT_FACTS", 10, 0),
+        context_message_limit=_env_int("IRAS_CONTEXT_MESSAGES", 8, 2),
+        smart_tools=_env_bool("IRAS_SMART_TOOLS", True),
+        recovery_performance_store=RecoveryRoutePerformanceStore(
+            s.data_dir / "recovery_route_performance.json"
+        ),
+    )
+    return agent, registry, provider
+
+
+def build_cloud_worker(runtime: CloudRuntime, memory) -> CloudWorker:
+    # Parallel task workers get a frozen snapshot of the learned communication
+    # style. They may read durable facts and intentionally remember facts, but
+    # sibling tasks do not race to adapt personality state mid-run.
+    personality = AdaptivePersonality(
+        memory,
+        runtime.audit,
+        enabled=False,
+    )
+    agent, registry, provider = _build_cloud_agent(
+        s=runtime.settings,
+        memory=memory,
+        audit=runtime.audit,
+        personality=personality,
+        device_bridge=runtime.device_bridge,
+        app_skills=runtime.app_skills,
+    )
+    return CloudWorker(agent, registry, provider, personality)
 
 
 def build_cloud_runtime(settings: Settings | None = None) -> CloudRuntime:
@@ -108,61 +200,23 @@ def build_cloud_runtime(settings: Settings | None = None) -> CloudRuntime:
     else:
         os.environ.pop("IRAS_SKILL_DATABASE_URL", None)
 
-    # Cloud requests are safe-action only by default. A short-lived, strongly
-    # authenticated remote session may temporarily elevate this same engine
-    # inside the serialized agent lock; outside that context SYSTEM/CRITICAL
-    # requests still fail closed because there is no approval callback.
-    permissions = PermissionEngine(
-        auto_level=PermissionLevel.SAFE_ACTION,
-        approval_callback=None,
-        always_confirm_critical=True,
-        hard_cap=PermissionLevel.CRITICAL,
-    )
-
-    registry = ToolRegistry(permissions, audit)
-
     personality = AdaptivePersonality(
         memory,
         audit,
         enabled=s.adaptive_personality,
     )
 
-    for tool in [
-        *WEB,
-        *API_ACCESS,
-        *memory_tools(memory),
-        *personality_tools(personality),
-        *device_bridge_tools(device_bridge),
-        *device_skill_tools(device_bridge, app_skills),
-    ]:
-        registry.register(tool)
-
-    if s.provider == "multi":
-        provider = build_multi_provider(s)
-    else:
-        provider = OpenRouterProvider(
-            api_key=s.api_key,
-            model=s.model,
-            timeout=s.request_timeout,
-            base_url=s.base_url,
-            app_name=s.system_name,
-        )
-
-    agent = IRASAgent(
-        provider,
-        registry,
-        memory,
-        audit,
-        s.max_agent_steps,
-        system_prompt=build_system_prompt(s.voice_profile),
+    # Cloud requests are safe-action only by default. A short-lived, strongly
+    # authenticated remote session may temporarily elevate the request-local
+    # permission engine. Parallel workers receive independent registries so
+    # permission changes cannot bleed across tasks.
+    agent, registry, provider = _build_cloud_agent(
+        s=s,
+        memory=memory,
+        audit=audit,
         personality=personality,
-        voice_profile=s.voice_profile,
-        context_fact_limit=_env_int("IRAS_CONTEXT_FACTS", 10, 0),
-        context_message_limit=_env_int("IRAS_CONTEXT_MESSAGES", 8, 2),
-        smart_tools=_env_bool("IRAS_SMART_TOOLS", True),
-        recovery_performance_store=RecoveryRoutePerformanceStore(
-            s.data_dir / "recovery_route_performance.json"
-        ),
+        device_bridge=device_bridge,
+        app_skills=app_skills,
     )
 
     return CloudRuntime(

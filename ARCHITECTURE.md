@@ -273,3 +273,12 @@ IRAS does not bypass Windows authentication, lock screen, BitLocker, UAC secure
 desktop, or credential prompts. GUI control requires an interactive logged-in
 user session. This is a deliberate security boundary, not a missing remote-access
 feature.
+
+
+## v4.1 RC1 — Bounded Parallel Task Supervisor
+
+v4.1 keeps the v4.0 remote protocol and safety boundary unchanged while adding a cloud-side multitask supervisor. A bounded `ThreadPoolExecutor` runs independent IRAS worker agents concurrently. Each worker receives an isolated conversation snapshot, a fresh provider instance, and an independent `PermissionEngine`; durable facts, audit logging, the device registry, and learned app-skill storage are intentionally shared.
+
+Remote provenance is concurrency-safe. The active remote session ID, requester, and exact target device are carried with `ContextVar` state instead of mutating a global preferred-device field. This prevents two concurrent sessions from leaking target-device or permission state into one another.
+
+The web client exposes a **Tasks** panel backed by `/v1/multitask/runs`; explicit chat syntax `/parallel ... || ...` uses the same supervisor. Worker and per-run limits are bounded by environment configuration. Existing emergency stop, local remote policy, remote-session permission caps, DPAPI pairing, command TTLs, and audit traces remain authoritative. Device-side commands continue through the single authenticated command queue, which serializes Windows UI mutation even when several cloud workers are active.

@@ -41,6 +41,13 @@ from iras.remote_access import action_permission, level_for_mode
 from iras.device_bridge.remote_context import remote_command_context
 from iras.cloud_bootstrap import (
     build_cloud_runtime,
+    build_cloud_worker,
+)
+from iras.multitasking import (
+    MultitaskManager,
+    TaskMemoryView,
+    format_parallel_result,
+    parse_parallel_command,
 )
 from iras.config import Settings
 from iras.voice.humanize import (
@@ -128,6 +135,10 @@ class ChatOut(BaseModel):
     timing_ms: int
     model_ms: int
     tool_schema_count: int
+
+
+class MultitaskIn(BaseModel):
+    tasks: list[str] = Field(default_factory=list)
 
 
 class TTSIn(BaseModel):
@@ -278,26 +289,126 @@ def _authorize_remote_session(session_id: str | None, token: str | None) -> dict
 
 
 @contextmanager
-def _remote_permission_scope(session: dict | None):
-    permissions = runtime.registry.permissions
+def _remote_permission_scope(session: dict | None, permissions=None):
+    permissions = permissions or runtime.registry.permissions
     old_auto = permissions.auto_level
     old_cap = permissions.hard_cap
     old_confirm = permissions.always_confirm_critical
-    old_device = runtime.device_bridge.preferred_device_id
     try:
         if session:
-            level = PermissionLevel(max(0, min(int(session.get("max_permission") or 0), _remote_session_cap())))
+            level = PermissionLevel(
+                max(
+                    0,
+                    min(
+                        int(session.get("max_permission") or 0),
+                        _remote_session_cap(),
+                    ),
+                )
+            )
             permissions.auto_level = level
             permissions.hard_cap = level
             permissions.always_confirm_critical = False
-            runtime.device_bridge.preferred_device_id = str(session.get("device_id") or "") or None
+        # Device targeting is carried by ContextVar, not mutable global state.
+        # This is essential when two parallel tasks use different sessions.
         with remote_command_context(session):
             yield
     finally:
         permissions.auto_level = old_auto
         permissions.hard_cap = old_cap
         permissions.always_confirm_critical = old_confirm
-        runtime.device_bridge.preferred_device_id = old_device
+
+
+def _multitask_worker(prompt: str, context: dict[str, Any]) -> dict[str, Any]:
+    task_memory = TaskMemoryView(
+        runtime.memory,
+        seed_messages=context.get("seed_messages") or [],
+    )
+    worker = build_cloud_worker(runtime, task_memory)
+    remote_session = context.get("remote_session")
+    requester_device = str(context.get("requester_device") or "cloud-agent")[:128]
+    started = time.perf_counter()
+    try:
+        with _remote_permission_scope(
+            remote_session,
+            worker.registry.permissions,
+        ):
+            result = worker.agent.handle(prompt)
+        metrics = dict(worker.agent.last_metrics or {})
+        metrics.setdefault(
+            "total_ms",
+            int((time.perf_counter() - started) * 1000),
+        )
+
+        # Commit completed task turns only after the isolated worker finishes.
+        # Sibling workers keep their original context snapshot.
+        runtime.memory.add_message(
+            "user",
+            "[Parallel task] " + prompt,
+        )
+        runtime.memory.add_message(
+            "assistant",
+            "[Parallel task result] " + str(result),
+        )
+        runtime.audit.record(
+            "multitask_worker_complete",
+            {
+                "requester_device": requester_device,
+                "remote_session_id": (remote_session or {}).get("session_id"),
+                "prompt": prompt[:500],
+                "total_ms": int(metrics.get("total_ms") or 0),
+            },
+        )
+        return {
+            "result": str(result),
+            "metrics": metrics,
+        }
+    finally:
+        worker.close()
+
+
+multitask_manager = MultitaskManager(_multitask_worker)
+
+
+def _multitask_context(
+    *,
+    remote_session: dict | None,
+    requester_device: str,
+) -> dict[str, Any]:
+    try:
+        history_limit = max(2, int(os.getenv("IRAS_CONTEXT_MESSAGES", "8")))
+    except ValueError:
+        history_limit = 8
+    return {
+        "remote_session": dict(remote_session) if remote_session else None,
+        "requester_device": str(requester_device or "cloud-agent")[:128],
+        "seed_messages": runtime.memory.recent_messages(history_limit),
+    }
+
+
+def _start_multitask(
+    tasks: list[str],
+    *,
+    remote_session: dict | None,
+    requester_device: str,
+) -> dict[str, Any]:
+    run = multitask_manager.submit(
+        tasks,
+        context=_multitask_context(
+            remote_session=remote_session,
+            requester_device=requester_device,
+        ),
+        requester_device=requester_device,
+    )
+    runtime.audit.record(
+        "multitask_run_started",
+        {
+            "run_id": run["run_id"],
+            "task_count": run["task_count"],
+            "requester_device": requester_device,
+            "remote_session_id": (remote_session or {}).get("session_id"),
+        },
+    )
+    return run
 
 
 def _sse(
@@ -366,6 +477,11 @@ def readiness():
         "voice_profile": settings.voice_profile,
         "voice": profile.voice,
         "streaming": True,
+        "multitasking": {
+            "enabled": True,
+            "workers": multitask_manager.max_workers,
+            "max_tasks_per_run": multitask_manager.max_tasks_per_run,
+        },
         "latency_optimization": {
             "smart_tools": os.getenv("IRAS_SMART_TOOLS", "true"),
             "context_messages": os.getenv("IRAS_CONTEXT_MESSAGES", "8"),
@@ -374,6 +490,58 @@ def readiness():
         },
         "uptime_seconds": int(time.time() - started_at),
     }
+
+
+@app.post("/v1/multitask/runs")
+def create_multitask_run(
+    body: MultitaskIn,
+    authorization: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None),
+    x_iras_remote_session_id: str | None = Header(
+        default=None, alias="X-IRAS-Remote-Session-ID"
+    ),
+    x_iras_remote_token: str | None = Header(
+        default=None, alias="X-IRAS-Remote-Token"
+    ),
+):
+    _authorized(authorization)
+    remote_session = _authorize_remote_session(
+        x_iras_remote_session_id,
+        x_iras_remote_token,
+    )
+    requester = str(x_device_id or "web")[:128]
+    try:
+        return _start_multitask(
+            body.tasks,
+            remote_session=remote_session,
+            requester_device=requester,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/v1/multitask/runs/{run_id}")
+def get_multitask_run(
+    run_id: str,
+    authorization: str | None = Header(default=None),
+):
+    _authorized(authorization)
+    run = multitask_manager.get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Multitask run not found.")
+    return run
+
+
+@app.delete("/v1/multitask/runs/{run_id}")
+def cancel_multitask_run(
+    run_id: str,
+    authorization: str | None = Header(default=None),
+):
+    _authorized(authorization)
+    run = multitask_manager.cancel(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Multitask run not found.")
+    return run
 
 
 @app.post(
@@ -421,9 +589,35 @@ def chat(
     )
 
     try:
-        with agent_lock:
-            with _remote_permission_scope(remote_session):
-                response = runtime.agent.handle(body.message)
+        parallel_tasks = parse_parallel_command(body.message)
+        if parallel_tasks:
+            run = _start_multitask(
+                parallel_tasks,
+                remote_session=remote_session,
+                requester_device=device_id,
+            )
+            run = multitask_manager.wait(
+                run["run_id"],
+                timeout=float(os.getenv("IRAS_MULTITASK_WAIT_TIMEOUT", "300")),
+            )
+            response = format_parallel_result(run)
+            metrics = {
+                "model": "parallel-task-supervisor",
+                "total_ms": max(
+                    [
+                        int((task.get("metrics") or {}).get("total_ms") or 0)
+                        for task in run.get("tasks") or []
+                    ]
+                    or [0]
+                ),
+                "model_ms": 0,
+                "tool_schema_count": 0,
+            }
+        else:
+            with agent_lock:
+                with _remote_permission_scope(remote_session):
+                    response = runtime.agent.handle(body.message)
+            metrics = runtime.agent.last_metrics or {}
 
     except Exception as exc:
         print(
@@ -463,12 +657,6 @@ def chat(
                 "complete this request."
             ),
         ) from exc
-
-    metrics = (
-        runtime.agent
-        .last_metrics
-        or {}
-    )
 
     return ChatOut(
         response=response,
@@ -534,10 +722,11 @@ def chat_stream(
         or "unknown"
     )[:128]
 
+    parallel_tasks = parse_parallel_command(body.message)
     direct_stream = (
-        runtime.agent.can_stream(
-            body.message
-        )
+        False
+        if parallel_tasks
+        else runtime.agent.can_stream(body.message)
     )
 
     runtime.audit.record(
@@ -569,6 +758,82 @@ def chat_stream(
         acquired = False
 
         try:
+            if parallel_tasks:
+                run = _start_multitask(
+                    parallel_tasks,
+                    remote_session=remote_session,
+                    requester_device=device_id,
+                )
+                yield _sse(
+                    "queued",
+                    {
+                        "request_id": request_id,
+                        "message": (
+                            f"IRAS started {len(parallel_tasks)} parallel tasks."
+                        ),
+                        "run_id": run["run_id"],
+                        "waited_ms": 0,
+                    },
+                )
+                wait_started = time.perf_counter()
+                timeout = max(
+                    30.0,
+                    min(
+                        float(os.getenv("IRAS_MULTITASK_WAIT_TIMEOUT", "300")),
+                        600.0,
+                    ),
+                )
+                deadline = time.monotonic() + timeout
+                last_completed = -1
+                while time.monotonic() < deadline:
+                    snapshot = multitask_manager.get(run["run_id"])
+                    if snapshot is None:
+                        raise RuntimeError("Multitask run disappeared.")
+                    completed = int(snapshot.get("completed_count") or 0)
+                    if completed != last_completed:
+                        last_completed = completed
+                        yield _sse(
+                            "queued",
+                            {
+                                "request_id": request_id,
+                                "message": (
+                                    f"Parallel progress: {completed}/{snapshot.get('task_count', 0)} tasks complete."
+                                ),
+                                "run_id": run["run_id"],
+                                "waited_ms": int(
+                                    (time.perf_counter() - wait_started) * 1000
+                                ),
+                            },
+                        )
+                    if snapshot.get("state") in {
+                        "succeeded",
+                        "partial_failure",
+                        "cancelled",
+                    }:
+                        run = snapshot
+                        break
+                    time.sleep(0.20)
+                else:
+                    run = multitask_manager.get(run["run_id"]) or run
+
+                text = format_parallel_result(run)
+                yield _sse("token", {"text": text})
+                total_ms = int((time.perf_counter() - wait_started) * 1000)
+                yield _sse(
+                    "done",
+                    {
+                        "request_id": request_id,
+                        "model": "parallel-task-supervisor",
+                        "timing_ms": total_ms,
+                        "model_ms": 0,
+                        "first_token_ms": total_ms,
+                        "tool_schema_count": 0,
+                        "streamed": False,
+                        "queue_wait_ms": 0,
+                        "parallel_run_id": run.get("run_id"),
+                    },
+                )
+                return
             try:
                 queue_wait = float(
                     os.getenv(
