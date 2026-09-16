@@ -24,12 +24,17 @@ ROLE_DIRECTIVES = {
     ),
     "researcher": (
         "You are the Research Agent in an IRAS multi-agent run. Gather and verify the information "
-        "needed for this task. Prefer evidence and precise findings. Do not perform unrelated state-changing actions."
+        "needed for this task. Prefer authoritative sources, use web_search to discover sources and http_get "
+        "to extract readable page text. Do not use browser/UI automation for ordinary web research unless the user "
+        "explicitly asked to manipulate the browser. Cite source URLs in your result and do not perform unrelated "
+        "state-changing actions."
     ),
     "coder": (
         "You are the Coder Agent in an IRAS multi-agent run. Implement the requested change using the available "
-        "authorized tools. Preserve existing behavior unless the task explicitly changes it. Inspect before editing, "
-        "make bounded changes, and report exactly what changed."
+        "authorized tools. Preserve existing behavior unless the task explicitly changes it. Inspect source with "
+        "device_read_text before editing, prefer device_replace_text for exact bounded patches, use device_write_text "
+        "only for new/small files or when a full replacement is explicitly justified, then inspect git status and run "
+        "relevant tests. Never use GUI editors when a bounded file tool can perform the change."
     ),
     "tester": (
         "You are the Tester Agent in an IRAS multi-agent run. Validate the supplied work with the strongest available "

@@ -100,6 +100,10 @@ class IRASAgent:
         self.smart_tools = bool(
             smart_tools
         )
+        # Optional request-local/specialized-agent schema cap. Cloud
+        # orchestration workers use this to expose only the bounded tools
+        # appropriate for their role (researcher/coder/tester/reviewer).
+        self.tool_allowlist = None
         self.last_metrics = {}
         self._last_device_action = None
         self.recovery_performance_store = recovery_performance_store
@@ -757,6 +761,14 @@ class IRASAgent:
         self,
         user_text: str,
     ):
+        tool_allowlist = getattr(self, "tool_allowlist", None)
+        if tool_allowlist is not None:
+            return sorted({
+                str(name).strip()
+                for name in tool_allowlist
+                if str(name).strip()
+            })
+
         # Local desktop/CLI runtimes historically expose the complete tool set
         # (smart_tools=False). Device/computer-use turns are the exception: they
         # must still be narrowed to the bounded device contract so the model
@@ -880,6 +892,22 @@ class IRASAgent:
                     "api_request",
                 }
             )
+
+        if self._contains_any(
+            q,
+            (
+                "research ",
+                "look up ",
+                "search the web",
+                "search online",
+                "latest ",
+                "current documentation",
+                "official documentation",
+                "what's new",
+                "whats new",
+            ),
+        ):
+            selected.update({"web_search", "http_get"})
 
         selected.update(
             self._device_tool_names(

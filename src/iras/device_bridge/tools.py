@@ -396,6 +396,13 @@ def make_tools(store):
     def device_write_text(path, content, append=False, device_id=None):
         return request("write_text", {"path": path, "content": content, "append": append}, device_id)
 
+    def device_replace_text(path, old_text, new_text, count=1, device_id=None):
+        return request(
+            "replace_text",
+            {"path": path, "old_text": old_text, "new_text": new_text, "count": count},
+            device_id,
+        )
+
     def device_make_directory(path, device_id=None):
         return request("make_directory", {"path": path}, device_id)
 
@@ -1173,6 +1180,27 @@ def make_tools(store):
             "Create, overwrite, or append a UTF-8 text file inside the laptop's explicitly allowed roots.",
             {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}, "append": {"type": "boolean"}, **optional_device}, "required": ["path", "content"]},
             device_write_text,
+            PermissionLevel.SYSTEM_ACTION,
+        ),
+        Tool(
+            "device_replace_text",
+            (
+                "Replace an exact expected snippet in a UTF-8 text/code file on the paired PC. "
+                "The file must be inside an allowed root; replacement count is bounded. "
+                "Prefer this over rewriting an entire existing source file."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "old_text": {"type": "string"},
+                    "new_text": {"type": "string"},
+                    "count": {"type": "integer", "minimum": 1, "maximum": 20},
+                    **optional_device,
+                },
+                "required": ["path", "old_text", "new_text"],
+            },
+            device_replace_text,
             PermissionLevel.SYSTEM_ACTION,
         ),
         Tool(

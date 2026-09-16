@@ -68,7 +68,7 @@ def test_tasks_and_chat_prompt_for_remote_before_exact_file_write():
     assert "await ensureRemoteForDeterministicWrite(text)" in web
     assert '...remoteHeaders()' in web
     assert "if(data.orchestration_run_id)activeGoalRunId=data.orchestration_run_id" in web
-    assert "This goal changes Windows state and requires a live IRAS Remote session" in cloud
+    assert "This goal may change Windows/project state and requires a live IRAS Remote session" in cloud
 
 
 def test_doctor_reports_autonomous_execution_routing():

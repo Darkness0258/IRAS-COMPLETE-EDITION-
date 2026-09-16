@@ -312,3 +312,13 @@ writes are preflighted in both chat and the Tasks panel, and the cloud API refus
 to start such state-changing work without a live Remote session. Local laptop
 policy, allowed roots, permission classification, and emergency stop remain the
 final execution boundary.
+
+## v4.2 RC6 — Specialized Agent Execution Hardening
+
+RC6 makes the autonomous execution modes operationally asymmetric on purpose: each multi-agent role receives only the schemas needed for its job. Researcher workers receive text-first public-web retrieval (`web_search` + readable `http_get`) rather than generic browser/UI automation. Coder workers receive project inspection, bounded `device_replace_text`, new-file `device_write_text`, git status, and bounded test execution; arbitrary shell and destructive file operations are not part of the role capability set.
+
+`device_replace_text` is implemented below the model layer in `DeviceExecutor`. It resolves the target through the configured allowed roots, rejects files larger than 2 MB, requires a non-empty exact old snippet, bounds snippet size and replacement count, and fails if the expected text is not present. It is classified as a `SYSTEM_ACTION`, so the authenticated Remote session, server permission cap, laptop-local RemoteAccessPolicy, command queue, and EmergencyStop remain authoritative.
+
+Research web retrieval also remains fail-closed against SSRF: public HTTP URLs are resolved and checked before each request, and every redirect target is revalidated before it is followed. HTML is converted to readable text in-process so a Researcher can inspect documentation without opening or visually scraping Chrome.
+
+When the Planner provider is unavailable, implementation-oriented goals now use a local fallback DAG that preserves `Inspect -> Coder -> Tester -> Reviewer -> Coordinator` dependencies instead of collapsing the entire objective into one general worker. Orchestration workers have a separate bounded tool-step budget (`IRAS_ORCHESTRATION_AGENT_MAX_STEPS`, default 14, maximum 24); ordinary chat keeps its existing conservative budget.

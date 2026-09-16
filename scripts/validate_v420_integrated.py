@@ -22,7 +22,7 @@ from iras.deterministic_orchestration import (
     exact_file_plan,
     parse_exact_file_objective,
 )
-from iras.execution_router import decide_execution, parallel_graph
+from iras.execution_router import decide_execution, fallback_orchestration_graph, parallel_graph
 from iras.remote_access import RemoteAccessPolicy, action_permission
 from iras.remote_protocol import REMOTE_PROTOCOL_VERSION, validate_cloud_health
 from iras.safety_runtime import EmergencyStop
@@ -32,6 +32,7 @@ from iras.device_bridge.store import DeviceBridgeStore
 from iras.device_bridge.whatsapp_workflow import _full_vision_fallback_enabled
 from iras.vision.omniparser_runtime import OmniParserRuntimeManager
 from iras.vision.scene_graph import SCENE_GRAPH_VERSION
+from iras.tools.web import html_to_text
 
 
 class _Memory:
@@ -59,8 +60,8 @@ class _Memory:
 
 
 def main() -> None:
-    print("=== IRAS v4.2 RC5 MULTI-AGENT INTEGRATED VALIDATION ===")
-    assert __version__ == "4.2.0-rc5"
+    print("=== IRAS v4.2 RC6 MULTI-AGENT INTEGRATED VALIDATION ===")
+    assert __version__ == "4.2.0-rc6"
     assert SCENE_GRAPH_VERSION == "3.7.0"
     assert REMOTE_PROTOCOL_VERSION == 1
     cloud_contract = validate_cloud_health({
@@ -248,6 +249,13 @@ def main() -> None:
         "Improve voice latency, inspect the code, implement the safest fix, run tests, review regressions, and report the final result"
     )
     assert auto_graph.mode == "orchestrate"
+    fallback = fallback_orchestration_graph(
+        "Inspect IRAS, implement one safe improvement, run tests, review regressions, and report."
+    )
+    assert [item["role"] for item in fallback] == ["reviewer", "coder", "tester", "reviewer"]
+    readable = html_to_text("<html><script>bad()</script><h1>Python 3.14</h1><p>Readable docs</p></html>")
+    assert "Python 3.14" in readable and "Readable docs" in readable and "bad()" not in readable
+    assert action_permission("replace_text") == PermissionLevel.SYSTEM_ACTION
 
     sample = "v4.2-secret-roundtrip"
     protected = protect_secret(sample)
@@ -295,6 +303,10 @@ def main() -> None:
     print("DIRECT DETERMINISTIC PARITY: True")
     print("AUTONOMOUS CHAT ROUTING: True")
     print("AUTONOMOUS PARALLEL GRAPH: True")
+    print("RESEARCH TEXT RETRIEVAL: True")
+    print("BOUNDED CODE PATCH TOOL: True")
+    print("FALLBACK ENGINEERING DAG: True")
+    print("SPECIALIZED AGENT STEP BUDGET: True")
     print("MULTI-AGENT PAUSE/RESUME/CANCEL: True")
     print("SPECIALIZED AGENT ROLES: planner/researcher/coder/tester/reviewer/coordinator")
     print("REMOTE CONTEXT DEVICE BINDING: True")

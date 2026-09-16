@@ -108,12 +108,17 @@ def run(settings):
         orchestration_provider_wait = max(0, min(int(os.getenv("IRAS_ORCHESTRATION_PROVIDER_WAIT_SECONDS", "900")), 1800))
     except ValueError:
         orchestration_provider_wait = 900
+    try:
+        orchestration_agent_steps = max(8, min(int(os.getenv("IRAS_ORCHESTRATION_AGENT_MAX_STEPS", "14")), 24))
+    except ValueError:
+        orchestration_agent_steps = 14
     add(
         "Multi-agent execution",
         orchestration_workers >= 1 and orchestration_max_tasks >= 2,
         (
             f"workers={orchestration_workers} max_tasks={orchestration_max_tasks} "
-            f"planner=enabled provider_wait={orchestration_provider_wait}s deterministic_file=enabled"
+            f"planner=enabled provider_wait={orchestration_provider_wait}s agent_steps={orchestration_agent_steps} "
+            f"research_text=enabled bounded_patch=enabled deterministic_file=enabled"
         ),
     )
 

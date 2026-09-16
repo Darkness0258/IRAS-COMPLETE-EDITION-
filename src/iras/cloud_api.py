@@ -63,6 +63,8 @@ from iras.deterministic_orchestration import (
 )
 from iras.execution_router import (
     decide_execution,
+    fallback_orchestration_graph,
+    needs_remote_state_change,
     parallel_graph,
 )
 from iras.config import Settings
@@ -440,6 +442,32 @@ def _direct_deterministic_response(
     }
 
 
+_ORCHESTRATION_ROLE_TOOLS = {
+    "researcher": {"web_search", "http_get", "api_request", "device_read_text", "device_git_status"},
+    "coder": {
+        "device_computer_status", "device_list_files", "device_read_text", "device_git_status",
+        "device_write_text", "device_replace_text", "device_run_tests",
+    },
+    "tester": {
+        "device_computer_status", "device_system_info", "device_list_files", "device_read_text",
+        "device_git_status", "device_run_tests", "http_get",
+    },
+    "reviewer": {
+        "device_computer_status", "device_list_files", "device_read_text", "device_git_status",
+        "device_run_tests", "web_search", "http_get",
+    },
+    "coordinator": set(),
+}
+
+
+def _orchestration_agent_step_budget() -> int:
+    try:
+        value = int(os.getenv("IRAS_ORCHESTRATION_AGENT_MAX_STEPS", "14"))
+    except ValueError:
+        value = 14
+    return max(8, min(value, 24))
+
+
 def _multitask_worker(prompt: str, context: dict[str, Any]) -> dict[str, Any]:
     role = str(context.get("agent_role") or "general").strip().lower()
     objective = str(context.get("objective") or "").strip()
@@ -481,6 +509,12 @@ def _multitask_worker(prompt: str, context: dict[str, Any]) -> dict[str, Any]:
         task_memory,
         system_prompt_suffix=system_suffix,
     )
+    orchestration_run_id = str(context.get("orchestration_run_id") or "")
+    if orchestration_run_id:
+        worker.agent.max_steps = max(worker.agent.max_steps, _orchestration_agent_step_budget())
+        role_tools = _ORCHESTRATION_ROLE_TOOLS.get(role)
+        if role_tools is not None:
+            worker.agent.tool_allowlist = set(role_tools)
     remote_session = context.get("remote_session")
     requester_device = str(context.get("requester_device") or "cloud-agent")[:128]
     dependency_results = context.get("dependency_results") or []
@@ -507,7 +541,6 @@ def _multitask_worker(prompt: str, context: dict[str, Any]) -> dict[str, Any]:
             int((time.perf_counter() - started) * 1000),
         )
 
-        orchestration_run_id = str(context.get("orchestration_run_id") or "")
         agent_role = str(context.get("agent_role") or "general")
         if not orchestration_run_id:
             # Classic /parallel tasks become durable conversation turns.
@@ -567,32 +600,7 @@ def _extract_json_object(text: str) -> dict[str, Any]:
 
 
 def _orchestration_fallback_plan(objective: str) -> list[dict[str, Any]]:
-    return [
-        {
-            "id": "execute-objective",
-            "title": "Execute objective",
-            "prompt": (
-                "Complete the objective in a bounded, evidence-based way. Inspect relevant state first, "
-                "perform only authorized actions, and report the concrete result. Objective: " + objective
-            ),
-            "role": "general",
-            "priority": 80,
-            "depends_on": [],
-            "max_retries": 1,
-        },
-        {
-            "id": "verify-outcome",
-            "title": "Verify outcome",
-            "prompt": (
-                "Independently verify whether the objective was actually completed. Run safe checks where possible "
-                "and report any failure or unresolved risk. Objective: " + objective
-            ),
-            "role": "tester",
-            "priority": 70,
-            "depends_on": ["execute-objective"],
-            "max_retries": 1,
-        },
-    ]
+    return [dict(item) for item in fallback_orchestration_graph(objective)]
 
 
 def _orchestration_planner(
@@ -914,11 +922,11 @@ def create_orchestration_run(
         x_iras_remote_token,
     )
     requester = str(x_device_id or "web")[:128]
-    if exact_file_plan(body.objective) is not None and not remote_session:
+    if needs_remote_state_change(body.objective) and not remote_session:
         raise HTTPException(
             status_code=403,
             detail=(
-                "This goal changes Windows state and requires a live IRAS Remote session. "
+                "This goal may change Windows/project state and requires a live IRAS Remote session. "
                 "Enable Remote, authorize the session, then start the goal again."
             ),
         )
@@ -1111,6 +1119,22 @@ def chat(
                     ]
                     or [0]
                 ),
+                "model_ms": 0,
+                "tool_schema_count": 0,
+            }
+        elif (
+            decision is not None
+            and decision.mode == "orchestrate"
+            and needs_remote_state_change(decision.objective or body.message)
+            and not remote_session
+        ):
+            response = (
+                "I chose multi-agent execution, but this objective may modify Windows/project state. "
+                "Enable a live IRAS Remote session, then send the request again."
+            )
+            metrics = {
+                "model": "autonomous-execution-safety-gate",
+                "total_ms": 0,
                 "model_ms": 0,
                 "tool_schema_count": 0,
             }
@@ -1444,6 +1468,32 @@ def chat_stream(
                         "streamed": False,
                         "queue_wait_ms": 0,
                         "parallel_run_id": run.get("run_id"),
+                    },
+                )
+                return
+            if (
+                decision is not None
+                and decision.mode == "orchestrate"
+                and needs_remote_state_change(decision.objective or body.message)
+                and not remote_session
+            ):
+                text = (
+                    "I chose multi-agent execution, but this objective may modify Windows/project state. "
+                    "Enable a live IRAS Remote session, then send the request again."
+                )
+                yield _sse("token", {"text": text})
+                yield _sse(
+                    "done",
+                    {
+                        "request_id": request_id,
+                        "model": "autonomous-execution-safety-gate",
+                        "timing_ms": 0,
+                        "model_ms": 0,
+                        "first_token_ms": 0,
+                        "tool_schema_count": 0,
+                        "streamed": False,
+                        "queue_wait_ms": 0,
+                        "execution_mode": "authorization_required",
                     },
                 )
                 return

@@ -62,6 +62,7 @@ DEFAULT_CAPABILITIES = [
     "list_processes",
     "kill_process",
     "write_text",
+    "replace_text",
     "make_directory",
     "copy_path",
     "move_path",
@@ -248,6 +249,7 @@ class DeviceExecutor:
             "list_processes": self.list_processes,
             "kill_process": self.kill_process,
             "write_text": self.write_text,
+            "replace_text": self.replace_text,
             "make_directory": self.make_directory,
             "copy_path": self.copy_path,
             "move_path": self.move_path,
@@ -974,6 +976,47 @@ class DeviceExecutor:
         with target.open(mode, encoding="utf-8") as handle:
             handle.write(str(content))
         return {"path": str(target), "bytes": target.stat().st_size, "append": bool(append)}
+
+    def replace_text(
+        self,
+        path: str,
+        old_text: str,
+        new_text: str,
+        count: int = 1,
+    ):
+        """Replace an exact snippet inside an allowed text file.
+
+        This is intentionally narrower than arbitrary shell/editor control: the
+        expected old text must be present, replacement count is bounded, and the
+        file stays inside IRAS_BRIDGE_ROOTS.
+        """
+        target = self._path(path)
+        if not target.is_file():
+            raise FileNotFoundError(target)
+        if target.stat().st_size > 2_000_000:
+            raise ValueError("replace_text refuses files larger than 2 MB.")
+        old_text = str(old_text or "")
+        new_text = str(new_text or "")
+        if not old_text:
+            raise ValueError("old_text must not be empty.")
+        if len(old_text) > 50_000 or len(new_text) > 50_000:
+            raise ValueError("replace_text snippets are limited to 50,000 characters.")
+        count = max(1, min(int(count), 20))
+        original = target.read_text(encoding="utf-8", errors="strict")
+        available = original.count(old_text)
+        if available < count:
+            raise ValueError(
+                f"Expected snippet occurs {available} time(s); need at least {count}."
+            )
+        updated = original.replace(old_text, new_text, count)
+        if updated == original:
+            raise RuntimeError("replace_text made no change.")
+        target.write_text(updated, encoding="utf-8")
+        return {
+            "path": str(target),
+            "replacements": count,
+            "bytes": target.stat().st_size,
+        }
 
     def make_directory(self, path: str):
         target = self._path(path, must_exist=False)

@@ -63,6 +63,7 @@ SYSTEM_ACTIONS = {
     "media_control",
     "run_tests",
     "write_text",
+    "replace_text",
     "make_directory",
     "copy_path",
     "move_path",

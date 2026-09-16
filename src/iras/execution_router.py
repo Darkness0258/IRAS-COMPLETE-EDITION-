@@ -74,6 +74,11 @@ _DEPENDENT_PRONOUN_RE = re.compile(
     r"\b(it|that|this|them|those|these|the result|the output|the fix|the change|the implementation|the code|what you found|findings)\b",
     re.IGNORECASE,
 )
+
+_INFORMATIONAL_REQUEST_RE = re.compile(
+    r"^(?:how\b|what\b|why\b|explain\b|tell me about\b|show me how\b|teach me\b|can you explain\b)",
+    re.IGNORECASE,
+)
 _PARALLEL_CUE_RE = re.compile(
     r"\b(in parallel|simultaneously|at the same time|independent tasks?|do these tasks?|all three|all four|both tasks?)\b",
     re.IGNORECASE,
@@ -234,3 +239,107 @@ def parallel_graph(tasks: tuple[str, ...] | list[str]) -> list[dict[str, object]
             }
         )
     return graph
+
+
+def needs_remote_state_change(text: str) -> bool:
+    """Conservative local preflight for objectives likely to mutate user state."""
+    cleaned = _clean(text)
+    if not cleaned or _INFORMATIONAL_REQUEST_RE.search(cleaned):
+        return False
+    if parse_exact_file_objective(cleaned) is not None:
+        return True
+    return bool(_IMPLEMENTATION_RE.search(cleaned))
+
+
+def fallback_orchestration_graph(objective: str) -> list[dict[str, object]]:
+    """Build a useful local DAG when the Planner model is unavailable.
+
+    Implementation-oriented requests retain an inspect -> code -> test -> review
+    structure instead of collapsing into one over-broad general worker. This
+    planner is deliberately local and conservative; the workers still use the
+    normal permission/session boundaries for any external action.
+    """
+    cleaned = _clean(objective)
+    implementation = bool(_IMPLEMENTATION_RE.search(cleaned))
+    validation = bool(_VALIDATION_RE.search(cleaned))
+    if implementation:
+        graph: list[dict[str, object]] = [
+            {
+                "id": "inspect-current",
+                "title": "Inspect current implementation",
+                "prompt": (
+                    "Inspect the relevant project state and identify one concrete, bounded, safe change that "
+                    "advances the objective. Read only what is needed and report exact files/evidence. Objective: "
+                    + cleaned
+                ),
+                "role": "reviewer",
+                "priority": 90,
+                "depends_on": [],
+                "max_retries": 1,
+            },
+            {
+                "id": "implement-change",
+                "title": "Implement bounded change",
+                "prompt": (
+                    "Using the upstream inspection evidence, implement the smallest safe change that satisfies the "
+                    "objective. Inspect before editing, prefer exact text replacement for existing files, and report "
+                    "every changed file. Objective: " + cleaned
+                ),
+                "role": "coder",
+                "priority": 85,
+                "depends_on": ["inspect-current"],
+                "max_retries": 1,
+            },
+            {
+                "id": "test-change",
+                "title": "Test implemented change",
+                "prompt": (
+                    "Run the strongest relevant bounded tests for the implemented change. Report pass/fail evidence "
+                    "and concrete failures. Objective: " + cleaned
+                ),
+                "role": "tester",
+                "priority": 80,
+                "depends_on": ["implement-change"],
+                "max_retries": 1,
+            },
+            {
+                "id": "review-change",
+                "title": "Review change and regressions",
+                "prompt": (
+                    "Review the implemented change, git working tree, test evidence, safety, and regression risk. "
+                    "Distinguish verified facts from unresolved issues. Objective: " + cleaned
+                ),
+                "role": "reviewer",
+                "priority": 75,
+                "depends_on": ["test-change"],
+                "max_retries": 1,
+            },
+        ]
+        return graph
+
+    return [
+        {
+            "id": "execute-objective",
+            "title": "Execute objective",
+            "prompt": (
+                "Complete the objective in a bounded, evidence-based way. Inspect relevant state first, perform only "
+                "authorized actions, and report the concrete result. Objective: " + cleaned
+            ),
+            "role": "general",
+            "priority": 80,
+            "depends_on": [],
+            "max_retries": 1,
+        },
+        {
+            "id": "verify-outcome",
+            "title": "Verify outcome",
+            "prompt": (
+                "Independently verify whether the objective was actually completed. Run safe checks where possible "
+                "and report any failure or unresolved risk. Objective: " + cleaned
+            ),
+            "role": "tester" if validation else "reviewer",
+            "priority": 70,
+            "depends_on": ["execute-objective"],
+            "max_retries": 1,
+        },
+    ]

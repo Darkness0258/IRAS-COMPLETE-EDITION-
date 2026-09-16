@@ -1,8 +1,8 @@
-# IRAS 4.2.0 RC5 — Autonomous Chat Execution Router
+# IRAS 4.2.0 RC6 — Specialized Autonomous Agents
 
 IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, secure worldwide Windows control, parallel multitasking, and dependency-aware multi-agent execution.
 
-**Release status:** `4.2.0-rc5` makes execution-mode selection automatic from normal chat. IRAS locally chooses direct, provider-independent deterministic, parallel, or dependency-aware multi-agent execution without requiring `/parallel` or `/goal`. Explicit commands remain available as overrides. The v4 remote protocol remains `1`.
+**Release status:** `4.2.0-rc6` keeps automatic Direct/Deterministic/Parallel/Multi-agent routing and hardens the specialized workers: Researcher uses text-first public-web retrieval, Coder gets bounded exact source patching, Planner fallback preserves engineering phases, and orchestration workers get a dedicated bounded step budget. Explicit commands remain available as overrides. The v4 remote protocol remains `1`.
 
 ## v4.2 autonomous chat execution
 
@@ -17,6 +17,14 @@ The router is conservative so ordinary conversation is not over-split. `/paralle
 
 IRAS never self-grants Windows authority. When a deterministic state-changing request needs a Remote session, the web client prompts you to authorize one and the server refuses to start that state-changing graph without it.
 
+## v4.2 RC6 specialized execution
+
+RC6 gives each orchestration role a narrow capability set instead of relying on the generic smart-tool router. Researcher workers use `web_search` and readable `http_get` for public web research; they do not need to open Chrome or visually scrape a page. Coder workers can inspect project files, apply an exact bounded `device_replace_text` patch, create a small/new file with `device_write_text`, inspect git status, and run the bounded project test runner. Arbitrary shell is not added.
+
+`device_replace_text` is a `SYSTEM_ACTION` and only works inside configured Windows bridge roots. It requires an exact expected snippet, bounds file/snippet/replacement size, and still passes through Remote-session permission, laptop-local policy, the authenticated command queue, and emergency stop.
+
+If the model Planner is unavailable, implementation goals fall back to a local `Inspect -> Coder -> Tester -> Reviewer -> Coordinator` DAG instead of one broad worker. `IRAS_ORCHESTRATION_AGENT_MAX_STEPS` defaults to `14` (bounded `8..24`) for specialized graph workers only.
+
 ## v4.2 multi-agent execution
 
 Give IRAS one objective and it can plan and supervise the work instead of requiring you to manually split every step. The Planner creates a bounded DAG for specialized Researcher, Coder, Tester, Reviewer, General, and final Coordinator workers. Independent nodes run concurrently; dependent nodes wait for verified upstream completion.
@@ -28,8 +36,9 @@ Give IRAS one objective and it can plan and supervise the work instead of requir
 - `IRAS_ORCHESTRATION_WORKERS` controls graph workers (default `4`, bounded `1..8`).
 - `IRAS_ORCHESTRATION_MAX_TASKS` controls planned graph size (default `12`, bounded `2..20`; the final Coordinator is added automatically).
 - `IRAS_ORCHESTRATION_PROVIDER_WAIT_SECONDS` controls how long graph tasks automatically wait through temporary all-provider cooldowns before consuming their normal task retry budget (default `900`, bounded `0..1800`).
+- `IRAS_ORCHESTRATION_AGENT_MAX_STEPS` controls the bounded tool-step budget for specialized graph workers only (default `14`, bounded `8..24`).
 
-For exact text-file goals of the form `Create C:\path\file.txt containing exactly "..."`, RC5 uses the same deterministic executor in both Direct chat and multi-agent Tasks: only `write_text`, `read_text`, and `git_status` are allowed, state-changing writes still require an active Remote session, and Windows allowed-root/local-policy/emergency-stop checks remain authoritative. This path does not execute shell commands.
+For exact text-file goals of the form `Create C:\path\file.txt containing exactly "..."`, RC6 uses the same deterministic executor in both Direct chat and multi-agent Tasks: only `write_text`, `read_text`, and `git_status` are allowed, state-changing writes still require an active Remote session, and Windows allowed-root/local-policy/emergency-stop checks remain authoritative. This path does not execute shell commands.
 
 IRAS v4.1 `/parallel` mode remains available for independent jobs. Multi-agent workers do **not** bypass the existing safety model: each worker has isolated permission state and conversation context; remote session/device targeting remains request-local; upstream outputs are treated as untrusted data; Windows commands still pass through the authenticated queue, local policy, and emergency stop.
 

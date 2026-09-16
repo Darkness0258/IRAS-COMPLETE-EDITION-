@@ -146,13 +146,18 @@ function remoteSession(){
 }
 
 function deterministicWriteNeedsRemote(text){
-  return /\bcreate\s+[A-Za-z]:\\.+?\.txt\s+containing\s+exactly\b/i.test(String(text||""));
+  const raw=String(text||"").trim();
+  if(/\bcreate\s+[A-Za-z]:\\.+?\.txt\s+containing\s+exactly\b/i.test(raw))return true;
+  if(/^(how|what|why|explain|tell me about|show me how|teach me|can you explain)\b/i.test(raw))return false;
+  return /\b(build|implement|develop|refactor|upgrade|improve|fix|modify|edit|integrate|migrate|deploy|configure|install)\b/i.test(raw);
 }
 
 async function ensureRemoteForDeterministicWrite(text){
+  // Legacy function name retained for compatibility; RC6 also preflights
+  // implementation objectives that autonomous routing may promote to Coder work.
   if(!deterministicWriteNeedsRemote(text))return true;
   if(remoteSession())return true;
-  status.textContent="This Windows write needs your Remote authorization...";
+  status.textContent="This objective may change Windows/project state and needs your Remote authorization...";
   await createRemoteSession();
   return !!remoteSession();
 }
