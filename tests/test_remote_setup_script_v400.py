@@ -27,4 +27,3 @@ def test_remote_setup_rejects_old_cloud_backend_version():
     assert "$health.version" in text
     assert "not running the v4 remote backend" in text
     assert "-notmatch '^4\\.'" in text
-
