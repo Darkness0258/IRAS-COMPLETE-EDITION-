@@ -52,8 +52,8 @@ class _Memory:
 
 
 def main() -> None:
-    print("=== IRAS v4.2 RC1 MULTI-AGENT INTEGRATED VALIDATION ===")
-    assert __version__ == "4.2.0-rc1"
+    print("=== IRAS v4.2 RC2 MULTI-AGENT INTEGRATED VALIDATION ===")
+    assert __version__ == "4.2.0-rc2"
     assert SCENE_GRAPH_VERSION == "3.7.0"
     assert REMOTE_PROTOCOL_VERSION == 1
     cloud_contract = validate_cloud_health({
@@ -167,6 +167,37 @@ def main() -> None:
     finally:
         orchestration.close()
 
+    provider_attempts = {"count": 0}
+
+    def provider_wait_runner(_prompt, _context):
+        provider_attempts["count"] += 1
+        if provider_attempts["count"] == 1:
+            raise RuntimeError(
+                "ALL_PROVIDERS_UNAVAILABLE: all configured AI providers are temporarily "
+                "unavailable or cooling down. Retry in about 0s."
+            )
+        return {"result": "provider recovered", "metrics": {}}
+
+    provider_wait = OrchestrationManager(
+        provider_wait_runner,
+        max_workers=1,
+        max_tasks_per_run=4,
+        provider_wait_budget_seconds=2,
+    )
+    try:
+        run = provider_wait.submit_graph(
+            "provider cooldown validation",
+            [{"id": "cooldown", "prompt": "wait", "max_retries": 0}],
+            add_coordinator=False,
+        )
+        final = provider_wait.wait(run["run_id"], timeout=3)
+        assert final["state"] == "succeeded"
+        task = final["tasks"][0]
+        assert task["provider_waits"] == 1
+        assert task["attempts"] == 1
+    finally:
+        provider_wait.close()
+
     assert parse_parallel_command("/parallel one || two || three") == ["one", "two", "three"]
     assert parse_goal_command("/goal improve and verify IRAS") == "improve and verify IRAS"
 
@@ -193,6 +224,7 @@ def main() -> None:
     print("MULTI-AGENT PRIORITIES: True")
     print("MULTI-AGENT DEPENDENCIES: True")
     print("MULTI-AGENT RETRIES: True")
+    print("PROVIDER-AWARE COOLDOWN WAIT: True")
     print("MULTI-AGENT PAUSE/RESUME/CANCEL: True")
     print("SPECIALIZED AGENT ROLES: planner/researcher/coder/tester/reviewer/coordinator")
     print("REMOTE CONTEXT DEVICE BINDING: True")

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import threading
 import time
 import uuid
@@ -145,6 +146,8 @@ class GraphTaskRecord:
     error: str = ""
     metrics: dict[str, Any] = field(default_factory=dict)
     next_eligible_at: float = 0.0
+    provider_waits: int = 0
+    provider_wait_started_at: float = field(default=0.0, repr=False, compare=False)
     future: Future | None = field(default=None, repr=False, compare=False)
 
     def public(self) -> dict[str, Any]:
@@ -159,6 +162,15 @@ class GraphTaskRecord:
                 "result": self.result,
                 "error": self.error,
                 "metrics": dict(self.metrics),
+                "provider_waits": self.provider_waits,
+                "waiting_for_provider": bool(
+                    self.state == "queued" and self.metrics.get("provider_wait")
+                ),
+                "retry_after_seconds": (
+                    max(0, int(self.next_eligible_at - time.monotonic()))
+                    if self.state == "queued" and self.next_eligible_at > time.monotonic()
+                    else 0
+                ),
             }
         )
         return data
@@ -222,6 +234,7 @@ class OrchestrationManager:
         max_tasks_per_run: int | None = None,
         retained_runs: int = 30,
         journal_path: str | Path | None = None,
+        provider_wait_budget_seconds: int | None = None,
     ):
         self.runner = runner
         self.planner = planner
@@ -231,6 +244,17 @@ class OrchestrationManager:
         )
         self.retained_runs = max(5, min(int(retained_runs), 200))
         self.journal_path = Path(journal_path).expanduser() if journal_path else None
+        if provider_wait_budget_seconds is None:
+            provider_wait_budget_seconds = _env_int(
+                "IRAS_ORCHESTRATION_PROVIDER_WAIT_SECONDS",
+                300,
+                0,
+                1800,
+            )
+        self.provider_wait_budget_seconds = max(
+            0,
+            min(int(provider_wait_budget_seconds), 1800),
+        )
         self._executor = ThreadPoolExecutor(
             max_workers=self.max_workers,
             thread_name_prefix="iras-agent",
@@ -504,6 +528,17 @@ class OrchestrationManager:
                     self._persist_locked()
                 self._condition.wait(timeout=0.15 if scheduled_any else 0.35)
 
+
+    @staticmethod
+    def _provider_retry_delay(exc: Exception) -> float | None:
+        text = str(exc or "")
+        if "ALL_PROVIDERS_UNAVAILABLE" not in text:
+            return None
+        match = re.search(r"retry\s+in\s+about\s+(\d+)s", text, flags=re.IGNORECASE)
+        seconds = int(match.group(1)) if match else 15
+        # Give the provider a small grace window beyond its advertised cooldown.
+        return max(0.25, min(float(seconds) + 0.5, 120.0))
+
     def _build_worker_context(self, run: OrchestrationRun, record: GraphTaskRecord) -> dict[str, Any]:
         context = dict(run.context)
         dependency_results = []
@@ -556,13 +591,48 @@ class OrchestrationManager:
                 record = run.tasks.get(task_id)
                 if not record:
                     return
+                now = time.monotonic()
+                provider_delay = self._provider_retry_delay(exc)
                 if run.cancelled:
                     record.state = "cancelled"
                     record.finished_at = _now_iso()
+                elif provider_delay is not None and self.provider_wait_budget_seconds > 0:
+                    if record.provider_wait_started_at <= 0:
+                        record.provider_wait_started_at = now
+                    elapsed = max(0.0, now - record.provider_wait_started_at)
+                    remaining_budget = max(0.0, self.provider_wait_budget_seconds - elapsed)
+                    if remaining_budget > 0.0:
+                        wait_for = min(provider_delay, remaining_budget)
+                        record.provider_waits += 1
+                        # Provider cooldown is infrastructure backpressure, not a failed task
+                        # attempt. Preserve the task's bounded retry budget for real work.
+                        record.attempts = max(0, record.attempts - 1)
+                        record.state = "queued"
+                        record.error = (
+                            "Waiting for an AI provider to recover; retrying automatically in about "
+                            f"{max(1, int(round(wait_for)))}s. Last provider error: {exc}"
+                        )
+                        record.next_eligible_at = now + wait_for
+                        record.metrics = {
+                            "total_ms": int((time.perf_counter() - started) * 1000),
+                            "provider_wait": True,
+                            "provider_waits": record.provider_waits,
+                            "retry_after_seconds": max(1, int(round(wait_for))),
+                        }
+                    elif record.attempts <= record.spec.max_retries:
+                        record.state = "queued"
+                        record.error = f"{type(exc).__name__}: {exc}"
+                        record.next_eligible_at = now + min(8.0, 0.75 * (2 ** (record.attempts - 1)))
+                        record.metrics = {"total_ms": int((time.perf_counter() - started) * 1000)}
+                    else:
+                        record.state = "failed"
+                        record.error = f"{type(exc).__name__}: {exc}"
+                        record.finished_at = _now_iso()
+                        record.metrics = {"total_ms": int((time.perf_counter() - started) * 1000)}
                 elif record.attempts <= record.spec.max_retries:
                     record.state = "queued"
                     record.error = f"{type(exc).__name__}: {exc}"
-                    record.next_eligible_at = time.monotonic() + min(8.0, 0.75 * (2 ** (record.attempts - 1)))
+                    record.next_eligible_at = now + min(8.0, 0.75 * (2 ** (record.attempts - 1)))
                     record.metrics = {"total_ms": int((time.perf_counter() - started) * 1000)}
                 else:
                     record.state = "failed"

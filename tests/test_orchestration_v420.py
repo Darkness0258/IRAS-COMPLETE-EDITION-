@@ -267,3 +267,78 @@ def test_worker_cap_is_global_across_multiple_runs():
         assert max_active <= 2
     finally:
         manager.close()
+
+
+def test_provider_cooldown_does_not_consume_task_retry_budget():
+    calls = {"work": 0}
+
+    def runner(prompt, _context):
+        calls[prompt] += 1
+        if calls[prompt] == 1:
+            raise RuntimeError(
+                "ALL_PROVIDERS_UNAVAILABLE: all configured AI providers are temporarily "
+                "unavailable or cooling down. Retry in about 0s."
+            )
+        return {"result": "ok"}
+
+    manager = OrchestrationManager(
+        runner,
+        max_workers=1,
+        max_tasks_per_run=4,
+        provider_wait_budget_seconds=2,
+    )
+    try:
+        run = manager.submit_graph(
+            "provider wait",
+            [{"id": "work", "prompt": "work", "max_retries": 0}],
+            add_coordinator=False,
+        )
+        final = manager.wait(run["run_id"], timeout=3)
+        task = final["tasks"][0]
+        assert final["state"] == "succeeded"
+        assert task["attempts"] == 1
+        assert task["provider_waits"] == 1
+        assert calls["work"] == 2
+    finally:
+        manager.close()
+
+
+def test_provider_wait_status_is_exposed_while_cooling_down():
+    waiting = threading.Event()
+
+    def runner(_prompt, _context):
+        waiting.set()
+        raise RuntimeError(
+            "ALL_PROVIDERS_UNAVAILABLE: all configured AI providers are temporarily "
+            "unavailable or cooling down. Retry in about 2s."
+        )
+
+    manager = OrchestrationManager(
+        runner,
+        max_workers=1,
+        max_tasks_per_run=4,
+        provider_wait_budget_seconds=3,
+    )
+    try:
+        run = manager.submit_graph(
+            "provider wait status",
+            [{"id": "work", "prompt": "work", "max_retries": 0}],
+            add_coordinator=False,
+        )
+        assert waiting.wait(timeout=1)
+        deadline = time.time() + 1.5
+        snapshot = None
+        while time.time() < deadline:
+            snapshot = manager.get(run["run_id"])
+            task = snapshot["tasks"][0]
+            if task["waiting_for_provider"]:
+                break
+            time.sleep(0.02)
+        task = snapshot["tasks"][0]
+        assert task["state"] == "queued"
+        assert task["waiting_for_provider"] is True
+        assert task["provider_waits"] >= 1
+        assert "Waiting for an AI provider" in task["error"]
+        manager.cancel(run["run_id"])
+    finally:
+        manager.close()

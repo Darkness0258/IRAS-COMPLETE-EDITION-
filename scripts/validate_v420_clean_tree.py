@@ -13,7 +13,7 @@ REQUIRED = [
     "src/iras/security/secret_store.py",
     "src/iras/device_bridge/agent.py",
     "src/iras/device_bridge/remote_context.py",
-    "docs/V4_2_RC1_NOTES.md",
+    "docs/V4_2_RC2_NOTES.md",
     "docs/REMOTE_WINDOWS_ACCESS_V4.md",
     "clients/web/index.html",
     "scripts/windows/setup-remote-access.ps1",
@@ -44,7 +44,7 @@ def main() -> None:
             if any(pattern.search(text) for pattern in SECRET_PATTERNS):
                 secret_hits.append(rel)
 
-    print("=== IRAS v4.2 RC1 CLEAN TREE VALIDATION ===")
+    print("=== IRAS v4.2 RC2 CLEAN TREE VALIDATION ===")
     print("LOCAL .ENV PRESENT:", (ROOT / ".env").exists())
     print("REQUIRED V4.2 FILES PRESENT:", not missing)
     print("CACHE/COMPILED DEBRIS PRESENT:", bool(bad_cache))

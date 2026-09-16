@@ -1,6 +1,6 @@
 # IRAS documentation
 
-This directory describes the current **v4.2 RC1** codebase. Git history is the archive for superseded implementation notes.
+This directory describes the current **v4.2 RC2** codebase. Git history is the archive for superseded implementation notes.
 
 Current documents:
 

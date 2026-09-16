@@ -2,7 +2,7 @@
 
 IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, secure worldwide Windows control, parallel multitasking, and dependency-aware multi-agent execution.
 
-**Release status:** `4.2.0-rc1` adds goal planning and multi-agent task graphs on top of the validated v4.1 worker isolation model. The v4 remote protocol remains `1`.
+**Release status:** `4.2.0-rc2` adds goal planning and multi-agent task graphs on top of the validated v4.1 worker isolation model. The v4 remote protocol remains `1`.
 
 ## v4.2 multi-agent execution
 
@@ -14,6 +14,7 @@ Give IRAS one objective and it can plan and supervise the work instead of requir
 - Priorities, dependencies, attempts, retries, states, errors, and the final Coordinator result are observable.
 - `IRAS_ORCHESTRATION_WORKERS` controls graph workers (default `4`, bounded `1..8`).
 - `IRAS_ORCHESTRATION_MAX_TASKS` controls planned graph size (default `12`, bounded `2..20`; the final Coordinator is added automatically).
+- `IRAS_ORCHESTRATION_PROVIDER_WAIT_SECONDS` controls how long graph tasks automatically wait through temporary all-provider cooldowns before consuming their normal task retry budget (default `300`, bounded `0..1800`).
 
 IRAS v4.1 `/parallel` mode remains available for independent jobs. Multi-agent workers do **not** bypass the existing safety model: each worker has isolated permission state and conversation context; remote session/device targeting remains request-local; upstream outputs are treated as untrusted data; Windows commands still pass through the authenticated queue, local policy, and emergency stop.
 
