@@ -15,7 +15,14 @@ def test_remote_setup_falls_back_when_iras_device_entrypoint_is_missing():
 def test_remote_startup_task_supports_python_module_fallback():
     text = _script()
     assert "$taskArgument = '-m iras.device_bridge.agent'" in text
-    assert "New-ScheduledTaskAction -Execute $deviceExe -Argument $taskArgument" in text
+    assert "$bridgeCommand = \"& '$escapedDeviceExe' $taskArgument\"" in text
+
+
+def test_remote_startup_task_runs_hidden_without_leaving_interactive_session():
+    text = _script()
+    assert '-WindowStyle Hidden -EncodedCommand $encodedBridgeCommand' in text
+    assert 'New-ScheduledTaskAction -Execute "powershell.exe" -Argument $hiddenTaskArgs' in text
+    assert '-LogonType Interactive' in text
 
 
 def test_remote_setup_rejects_unhealthy_cloud_before_secret_prompt():

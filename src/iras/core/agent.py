@@ -489,6 +489,29 @@ class IRASAgent:
                 "screen on my",
             ),
         ):
+            # A plain capture only needs a durable local image file. If the
+            # user asks IRAS to *understand* what is on that screenshot, route
+            # to the multimodal observation pipeline instead. That pipeline
+            # captures the same desktop state but also returns UIA + OmniParser
+            # scene data that the cloud model can reason over; a Windows-local
+            # file path by itself is not visible to the cloud model.
+            descriptive_screen_request = cls._contains_any(
+                q,
+                (
+                    "describe",
+                    "what is open",
+                    "what's open",
+                    "what is on",
+                    "what's on",
+                    "what do you see",
+                    "tell me what",
+                    "look at",
+                    "read the screen",
+                    "read my screen",
+                ),
+            )
+            if descriptive_screen_request:
+                return {"device_computer_observe"}
             return {"device_capture_screen"}
 
         if cls._contains_any(

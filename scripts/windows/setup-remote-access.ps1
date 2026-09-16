@@ -105,11 +105,21 @@ if ($AllowCommand) { $armArgs += "--remote-allow-shell" }
 if ($LASTEXITCODE -ne 0) { throw "Failed to arm IRAS remote policy." }
 
 if (-not $NoStartupTask) {
+    # Keep the bridge in the interactive user session (required for screenshots/UI
+    # control) while hiding its long-running console window. PowerShell remains the
+    # scheduled process and waits for the bridge child, so Task Scheduler can still
+    # supervise/restart it normally.
+    $escapedDeviceExe = $deviceExe.Replace("'", "''")
     if ($taskArgument) {
-        $action = New-ScheduledTaskAction -Execute $deviceExe -Argument $taskArgument
+        $bridgeCommand = "& '$escapedDeviceExe' $taskArgument"
     } else {
-        $action = New-ScheduledTaskAction -Execute $deviceExe
+        $bridgeCommand = "& '$escapedDeviceExe'"
     }
+    $encodedBridgeCommand = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes($bridgeCommand)
+    )
+    $hiddenTaskArgs = "-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand $encodedBridgeCommand"
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $hiddenTaskArgs
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Days 3650) -RestartCount 10 -RestartInterval (New-TimeSpan -Minutes 1)
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited

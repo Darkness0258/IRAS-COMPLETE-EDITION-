@@ -43,3 +43,12 @@ The hosted RC2 acceptance pass exposed four legacy Windows setup contract tests 
 - Register the scheduled task correctly for both the console-entry-point and Python-module launch paths.
 
 The complete Python regression suite is 619/619 passing with the previously failing `test_remote_setup_script_v400.py` contract restored.
+
+## Final acceptance hotfix (2026-09-16)
+
+Real hosted RC2 acceptance proved cloud-to-Windows status, app launch, typing, protocol compatibility, DPAPI secret protection, and startup-task registration. Two last-mile issues were addressed without changing the remote protocol:
+
+- Descriptive screenshot requests (for example, "take a screenshot and describe what is open") now route to `device_computer_observe`, so the cloud model receives UIA/OmniParser scene data instead of only a Windows-local screenshot path. Plain screenshot requests still use `device_capture_screen` and save a durable local image.
+- The persistent bridge scheduled task now starts through hidden PowerShell while retaining `Interactive` logon type. This removes the long-running visible console without moving the bridge out of the desktop session required for screenshots and UI control.
+
+The complete regression suite after this hotfix is 623 passing tests.

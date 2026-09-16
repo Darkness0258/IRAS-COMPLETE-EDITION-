@@ -763,9 +763,11 @@ def make_tools(store):
         Tool(
             "device_computer_observe",
             (
-                "Observe the current Windows desktop for universal computer use. "
-                "Returns the foreground window, screenshot metadata, Windows UI "
-                "Automation controls plus a fused multimodal scene graph. When visual "
+                "Observe and understand the current Windows desktop for universal computer use. "
+                "Use this instead of device_capture_screen when the user asks what is visible, "
+                "what is open, or asks IRAS to describe/read a screenshot. Returns the foreground "
+                "window, screenshot metadata, Windows UI Automation controls plus a fused "
+                "multimodal scene graph. When visual "
                 "grounding is needed, local OmniParser is started automatically if a "
                 "configured/discovered installation is available. Every actionable "
                 "element has a stable element_id, confidence, provenance and grounded "
