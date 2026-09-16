@@ -18,7 +18,7 @@ from iras.vision.omniparser_runtime import OmniParserRuntimeManager
 
 
 def main() -> None:
-    print("=== IRAS v4.0 RC2 READ-ONLY REAL DEVICE SMOKE TEST ===")
+    print("=== IRAS v4.0 FINAL READ-ONLY REAL DEVICE SMOKE TEST ===")
     print("VERSION:", __version__)
     print("PLATFORM:", platform.platform())
     if platform.system().lower() != "windows":

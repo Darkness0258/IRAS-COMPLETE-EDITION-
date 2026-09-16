@@ -59,7 +59,7 @@ def test_full_remote_command_roundtrip_preserves_two_key_gate(monkeypatch, tmp_p
         platform="Windows 10",
         device_token="device-token",
         capabilities=["run_command"],
-        app_version="4.0.0-rc2",
+        app_version="4.0.0",
     )
     session = store.create_remote_session(device_id="windows-e2e-1", mode="full", ttl_seconds=120)
     auth = store.authorize_remote_session(session["session_id"], session["session_token"])

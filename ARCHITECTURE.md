@@ -215,7 +215,7 @@ text-only search results before any full semantic fallback. Once search typing o
 a contact click has occurred, that state-changing action is never automatically
 replayed; only fresh read-only evidence may follow it.
 
-## v4.0 RC2 — Permissioned Worldwide Windows Agent
+## v4.0 FINAL — Permissioned Worldwide Windows Agent
 
 v4 adds an outbound-only Windows device bridge as the preferred remote-control
 transport. The laptop initiates HTTPS long-polling to IRAS Cloud, so the design

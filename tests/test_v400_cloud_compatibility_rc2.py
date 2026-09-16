@@ -15,7 +15,7 @@ from iras.remote_protocol import (
 )
 
 
-def _health(version: str = "4.0.0-rc2") -> dict:
+def _health(version: str = "4.0.0") -> dict:
     return {
         "ok": True,
         "service": "IRAS Cloud",
@@ -29,7 +29,7 @@ def test_current_v4_cloud_health_contract_is_accepted():
     result = validate_cloud_health(_health())
     assert result["compatible"] is True
     assert result["remote_protocol"] == 1
-    assert result["version"] == "4.0.0-rc2"
+    assert result["version"] == "4.0.0"
 
 
 def test_old_v3_cloud_is_rejected_before_pairing():
@@ -94,7 +94,7 @@ def test_configure_persists_verified_cloud_contract(monkeypatch, tmp_path):
         "probe_remote_cloud",
         lambda server_url, api_token="", client=None: {
             "service_id": "iras-cloud",
-            "version": "4.0.0-rc2",
+            "version": "4.0.0",
             "remote_protocol": 1,
             "compatible": True,
             "token_verified": True,
@@ -107,10 +107,10 @@ def test_configure_persists_verified_cloud_contract(monkeypatch, tmp_path):
     )
     raw = json.loads(path.read_text(encoding="utf-8"))
 
-    assert result["cloud_version"] == "4.0.0-rc2"
+    assert result["cloud_version"] == "4.0.0"
     assert result["remote_protocol"] == 1
     assert result["token_verified"] is True
-    assert raw["cloud_version"] == "4.0.0-rc2"
+    assert raw["cloud_version"] == "4.0.0"
     assert raw["remote_protocol"] == 1
     assert "api_token" not in raw
     assert raw["api_token_protected"]

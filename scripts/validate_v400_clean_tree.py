@@ -56,7 +56,7 @@ def main() -> None:
                     break
 
     local_env = ROOT / ".env"
-    print("=== IRAS v4.0 RC2 CLEAN TREE VALIDATION ===")
+    print("=== IRAS v4.0 FINAL CLEAN TREE VALIDATION ===")
     print("LEGACY ROOT RELEASE DOCS PRESENT:", bool(legacy_docs))
     print("LOCAL .ENV PRESENT:", local_env.exists())
     print("REQUIRED V4 FILES PRESENT:", not missing)

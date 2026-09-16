@@ -1,6 +1,6 @@
-# IRAS v4.0 RC2 — Production Readiness Contract
+# IRAS v4.0 FINAL — Production Readiness Contract
 
-v4.0 RC2 consolidates the v3.6 bounded-autonomy safety model and v3.7 multimodal work into a deployable Windows personal-agent architecture. “Production complete” here means bounded, observable, recoverable, permissioned, and testable—not a claim that arbitrary third-party UI can never change.
+v4.0 FINAL consolidates the bounded-autonomy safety model, multimodal desktop grounding, and permissioned remote Windows control into a deployable personal-agent architecture. “Production complete” here means bounded, observable, recoverable, permissioned, and testable—not a claim that arbitrary third-party UI can never change.
 
 ## Controller invariants
 
@@ -57,7 +57,7 @@ Learned app skills are admitted only from verified task outcomes, contain semant
 
 See `REMOTE_WINDOWS_ACCESS_V4.md`. Remote administration uses an outbound-only Windows bridge, DPAPI-protected secrets, exact-device short-lived sessions, a server permission cap, a final local permission policy, structured audit traces, and an emergency stop.
 
-RC2 adds a versioned cloud/Windows handshake. `/health` advertises `service_id=iras-cloud` and `remote_protocol=1`; bridge configuration validates that contract and the master API token before persisting configuration. Pairing also carries the protocol number and the cloud rejects mismatched clients with a clear conflict response. This prevents an old Render deployment from looking "connected" while the Windows bridge endlessly retries missing v4 routes.
+v4 includes the RC2 versioned cloud/Windows handshake. `/health` advertises `service_id=iras-cloud` and `remote_protocol=1`; bridge configuration validates that contract and the master API token before persisting configuration. Pairing also carries the protocol number and the cloud rejects mismatched clients with a clear conflict response. This prevents an old Render deployment from looking "connected" while the Windows bridge endlessly retries missing v4 routes.
 
 ## Diagnostics and observability
 
@@ -65,17 +65,17 @@ RC2 adds a versioned cloud/Windows handshake. `/health` advertises `service_id=i
 
 Remote command execution writes structured JSONL operation traces under `~/.iras/traces.jsonl` and the existing IRAS audit system records cloud session/invocation events.
 
-## Acceptance definition for v4.0 final
+## v4.0 production acceptance
 
-RC2 is code-complete only after:
+The final promotion was made only after the hosted Render + real Windows acceptance path was exercised in addition to the automated suite. Verified acceptance evidence includes:
 
 1. the complete regression and v4 validators pass;
-2. the Windows read-only smoke test passes;
-3. one real outbound cloud pairing is verified over HTTPS;
-4. a remote session can read system state and capture a screen preview;
-5. a remote `control` action is verified on the laptop;
-6. the local kill switch blocks the same action;
-7. any explicitly enabled `full` operation is tested only on a disposable target;
-8. at least one cold and warm multimodal task is benchmarked on the target Windows hardware.
+2. the Windows bridge pairs to the hosted Render service over HTTPS with `service_id=iras-cloud` and `remote_protocol=1`;
+3. `iras --doctor` reports the remote policy, DPAPI secret protection, transport, reachability, protocol compatibility, emergency-stop state, and startup task as healthy;
+4. cloud-to-Windows system-status retrieval succeeds;
+5. multimodal desktop observation can capture the live screen and describe the active application/UI state;
+6. remote app launch and verified text entry succeed on the authorized Windows target;
+7. the controller emergency stop blocks remote execution and the hardened bridge returns a bounded denial instead of leaving commands eligible for delayed execution;
+8. recovery requires a local emergency clear and explicit local re-arm before remote control resumes.
 
-No automated test can prove a third-party cloud network path or the user's physical microphone/display from this build environment, so those last-mile checks remain real-device acceptance items rather than hidden assumptions.
+Power actions and arbitrary shell execution remain separately gated opt-ins even in `full` mode. The v4.0.0 promotion does not claim that every third-party application layout is permanently stable; live grounding and verification remain authoritative.

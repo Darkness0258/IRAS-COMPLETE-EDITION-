@@ -1,8 +1,8 @@
-# IRAS 4.0.0 RC2 — Permissioned Personal Windows Agent
+# IRAS 4.0.0 FINAL — Permissioned Personal Windows Agent
 
 IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, and a secure outbound bridge for controlling an authorized laptop from IRAS Cloud anywhere in the world.
 
-**Release status:** `4.0.0-rc2` is the production-candidate development line. The frozen stable baseline remains v3.6.0; v3.7 multimodal work is incorporated into this RC.
+**Release status:** `4.0.0` is the promoted v4 production release. It incorporates the bounded-autonomy baseline, multimodal desktop grounding, secure outbound Windows control, and the hosted Render/Windows acceptance fixes validated during RC2.
 
 ## What v4 adds
 
@@ -42,7 +42,7 @@ tests/                   regression suite
 scripts/                 validators, maintenance, Windows setup
 scripts/windows/         remote-access/install/update lifecycle
 docs/                    current architecture/deployment guides
-run-v400-validation.ps1  complete RC validation
+run-v400-validation.ps1  complete v4 production validation
 run-v400-real-device-smoke.ps1
 setup-remote-windows.ps1 worldwide Windows bridge setup
 ```

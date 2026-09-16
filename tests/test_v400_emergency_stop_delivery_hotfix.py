@@ -14,7 +14,7 @@ def _store(tmp_path):
         platform="Windows 10",
         device_token="device-secret",
         capabilities=["open_app"],
-        app_version="4.0.0-rc2",
+        app_version="4.0.0",
     )
     return store
 

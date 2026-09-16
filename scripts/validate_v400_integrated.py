@@ -23,8 +23,8 @@ from iras.vision.scene_graph import SCENE_GRAPH_VERSION
 
 
 def main() -> None:
-    print("=== IRAS v4.0 RC2 INTEGRATED VALIDATION ===")
-    assert __version__ == "4.0.0-rc2"
+    print("=== IRAS v4.0 FINAL INTEGRATED VALIDATION ===")
+    assert __version__ == "4.0.0"
     assert SCENE_GRAPH_VERSION == "3.7.0"  # scene-graph schema version stays stable
     assert REMOTE_PROTOCOL_VERSION == 1
     cloud_contract = validate_cloud_health({
