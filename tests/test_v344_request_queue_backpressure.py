@@ -20,8 +20,8 @@ def test_busy_error_maps_queue_exhaustion():
 def test_v344_or_newer_version_contract():
     init=(ROOT/'src/iras/__init__.py').read_text(encoding='utf-8')
     project=(ROOT/'pyproject.toml').read_text(encoding='utf-8')
-    m=re.search(r'__version__\s*=\s*"(\d+)\.(\d+)\.(\d+)"',init)
-    p=re.search(r'(?m)^version\s*=\s*"(\d+)\.(\d+)\.(\d+)"',project)
+    m=re.search(r'__version__\s*=\s*"(\d+)\.(\d+)\.(\d+)',init)
+    p=re.search(r'(?m)^version\s*=\s*"(\d+)\.(\d+)\.(\d+)',project)
     assert m is not None and p is not None
     version=tuple(int(x) for x in m.groups())
     assert version >= (3,4,4)

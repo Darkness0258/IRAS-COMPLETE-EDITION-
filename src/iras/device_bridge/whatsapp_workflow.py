@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from typing import Any
 
@@ -291,6 +292,63 @@ def _roi_fastpath_enabled(computer: Any) -> bool:
     return bool(enabled and callable(getattr(computer, "observe_region", None)))
 
 
+def _cold_roi_retries() -> int:
+    try:
+        raw = int(os.getenv("IRAS_WHATSAPP_COLD_ROI_RETRIES", "2"))
+    except (TypeError, ValueError):
+        raw = 2
+    return max(1, min(raw, 3))
+
+
+def _cold_settle_seconds() -> float:
+    try:
+        ms = int(os.getenv("IRAS_WHATSAPP_COLD_SETTLE_MS", "220"))
+    except (TypeError, ValueError):
+        ms = 220
+    return max(0.08, min(ms / 1000.0, 0.75))
+
+
+def _start_visual_prewarm(computer: Any) -> tuple[dict[str, Any], threading.Thread | None]:
+    """Start local vision readiness in parallel with WhatsApp focus/paint.
+
+    The worker performs only runtime startup/model warmup. It does not observe,
+    click, type, or grant authorization. The first real ROI observation still
+    captures fresh pixels and receives its own single-use action binding.
+    """
+    state: dict[str, Any] = {
+        "started": False,
+        "complete": False,
+        "ready": False,
+        "status": None,
+        "elapsed_ms": None,
+    }
+    runtime = getattr(computer, "omniparser", None)
+    ensure = getattr(runtime, "ensure_ready", None)
+    if not callable(ensure):
+        return state, None
+
+    def worker() -> None:
+        started = time.perf_counter()
+        try:
+            result = ensure(start=True)
+            state["ready"] = bool(getattr(result, "ready", False))
+            state["status"] = getattr(result, "status", None)
+        except Exception as exc:  # startup is advisory; observation handles failure
+            state["status"] = f"{type(exc).__name__}: {exc}"
+        finally:
+            state["complete"] = True
+            state["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
+
+    state["started"] = True
+    thread = threading.Thread(
+        target=worker,
+        name="iras-whatsapp-vision-prewarm",
+        daemon=True,
+    )
+    thread.start()
+    return state, thread
+
+
 def _fractional_region(
     rect: dict[str, Any],
     *,
@@ -321,6 +379,13 @@ def _roi_observation(
         region = _fractional_region(
             foreground_rect, left=0.0, top=0.0, width=1.0, height=0.25
         )
+    elif purpose == "search":
+        # Dedicated left/top search band is intentionally smaller than R4's
+        # full top strip. On cold starts this reduces OCR work and avoids letting
+        # an early paint miss force the expensive full Florence/YOLO fallback.
+        region = _fractional_region(
+            foreground_rect, left=0.0, top=0.02, width=0.52, height=0.24
+        )
     elif purpose == "results":
         region = _fractional_region(
             foreground_rect, left=0.0, top=0.07, width=0.48, height=0.70
@@ -329,14 +394,29 @@ def _roi_observation(
         region = _fractional_region(
             foreground_rect, left=0.26, top=0.0, width=0.74, height=0.22
         )
+    elif purpose == "workspace":
+        # R6 text-only whole-foreground rescue. This is intentionally still OCR
+        # only: WhatsApp navigation targets are text semantics, so a cold ROI
+        # miss must not eagerly load the Florence/YOLO caption stack.
+        region = _fractional_region(
+            foreground_rect, left=0.0, top=0.0, width=1.0, height=1.0
+        )
     else:
         raise ValueError(f"Unsupported WhatsApp ROI purpose: {purpose}")
-    return computer.observe_region(
-        region=region,
-        label=f"whatsapp_{purpose}",
-        mode="text",
-        max_elements=120,
-    )
+    observe_region = getattr(computer, "observe_region", None)
+    if callable(observe_region):
+        return observe_region(
+            region=region,
+            label=f"whatsapp_{purpose}",
+            mode="text",
+            max_elements=120,
+        )
+
+    # Compatibility path for older controller adapters and deterministic test
+    # doubles. Production UniversalComputerController exposes observe_region, so
+    # the v4 text-only ROI path remains authoritative on Windows. This fallback
+    # does not replay any action; it only obtains a fresh observation.
+    return computer.observe(vision="auto", scope="foreground", max_elements=120)
 
 
 def _performance_entry(observation: dict[str, Any]) -> dict[str, Any]:
@@ -351,10 +431,21 @@ def _fresh_visual_observation(computer: Any) -> dict[str, Any]:
     return computer.observe(vision="always", scope="foreground", max_elements=180)
 
 
+def _full_vision_fallback_enabled() -> bool:
+    raw = os.getenv("IRAS_WHATSAPP_FULL_VISION_FALLBACK", "false").strip().lower()
+    return raw in {"1", "true", "yes", "on", "enabled"}
+
+
 def _fresh_navigation_observation(computer: Any) -> dict[str, Any]:
     # Auto uses UIA when it is genuinely actionable and falls back to visual
     # grounding for WebView/custom-rendered surfaces.
     return computer.observe(vision="auto", scope="foreground", max_elements=180)
+
+
+def _fresh_uia_observation(computer: Any) -> dict[str, Any]:
+    # R5 uses a cheap accessibility-only read before conceding to full visual
+    # fallback. This never satisfies the user's requested visual terminal proof.
+    return computer.observe(vision="off", scope="foreground", max_elements=180)
 
 
 def _observation_header(
@@ -377,67 +468,162 @@ def open_chat_and_verify(
 ) -> dict[str, Any]:
     """Open one WhatsApp chat and visually verify its header without sending.
 
-    R4 keeps the R3 no-model/no-send safety boundary but narrows expensive visual
-    grounding to controller-owned regions of interest. Text-heavy search/header
-    steps request the bridge's EasyOCR-only mode; if that capability is absent,
-    the computer controller falls back to full OmniParser on the same small ROI.
-    Every state-changing input still consumes one fresh observation.
+    v4/R6 preserves the no-model/no-send fast path while hardening cold startup.
+    Local vision startup/EasyOCR warmup overlaps WhatsApp focus, and all normal
+    recovery remains OCR/UIA text-first. Heavy Florence/YOLO semantics are an
+    explicit opt-in last resort only. Every state-changing input still consumes
+    one fresh observation and is never automatically replayed.
     """
     contact = " ".join(str(contact or "").strip().split())
     if not contact or len(contact) > 160 or any(ch in contact for ch in "\r\n\x00"):
         raise ValueError("contact must be a short single-line WhatsApp display name.")
 
+    roi_enabled = _roi_fastpath_enabled(computer)
+    prewarm_state: dict[str, Any] = {
+        "started": False,
+        "complete": False,
+        "ready": False,
+        "status": None,
+        "elapsed_ms": None,
+    }
+    prewarm_thread = None
+    if roi_enabled:
+        prewarm_state, prewarm_thread = _start_visual_prewarm(computer)
+
+    # Focus/launch happens concurrently with bridge startup and EasyOCR prewarm.
     app_state = ensure_whatsapp_foreground(ui, computer)
     observations = 0
     actions: list[dict[str, Any]] = []
     perception: list[dict[str, Any]] = []
+    roi_failure_reason = ""
+    settle = _cold_settle_seconds()
+    retry_budget = _cold_roi_retries()
 
-    # R4 fast path: first inspect only the top band. It contains both the global
-    # search field and the active chat header, so an already-open target can end
-    # after one small text-only parse.
-    if _roi_fastpath_enabled(computer):
+    def verified_result(
+        observation: dict[str, Any],
+        header: dict[str, Any],
+        *,
+        source: str,
+        roi_fastpath: bool,
+        route: str,
+    ) -> dict[str, Any]:
+        if prewarm_thread is not None and prewarm_thread.is_alive():
+            prewarm_thread.join(timeout=0.01)
+        return {
+            "app": APP,
+            "contact": contact,
+            "verified": True,
+            "verified_header": _label(header),
+            "header_element_id": header.get("element_id"),
+            "verification_source": source,
+            "observation_id": observation.get("observation_id"),
+            "observations": observations,
+            "actions": actions,
+            "messages_sent": 0,
+            "typed_into_composer": False,
+            "action_replay_allowed": False,
+            "vision_cache_hit": bool(observation.get("vision_cache_hit")),
+            "roi_fastpath": roi_fastpath,
+            "perception": perception,
+            "app_state": app_state,
+            "route": route,
+            "prewarm": dict(prewarm_state),
+        }
+
+    if roi_enabled:
         try:
             foreground = computer._foreground()
             foreground_rect = foreground.get("rect") or {}
-            observation = _roi_observation(
-                computer, foreground_rect, purpose="top"
+
+            # 1) Small right-header ROI first. If the requested chat is already
+            # open, cold and warm paths both finish with one visual observation.
+            header_observation = _roi_observation(
+                computer, foreground_rect, purpose="header"
             )
             observations += 1
-            perception.append(_performance_entry(observation))
-
-            header = _observation_header(observation, contact=contact)
+            perception.append(_performance_entry(header_observation))
+            header = _observation_header(header_observation, contact=contact)
             if header is not None:
-                return {
-                    "app": APP,
-                    "contact": contact,
-                    "verified": True,
-                    "verified_header": _label(header),
-                    "header_element_id": header.get("element_id"),
-                    "verification_source": "vision_roi_text",
-                    "observation_id": observation.get("observation_id"),
-                    "observations": observations,
-                    "actions": actions,
-                    "messages_sent": 0,
-                    "typed_into_composer": False,
-                    "action_replay_allowed": False,
-                    "vision_cache_hit": bool(observation.get("vision_cache_hit")),
-                    "roi_fastpath": True,
-                    "perception": perception,
-                    "app_state": app_state,
-                }
+                return verified_result(
+                    header_observation,
+                    header,
+                    source="vision_roi_text",
+                    roi_fastpath=True,
+                    route="r5_header_roi",
+                )
 
-            elements = list(observation.get("elements") or [])
-            search = find_whatsapp_search_target(elements)
-            contact_target = find_contact_target(
-                elements,
-                contact=contact,
-                search_rect=(search or {}).get("rect") if search else None,
-                foreground_rect=foreground_rect,
-            )
+            # 2) Let a just-focused WebView paint and probe only the search band.
+            # A cold first-frame OCR miss gets bounded text-only retries instead
+            # of immediately loading Florence/YOLO over the whole window.
+            search_observation = None
+            search = None
+            contact_target = None
+            for attempt in range(retry_budget):
+                if attempt:
+                    time.sleep(settle)
+                search_observation = _roi_observation(
+                    computer, foreground_rect, purpose="search"
+                )
+                observations += 1
+                perception.append(_performance_entry(search_observation))
+                elements = list(search_observation.get("elements") or [])
+                search = find_whatsapp_search_target(elements)
+                contact_target = find_contact_target(
+                    elements,
+                    contact=contact,
+                    search_rect=(search or {}).get("rect") if search else None,
+                    foreground_rect=foreground_rect,
+                )
+                if search is not None or contact_target is not None:
+                    break
 
-            if contact_target is None and search is not None:
+            # 3) Accessibility is a cheap read-only rescue for the search field.
+            # It may guide navigation, but visual evidence is still mandatory at
+            # the end. We use it only before any state-changing ROI action.
+            if search is None and contact_target is None:
+                try:
+                    uia_observation = _fresh_uia_observation(computer)
+                    observations += 1
+                    uia_elements = list(uia_observation.get("elements") or [])
+                    search = find_whatsapp_search_target(uia_elements)
+                    if search is not None:
+                        search_observation = uia_observation
+                except (RuntimeError, ValueError, OSError):
+                    search = None
+
+            # One final text-only top strip handles layouts where the search box
+            # sits outside the narrow search band. This remains much cheaper than
+            # full semantic parsing and is still read-only.
+            if search is None and contact_target is None:
+                time.sleep(settle)
+                top_observation = _roi_observation(
+                    computer, foreground_rect, purpose="top"
+                )
+                observations += 1
+                perception.append(_performance_entry(top_observation))
+                top_elements = list(top_observation.get("elements") or [])
+                top_header = _observation_header(top_observation, contact=contact)
+                if top_header is not None:
+                    return verified_result(
+                        top_observation,
+                        top_header,
+                        source="vision_roi_text",
+                        roi_fastpath=True,
+                        route="r5_top_roi_recovery",
+                    )
+                search = find_whatsapp_search_target(top_elements)
+                contact_target = find_contact_target(
+                    top_elements,
+                    contact=contact,
+                    search_rect=(search or {}).get("rect") if search else None,
+                    foreground_rect=foreground_rect,
+                )
+                if search is not None or contact_target is not None:
+                    search_observation = top_observation
+
+            if contact_target is None and search is not None and search_observation is not None:
                 typed = computer.action(
-                    observation_id=str(observation.get("observation_id") or ""),
+                    observation_id=str(search_observation.get("observation_id") or ""),
                     action="type_into",
                     element_id=str(search.get("element_id") or ""),
                     text=contact,
@@ -449,32 +635,46 @@ def open_chat_and_verify(
                         "action": "type_into_search",
                         "element_id": search.get("element_id"),
                         "observation_consumed": typed.get("observation_consumed"),
-                        "roi": "top",
+                        "roi": search_observation.get("roi_label") or "uia",
                     }
                 )
-                time.sleep(0.18)
-                observation = _roi_observation(
-                    computer, foreground_rect, purpose="results"
-                )
-                observations += 1
-                perception.append(_performance_entry(observation))
-                elements = list(observation.get("elements") or [])
-                refreshed_search = find_whatsapp_search_target(elements)
-                search_rect = (
-                    (refreshed_search or {}).get("rect")
-                    or search.get("rect")
-                    or {}
-                )
-                contact_target = find_contact_target(
-                    elements,
-                    contact=contact,
-                    search_rect=search_rect,
-                    foreground_rect=foreground_rect,
-                )
 
-            if contact_target is not None:
+                # After typing, do not retype automatically if OCR misses the
+                # result. Only fresh read-only result observations are allowed.
+                for attempt in range(retry_budget):
+                    time.sleep(0.14 if attempt == 0 else settle)
+                    result_observation = _roi_observation(
+                        computer, foreground_rect, purpose="results"
+                    )
+                    observations += 1
+                    perception.append(_performance_entry(result_observation))
+                    result_elements = list(result_observation.get("elements") or [])
+                    refreshed_search = find_whatsapp_search_target(result_elements)
+                    search_rect = (
+                        (refreshed_search or {}).get("rect")
+                        or search.get("rect")
+                        or {}
+                    )
+                    contact_target = find_contact_target(
+                        result_elements,
+                        contact=contact,
+                        search_rect=search_rect,
+                        foreground_rect=foreground_rect,
+                    )
+                    search_observation = result_observation
+                    if contact_target is not None:
+                        break
+
+                if contact_target is None:
+                    raise RuntimeError(
+                        f"IRAS searched WhatsApp for {contact!r}, but bounded fresh "
+                        "text-only result observations could not uniquely ground the "
+                        "contact. The search input was not replayed and no message was sent."
+                    )
+
+            if contact_target is not None and search_observation is not None:
                 clicked = computer.action(
-                    observation_id=str(observation.get("observation_id") or ""),
+                    observation_id=str(search_observation.get("observation_id") or ""),
                     action="click",
                     element_id=str(contact_target.get("element_id") or ""),
                     verify=False,
@@ -486,81 +686,93 @@ def open_chat_and_verify(
                         "element_id": contact_target.get("element_id"),
                         "observation_consumed": clicked.get("observation_consumed"),
                         "controller_disambiguation": True,
-                        "roi": observation.get("roi_label"),
+                        "roi": search_observation.get("roi_label") or "uia",
                     }
                 )
-                time.sleep(0.18)
 
-                verification = _roi_observation(
-                    computer, foreground_rect, purpose="header"
-                )
-                observations += 1
-                perception.append(_performance_entry(verification))
-                header = _observation_header(verification, contact=contact)
-                if header is None:
-                    # One bounded read-only ROI retry covers delayed WebView paint.
-                    time.sleep(0.22)
+                # The click is never replayed. Verification retries are read-only.
+                verification = None
+                header = None
+                for attempt in range(retry_budget + 1):
+                    time.sleep(0.14 if attempt == 0 else settle)
                     verification = _roi_observation(
                         computer, foreground_rect, purpose="header"
                     )
                     observations += 1
                     perception.append(_performance_entry(verification))
                     header = _observation_header(verification, contact=contact)
+                    if header is not None:
+                        return verified_result(
+                            verification,
+                            header,
+                            source="vision_roi_text",
+                            roi_fastpath=True,
+                            route="r5_search_results_header",
+                        )
 
+                # One broader read-only visual proof is permitted after a click,
+                # but no further state-changing navigation action is allowed.
+                verification = _fresh_visual_observation(computer)
+                observations += 1
+                header = _observation_header(verification, contact=contact)
                 if header is not None:
-                    return {
-                        "app": APP,
-                        "contact": contact,
-                        "verified": True,
-                        "verified_header": _label(header),
-                        "header_element_id": header.get("element_id"),
-                        "verification_source": "vision_roi_text",
-                        "observation_id": verification.get("observation_id"),
-                        "observations": observations,
-                        "actions": actions,
-                        "messages_sent": 0,
-                        "typed_into_composer": False,
-                        "action_replay_allowed": False,
-                        "vision_cache_hit": bool(verification.get("vision_cache_hit")),
-                        "roi_fastpath": True,
-                        "perception": perception,
-                        "app_state": app_state,
-                    }
-                # The click is never replayed. We only broaden read-only evidence
-                # once below to avoid a false failure from OCR missing the header.
-        except (RuntimeError, ValueError, OSError):
-            # ROI acceleration must never weaken compatibility. Fall through to
-            # the R3 full-scene path; it retains all safety invariants.
-            pass
+                    return verified_result(
+                        verification,
+                        header,
+                        source="vision",
+                        roi_fastpath=False,
+                        route="r5_readonly_header_broaden",
+                    )
+                raise RuntimeError(
+                    f"WhatsApp navigation delivered one grounded click, but fresh "
+                    f"visual evidence did not prove the chat header is {contact!r}. "
+                    "The click was not replayed and no message was sent."
+                )
 
-    observation = _fresh_navigation_observation(computer)
-    observations += 1
+            roi_failure_reason = "text-only ROI search/contact grounding remained inconclusive"
+        except RuntimeError as exc:
+            # Once a state-changing action has happened, RuntimeError is a fail-
+            # closed outcome: do not fall into a route that could type/click again.
+            if actions:
+                raise
+            roi_failure_reason = str(exc)
+        except (ValueError, OSError) as exc:
+            if actions:
+                raise RuntimeError(
+                    "WhatsApp ROI workflow stopped after a state-changing action; "
+                    "IRAS will not replay it automatically."
+                ) from exc
+            roi_failure_reason = f"{type(exc).__name__}: {exc}"
 
-    # The user asked for visual verification, so a UIA-only observation can
-    # guide navigation but cannot be the terminal proof.
-    if bool(observation.get("vision_available")):
-        header = _observation_header(observation, contact=contact)
-        if header is not None:
-            return {
-                "app": APP,
-                "contact": contact,
-                "verified": True,
-                "verified_header": _label(header),
-                "header_element_id": header.get("element_id"),
-                "verification_source": "vision",
-                "observation_id": observation.get("observation_id"),
-                "observations": observations,
-                "actions": actions,
-                "messages_sent": 0,
-                "typed_into_composer": False,
-                "action_replay_allowed": False,
-                "roi_fastpath": False,
-                "perception": perception,
-                "app_state": app_state,
-            }
+    # R6 compatibility rescue remains text-first. A whole-foreground OCR pass is
+    # much cheaper than Florence/YOLO and is semantically sufficient for a named
+    # chat/search/header workflow. Full visual semantics are disabled by default
+    # for WhatsApp and can be explicitly opted in for unusual icon-only layouts.
+    foreground = computer._foreground()
+    foreground_rect = foreground.get("rect") or {}
+    try:
+        observation = _roi_observation(computer, foreground_rect, purpose="workspace")
+        observations += 1
+        perception.append(_performance_entry(observation))
+    except (RuntimeError, ValueError, OSError) as exc:
+        observation = _fresh_uia_observation(computer)
+        observations += 1
+        roi_failure_reason = (roi_failure_reason + "; " if roi_failure_reason else "") + f"workspace_text: {type(exc).__name__}: {exc}"
+
+    header = _observation_header(observation, contact=contact)
+    if header is not None:
+        result = verified_result(
+            observation,
+            header,
+            source="vision_roi_text" if observation.get("capture_scope") == "roi" else "uia",
+            roi_fastpath=bool(observation.get("capture_scope") == "roi"),
+            route="r6_text_workspace_header",
+        )
+        result["roi_failure_reason"] = roi_failure_reason or None
+        return result
 
     elements = list(observation.get("elements") or [])
-    foreground_rect = (observation.get("foreground") or {}).get("rect") or {}
+    foreground_rect = (observation.get("foreground") or {}).get("rect") or foreground_rect
     search = find_whatsapp_search_target(elements)
     contact_target = find_contact_target(
         elements,
@@ -569,30 +781,22 @@ def open_chat_and_verify(
         foreground_rect=foreground_rect,
     )
 
-    if contact_target is None and search is None and not bool(observation.get("vision_available")):
+    if contact_target is None and search is None and _full_vision_fallback_enabled():
         observation = _fresh_visual_observation(computer)
         observations += 1
         elements = list(observation.get("elements") or [])
         foreground_rect = (observation.get("foreground") or {}).get("rect") or {}
         header = _observation_header(observation, contact=contact)
         if header is not None:
-            return {
-                "app": APP,
-                "contact": contact,
-                "verified": True,
-                "verified_header": _label(header),
-                "header_element_id": header.get("element_id"),
-                "verification_source": "vision",
-                "observation_id": observation.get("observation_id"),
-                "observations": observations,
-                "actions": actions,
-                "messages_sent": 0,
-                "typed_into_composer": False,
-                "action_replay_allowed": False,
-                "roi_fastpath": False,
-                "perception": perception,
-                "app_state": app_state,
-            }
+            result = verified_result(
+                observation,
+                header,
+                source="vision",
+                roi_fastpath=False,
+                route="r6_opt_in_full_visual_scene",
+            )
+            result["roi_failure_reason"] = roi_failure_reason or None
+            return result
         search = find_whatsapp_search_target(elements)
         contact_target = find_contact_target(
             elements,
@@ -623,8 +827,12 @@ def open_chat_and_verify(
             }
         )
         time.sleep(0.35)
-        observation = _fresh_visual_observation(computer)
+        # After search typing, remain text-only. The state-changing type action
+        # is never replayed and full visual semantics are not required to locate
+        # a textual chat result.
+        observation = _roi_observation(computer, foreground_rect, purpose="results")
         observations += 1
+        perception.append(_performance_entry(observation))
         elements = list(observation.get("elements") or [])
         foreground_rect = (observation.get("foreground") or {}).get("rect") or {}
         refreshed_search = find_whatsapp_search_target(elements)
@@ -639,7 +847,7 @@ def open_chat_and_verify(
     if contact_target is None:
         raise RuntimeError(
             f"IRAS searched WhatsApp for {contact!r} but could not uniquely ground "
-            "the contact result. No message was typed or sent."
+            "the contact result. The search input was not replayed and no message was sent."
         )
 
     clicked = computer.action(
@@ -659,11 +867,17 @@ def open_chat_and_verify(
     )
     time.sleep(0.35)
 
-    verification = _fresh_visual_observation(computer)
+    verification = _roi_observation(computer, foreground_rect, purpose="header")
     observations += 1
+    perception.append(_performance_entry(verification))
     header = _observation_header(verification, contact=contact)
     if header is None:
         time.sleep(0.35)
+        verification = _roi_observation(computer, foreground_rect, purpose="header")
+        observations += 1
+        perception.append(_performance_entry(verification))
+        header = _observation_header(verification, contact=contact)
+    if header is None and _full_vision_fallback_enabled():
         verification = _fresh_visual_observation(computer)
         observations += 1
         header = _observation_header(verification, contact=contact)
@@ -671,25 +885,16 @@ def open_chat_and_verify(
     if header is None:
         raise RuntimeError(
             f"WhatsApp navigation completed, but fresh visual evidence did not "
-            f"prove the chat header is {contact!r}. No message was sent."
+            f"prove the chat header is {contact!r}. The click was not replayed "
+            "and no message was sent."
         )
 
-    return {
-        "app": APP,
-        "contact": contact,
-        "verified": True,
-        "verified_header": _label(header),
-        "header_element_id": header.get("element_id"),
-        "verification_source": "vision",
-        "observation_id": verification.get("observation_id"),
-        "observations": observations,
-        "actions": actions,
-        "messages_sent": 0,
-        "typed_into_composer": False,
-        "action_replay_allowed": False,
-        "vision_cache_hit": bool(verification.get("vision_cache_hit")),
-        "roi_fastpath": False,
-        "perception": perception,
-        "app_state": app_state,
-    }
-
+    result = verified_result(
+        verification,
+        header,
+        source="vision_roi_text" if verification.get("capture_scope") == "roi" else "vision",
+        roi_fastpath=bool(verification.get("capture_scope") == "roi"),
+        route="r6_text_only_navigation",
+    )
+    result["roi_failure_reason"] = roi_failure_reason or None
+    return result

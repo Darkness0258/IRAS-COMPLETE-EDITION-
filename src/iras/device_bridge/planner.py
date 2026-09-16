@@ -345,4 +345,3 @@ def planner_system_nudge(
     )
 
 # Historical visual-control planner contract: re-observe after meaningful actions.
-

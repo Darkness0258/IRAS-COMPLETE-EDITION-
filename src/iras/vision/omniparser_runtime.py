@@ -386,6 +386,10 @@ class OmniParserRuntimeManager:
     def bridge_enabled() -> bool:
         return _truthy("IRAS_OMNIPARSER_BRIDGE", default=True)
 
+    @staticmethod
+    def text_prewarm_enabled() -> bool:
+        return _truthy("IRAS_OMNIPARSER_TEXT_PREWARM", default=True)
+
     def _build_command(self) -> tuple[list[str], Path | None]:
         custom = self._custom_command()
         roots = self._candidate_roots()
@@ -445,6 +449,8 @@ class OmniParserRuntimeManager:
                 "--port",
                 str(self._port()),
             ]
+            if self.text_prewarm_enabled():
+                command.append("--prewarm-text")
             return command, workdir
 
         # Compatibility fallback: preload torch before importing the upstream
@@ -626,8 +632,22 @@ class OmniParserRuntimeManager:
                 base_url=self.base_url(),
             )
 
+    def _probe_details(self, *, timeout: float = 1.0) -> dict:
+        url = self.probe_url()
+        if not url:
+            return {}
+        try:
+            with httpx.Client(timeout=max(0.25, min(float(timeout), 5.0))) as client:
+                response = client.get(url, headers=self.headers())
+                response.raise_for_status()
+                data = response.json()
+        except Exception:
+            return {}
+        return data if isinstance(data, dict) else {}
+
     def status(self) -> dict:
         probe = self.probe(timeout=1.0)
+        details = self._probe_details(timeout=1.0) if probe.ready else {}
         data = probe.as_dict()
         data.update(
             {
@@ -638,6 +658,13 @@ class OmniParserRuntimeManager:
                 "runtime_state_path": str(self._runtime_state_path()),
                 "bridge_enabled": self.bridge_enabled(),
                 "text_parse_url": self.text_parse_url() or None,
+                "text_prewarm_enabled": self.text_prewarm_enabled(),
+                "bridge_runtime": details.get("bridge"),
+                "text_model_state": details.get("text_model_state"),
+                "text_model_loaded": details.get("text_model_loaded"),
+                "text_model_warmup_ms": details.get("text_model_warmup_ms"),
+                "text_model_error": details.get("text_model_error"),
+                "full_model_loaded": details.get("full_model_loaded"),
             }
         )
         return data

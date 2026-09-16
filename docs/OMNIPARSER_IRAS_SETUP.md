@@ -169,3 +169,20 @@ Set `IRAS_OMNIPARSER_BRIDGE=false` only to force the older upstream-server
 bootstrap. If a manually started upstream server is already listening, IRAS
 reuses it; ROI text requests automatically fall back to `/parse/` if
 `/parse_text/` is not supported.
+
+## R5 background text warmup
+
+For the IRAS-managed bridge, EasyOCR can be initialized immediately after the
+bridge HTTP service starts instead of waiting for the first `/parse_text/` call.
+This is enabled by default:
+
+```text
+IRAS_OMNIPARSER_TEXT_PREWARM=true
+IRAS_WHATSAPP_COLD_ROI_RETRIES=2
+IRAS_WHATSAPP_COLD_SETTLE_MS=220
+```
+
+`vision status` reports `text_model_state`, `text_model_loaded`, and
+`text_model_warmup_ms` when the active endpoint is the IRAS bridge. Prewarming is
+local model initialization only; it does not capture the screen or perform any
+input action. Set `IRAS_OMNIPARSER_TEXT_PREWARM=false` to disable it.

@@ -17,7 +17,9 @@
     .m{max-width:84%;padding:11px 13px;border-radius:16px;line-height:1.42;white-space:pre-wrap}
     .you{align-self:flex-end;background:#252a38}.iras{align-self:flex-start;background:#161a24;border:1px solid #292f40}
     .bar{position:sticky;bottom:0;background:#0b0d12;padding-top:8px;display:flex;gap:8px}
-    input,button{border:1px solid #313749;background:#121621;color:#fff;border-radius:12px;padding:12px}
+    input,textarea,button{border:1px solid #313749;background:#121621;color:#fff;border-radius:12px;padding:12px}
+    textarea{width:100%;min-height:110px;resize:vertical;font:13px ui-monospace,SFMono-Regular,Consolas,monospace}
+    pre{white-space:pre-wrap;word-break:break-word;background:#0a0c11;border:1px solid #292f40;border-radius:10px;padding:10px;max-height:40vh;overflow:auto}
     #msg{flex:1;font-size:16px}button{cursor:pointer}
     .primary{background:#eef2ff;color:#0b0d12;font-weight:700}
     .active{border-color:#8fa5ff;background:#1e263e}
@@ -32,7 +34,7 @@
 <div class="app">
   <header>
     <div><h1>IRAS</h1><div class="sub">Online assistant · continuous voice</div></div>
-    <button id="settings">Server</button>
+    <div style="display:flex;gap:8px"><button id="screen">Screen</button><button id="direct">Direct</button><button id="remote">Remote</button><button id="settings">Server</button></div>
   </header>
 
   <main id="chat"></main>
@@ -60,11 +62,31 @@
   </div>
 </dialog>
 
+<dialog id="screenDlg" style="max-width:96vw;width:1100px">
+  <h3>Remote Windows screen</h3>
+  <img id="screenImg" alt="Remote screen preview" style="display:block;max-width:100%;max-height:72vh;margin:auto;border-radius:8px">
+  <div class="row" style="margin-top:10px"><button id="refreshScreen">Refresh</button><button id="closeScreen">Close</button></div>
+</dialog>
+
+<dialog id="directDlg">
+  <h3>Direct remote action</h3>
+  <div class="sub" style="margin-bottom:10px">Model-independent control. Every action is still limited by the active remote session and the laptop's local policy.</div>
+  <label>Action</label>
+  <input id="directAction" value="system_info" autocomplete="off">
+  <label>Arguments (JSON object)</label>
+  <textarea id="directArgs">{}</textarea>
+  <pre id="directOut">Ready.</pre>
+  <div class="row"><button id="closeDirect">Close</button><button class="primary" id="runDirect">Invoke</button></div>
+</dialog>
+
 <script>
 const $=s=>document.querySelector(s);
 const chat=$("#chat"),msg=$("#msg"),status=$("#status");
 const cfg=$("#cfg"),server=$("#server"),token=$("#token"),wake=$("#wake");
 const handsButton=$("#handsfree");
+const remoteButton=$("#remote"),screenButton=$("#screen"),directButton=$("#direct");
+const screenDlg=$("#screenDlg"),screenImg=$("#screenImg");
+const directDlg=$("#directDlg"),directAction=$("#directAction"),directArgs=$("#directArgs"),directOut=$("#directOut");
 
 let currentAudio=null,currentAudioUrl=null,currentChatAbort=null;
 let voiceQueue=[],voicePumping=false,voiceSession=0,voiceBuffer="",lastSpokenText="";
@@ -75,7 +97,7 @@ let recognitionHadAudio=false,recognitionHadSpeech=false;
 
 const local=JSON.parse(localStorage.getItem("iras-config")||"{}");
 server.value=local.server||location.origin;
-token.value=local.token||"";
+token.value=sessionStorage.getItem("iras-api-token")||"";
 wake.value=local.wakeWord||"IRAS";
 handsFree=!!local.handsFree;
 
@@ -88,12 +110,119 @@ function add(who,text){
   return d;
 }
 
-function config(){return JSON.parse(localStorage.getItem("iras-config")||"{}")}
+function config(){
+  const stored=JSON.parse(localStorage.getItem("iras-config")||"{}");
+  return {...stored,token:sessionStorage.getItem("iras-api-token")||token.value.trim()};
+}
+
+function remoteSession(){
+  try{return JSON.parse(sessionStorage.getItem("iras-remote-session")||"null")}catch(_){return null}
+}
+
+function setRemoteSession(value){
+  if(value)sessionStorage.setItem("iras-remote-session",JSON.stringify(value));
+  else sessionStorage.removeItem("iras-remote-session");
+  updateRemoteButton();
+}
+
+function updateRemoteButton(){
+  const s=remoteSession();
+  remoteButton.textContent=s?"Remote: "+String(s.mode||"on").replace("_"," "):"Remote";
+  remoteButton.classList.toggle("active",!!s);
+}
+
+function remoteHeaders(){
+  const s=remoteSession();
+  return s?{
+    "X-IRAS-Remote-Session-ID":s.session_id,
+    "X-IRAS-Remote-Token":s.session_token
+  }:{};
+}
+
+async function createRemoteSession(){
+  const c=config();
+  if(!c.token){cfg.showModal();return}
+  const base=c.server||location.origin;
+  status.textContent="Connecting to your Windows PC...";
+  const devicesResponse=await fetch(base+"/v1/devices",{headers:{"Authorization":"Bearer "+c.token}});
+  if(!devicesResponse.ok)throw new Error((await devicesResponse.text())||("HTTP "+devicesResponse.status));
+  const devices=(await devicesResponse.json()).devices||[];
+  const device=devices.find(d=>d.online&&String(d.platform||"").toLowerCase().includes("windows"))||devices.find(d=>d.online);
+  if(!device)throw new Error("No paired IRAS computer is online.");
+  if(!confirm("Enable a 30-minute FULL remote-control session for "+device.display_name+"? The laptop's local policy is still the final permission boundary."))return;
+  const response=await fetch(base+"/v1/remote/sessions",{
+    method:"POST",
+    headers:{"Content-Type":"application/json","Authorization":"Bearer "+c.token,"X-Device-ID":"web"},
+    body:JSON.stringify({device_id:device.device_id,mode:"full",ttl_seconds:1800,scopes:["windows"]})
+  });
+  if(!response.ok)throw new Error((await response.text())||("HTTP "+response.status));
+  const session=await response.json();
+  setRemoteSession(session);
+  status.textContent="Full remote session active for 30 minutes";
+}
+
+async function revokeRemoteSession(){
+  const c=config(),s=remoteSession();
+  if(!s){return}
+  const base=c.server||location.origin;
+  try{await fetch(base+"/v1/remote/sessions/"+encodeURIComponent(s.session_id),{method:"DELETE",headers:{"Authorization":"Bearer "+c.token}})}catch(_){}
+  setRemoteSession(null);
+  status.textContent="Remote session closed";
+}
+
+async function toggleRemote(){
+  try{
+    if(remoteSession())await revokeRemoteSession();
+    else await createRemoteSession();
+  }catch(e){status.textContent="Remote error: "+e.message}
+}
+
+async function invokeRemoteAction(action,args={},timeout=45){
+  const c=config();
+  if(!remoteSession())await createRemoteSession();
+  const active=remoteSession();
+  if(!active)throw new Error("Remote session was not created.");
+  const base=c.server||location.origin;
+  const response=await fetch(base+"/v1/remote/invoke",{
+    method:"POST",
+    headers:{"Content-Type":"application/json","X-Device-ID":"web","X-IRAS-Remote-Token":active.session_token},
+    body:JSON.stringify({session_id:active.session_id,action,arguments:args||{},timeout})
+  });
+  if(!response.ok)throw new Error((await response.text())||("HTTP "+response.status));
+  const data=await response.json();
+  return data.result;
+}
+
+async function refreshRemoteScreen(){
+  status.textContent="Capturing remote screen...";
+  const result=(await invokeRemoteAction("screen_preview",{max_width:1200,quality:62},45))||{};
+  screenImg.src="data:"+(result.mime||"image/jpeg")+";base64,"+(result.base64||"");
+  if(!screenDlg.open)screenDlg.showModal();
+  status.textContent="Remote screen updated";
+}
+
+async function runDirectAction(){
+  const action=directAction.value.trim();
+  if(!action)throw new Error("Action is required.");
+  let args={};
+  const raw=directArgs.value.trim();
+  if(raw){
+    args=JSON.parse(raw);
+    if(!args||Array.isArray(args)||typeof args!=="object")throw new Error("Arguments must be a JSON object.");
+  }
+  directOut.textContent="Running...";
+  status.textContent="Running direct remote action...";
+  const result=await invokeRemoteAction(action,args,60);
+  directOut.textContent=JSON.stringify(result,null,2);
+  status.textContent="Direct remote action completed";
+}
 
 function saveConfig(){
+  const apiToken=token.value.trim();
+  if(apiToken)sessionStorage.setItem("iras-api-token",apiToken);
+  else sessionStorage.removeItem("iras-api-token");
   localStorage.setItem("iras-config",JSON.stringify({
     server:server.value.trim().replace(/\/$/,""),
-    token:token.value.trim(),
     wakeWord:(wake.value.trim()||"IRAS"),
     handsFree
   }));
@@ -234,7 +363,8 @@ async function fetchVoice(text,session){
     headers:{
       "Content-Type":"application/json",
       "Authorization":"Bearer "+c.token,
-      "X-Device-ID":"web"
+      "X-Device-ID":"web",
+      ...remoteHeaders()
     },
     body:JSON.stringify({text})
   });
@@ -330,7 +460,8 @@ async function legacyReply(base,c,text,bubble,session,signal){
     headers:{
       "Content-Type":"application/json",
       "Authorization":"Bearer "+c.token,
-      "X-Device-ID":"web"
+      "X-Device-ID":"web",
+      ...remoteHeaders()
     },
     body:JSON.stringify({message:text,device_id:"web"})
   });
@@ -350,7 +481,8 @@ async function streamReply(base,c,text,bubble,session,signal){
       "Content-Type":"application/json",
       "Accept":"text/event-stream",
       "Authorization":"Bearer "+c.token,
-      "X-Device-ID":"web"
+      "X-Device-ID":"web",
+      ...remoteHeaders()
     },
     body:JSON.stringify({message:text,device_id:"web"})
   });
@@ -730,9 +862,7 @@ function persistHandsFree(){
   const c=config();
 
   localStorage.setItem("iras-config",JSON.stringify({
-    ...c,
     server:c.server||server.value.trim().replace(/\/$/,""),
-    token:c.token||token.value.trim(),
     wakeWord:wakeWord(),
     handsFree
   }));
@@ -769,6 +899,14 @@ async function toggleHandsFree(){
 }
 
 $("#settings").onclick=()=>cfg.showModal();
+remoteButton.onclick=toggleRemote;
+screenButton.onclick=()=>refreshRemoteScreen().catch(e=>status.textContent="Screen error: "+e.message);
+directButton.onclick=()=>directDlg.showModal();
+$("#runDirect").onclick=()=>runDirectAction().catch(e=>{directOut.textContent="Error: "+e.message;status.textContent="Direct remote error"});
+$("#closeDirect").onclick=()=>directDlg.close();
+$("#refreshScreen").onclick=()=>refreshRemoteScreen().catch(e=>status.textContent="Screen error: "+e.message);
+$("#closeScreen").onclick=()=>screenDlg.close();
+updateRemoteButton();
 $("#cancelCfg").onclick=()=>cfg.close();
 $("#saveCfg").onclick=()=>{
   saveConfig();

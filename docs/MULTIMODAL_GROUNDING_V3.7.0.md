@@ -127,3 +127,24 @@ R4 observations include timing telemetry (`capture_ms`, HTTP/vision time, server
 latency, cache hit, source/input pixels, and total ROI observation time) so real
 Windows runs can identify whether remaining latency is capture, OCR, model load,
 or full semantic parsing.
+
+## R5 cold-start hardening
+
+R5 targets the first-run case where the bridge is starting and WhatsApp has only
+just been focused. The bridge begins EasyOCR initialization in the background,
+while the controller focuses the app. The first actionable observation still
+captures fresh pixels and receives a new single-use observation ID; prewarming is
+only model/runtime preparation and grants no action authority.
+
+The WhatsApp route now uses this order before full semantic parsing:
+
+1. right-side header ROI — finish immediately if the requested chat is already open;
+2. narrow left-side search ROI — bounded text-only retries cover delayed WebView paint;
+3. optional UIA-only read for the global search control;
+4. text-only results ROI after one grounded search input;
+5. text-only header ROI retries after one grounded contact click;
+6. full visual compatibility fallback only when no state-changing ROI action has occurred.
+
+After a search input or contact click, failure to observe the next semantic state
+does not authorize the same input again. The workflow fails closed or broadens
+read-only evidence only, preserving `action_replay_allowed = false`.

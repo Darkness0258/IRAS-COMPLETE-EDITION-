@@ -1015,6 +1015,20 @@ class IRASAgent:
                 fastpath_extra += f" observations={result.output.get('observations')}"
             if result.output.get("roi_fastpath") is not None:
                 fastpath_extra += f" roi={bool(result.output.get('roi_fastpath'))}"
+            route = str(result.output.get("route") or "").strip()
+            if route:
+                fastpath_extra += f" route={route}"
+            prewarm = result.output.get("prewarm")
+            if isinstance(prewarm, dict) and prewarm.get("started"):
+                state = "ready" if prewarm.get("ready") else (
+                    "pending" if not prewarm.get("complete") else "not_ready"
+                )
+                fastpath_extra += f" prewarm={state}"
+                if prewarm.get("elapsed_ms") is not None:
+                    try:
+                        fastpath_extra += f" prewarm_ms={int(prewarm.get('elapsed_ms'))}"
+                    except (TypeError, ValueError):
+                        pass
 
         print(
             "[IRAS DEVICE FASTPATH] "

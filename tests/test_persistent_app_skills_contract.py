@@ -38,6 +38,13 @@ def test_task_tracker_persists_only_verified_semantic_trace():
     assert "learnable_steps" in source
 
 
-def test_version_is_346():
-    assert "3.7.0" in text("src/iras/__init__.py")
-    assert 'version = "3.7.0"' in text("pyproject.toml")
+def test_version_is_346_or_newer():
+    import re
+    init = text("src/iras/__init__.py")
+    project = text("pyproject.toml")
+    im = re.search(r'__version__\s*=\s*"(\d+)\.(\d+)\.(\d+)', init)
+    pm = re.search(r'(?m)^version\s*=\s*"(\d+)\.(\d+)\.(\d+)', project)
+    assert im is not None and pm is not None
+    version = tuple(int(x) for x in im.groups())
+    assert version >= (3, 4, 6)
+    assert tuple(int(x) for x in pm.groups()) == version

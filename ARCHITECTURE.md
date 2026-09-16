@@ -198,3 +198,78 @@ text grounding for narrow ROIs; `/parse/` lazily initializes the full upstream
 OmniParser when richer icon semantics are required. Existing external/upstream
 servers remain supported because a missing text endpoint falls back to full
 parsing of the same bounded image.
+
+### v3.7 R5 cold-start text prewarm and bounded ROI retries
+
+The IRAS-managed OmniParser bridge now starts EasyOCR warmup in a background
+thread after the HTTP service becomes available. The WhatsApp fast path can begin
+that local runtime startup concurrently with application focus, then consume the
+same initialized OCR reader when the first ROI request arrives. `/probe/` exposes
+text-model warmup state for diagnostics; full Florence/YOLO initialization remains
+lazy and separate.
+
+Cold navigation no longer broadens to full-scene vision after one empty top-band
+OCR result. The controller checks the right header, then a narrow left search
+region with bounded read-only retries, may consult UIA without vision, and checks
+text-only search results before any full semantic fallback. Once search typing or
+a contact click has occurred, that state-changing action is never automatically
+replayed; only fresh read-only evidence may follow it.
+
+## v4.0 RC1 — Permissioned Worldwide Windows Agent
+
+v4 adds an outbound-only Windows device bridge as the preferred remote-control
+transport. The laptop initiates HTTPS long-polling to IRAS Cloud, so the design
+requires no router port forwarding or inbound Windows listener. Pairing/API
+secrets are persisted with Windows DPAPI and a visible per-user scheduled task
+starts the bridge at logon.
+
+Remote authorization uses independent layers:
+
+1. the cloud master API token authorizes creation of a short-lived session;
+2. that session is bound to one paired device, has an expiry and permission cap,
+   and stores only a token hash server-side;
+3. the Windows bridge independently classifies every action;
+4. the locally persisted `RemoteAccessPolicy` is the final maximum permission;
+5. restart/shutdown and explicit executable execution require additional local
+   opt-ins even in full mode;
+6. `EmergencyStop` blocks `DeviceExecutor` below model/tool planning and can be
+   cleared only locally.
+
+The cloud model therefore cannot turn a read-only or locally disarmed laptop into
+an unrestricted machine merely by selecting a different tool.
+
+### Generic deterministic Windows primitives
+
+v4 promotes the successful app-specific closed-loop pattern into reusable
+controller primitives: fresh find/wait/click/type/scroll operations over semantic
+UI elements and a `SemanticVerifier` for terminal filesystem, process, foreground,
+and visible-text state. Ambiguous duplicate text fails closed; a click/type/scroll
+consumes its observation and is never automatically replayed.
+
+### Remote administration surface
+
+The paired executor supports bounded screen preview, app/UI control, clipboard,
+processes, allowed-root file read/write/copy/move/delete, semantic verification,
+and an explicit critical executable+argv primitive. The latter always uses
+`shell=False`; launching a shell program itself is a separate full-mode user
+choice and requires the laptop's command-execution opt-in.
+
+The hosted web UI can mint a short-lived remote session and request screen
+previews. Both the master token and remote session token are browser-session
+secrets rather than persistent local-storage credentials.
+
+### R6 text-first cold perception
+
+For WhatsApp named-chat navigation, a cold miss no longer automatically implies
+full Florence/YOLO initialization. After bounded header/search/result ROIs, the
+controller can use a whole-foreground **text-only** OCR rescue. The normal path
+therefore remains UIA/EasyOCR-only and `IRAS_WHATSAPP_FULL_VISION_FALLBACK=false`
+by default. Full visual semantics remain an explicit last-resort compatibility
+option for unusual icon-only layouts.
+
+### Last-mile trust boundary
+
+IRAS does not bypass Windows authentication, lock screen, BitLocker, UAC secure
+desktop, or credential prompts. GUI control requires an interactive logged-in
+user session. This is a deliberate security boundary, not a missing remote-access
+feature.

@@ -1,204 +1,182 @@
-# IRAS 3.7.0 — Intelligent Responsive Autonomous System
+# IRAS 4.0.0 RC1 — Permissioned Personal Windows Agent
 
-IRAS is a local-first, permissioned AI agent for Windows and paired devices. It combines conversational AI, voice, files, browser/system tools, Windows UI control, persistent memory, automation, remote nodes, and a verified recovery loop for computer-use tasks.
+IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, and a secure outbound bridge for controlling an authorized laptop from IRAS Cloud anywhere in the world.
 
-The current development branch is **v3.7.0 multimodal**; the frozen stable release is **v3.6.0**. Historical milestone notes and one-off validators are intentionally not kept in the active tree; Git history is the release archive.
+**Release status:** `4.0.0-rc1` is the production-candidate development line. The frozen stable baseline remains v3.6.0; v3.7 multimodal work is incorporated into this RC.
 
-## Core capabilities
+## What v4 adds
 
-- Multi-step agent/tool loop with bounded execution.
-- OpenRouter/OpenAI-compatible and Ollama-compatible providers.
-- Persistent SQLite conversation/fact memory.
-- Dynamic permission engine and audit logging with secret redaction.
-- File, Git, browser, HTTP, system, application, screenshot, and scheduling tools.
-- Voice output with Edge TTS and Windows fallback; optional local Whisper STT.
-- CLI, Tkinter desktop UI, localhost FastAPI service, remote-node service, and paired clients.
-- Windows computer control using semantic UI Automation plus a v3.7 multimodal scene graph for foreground/desktop vision.
-- On-demand local OmniParser autostart for WebView/Electron/custom-rendered visual grounding when configured/discoverable.
-- Stable grounded element IDs with confidence/provenance and one-state-changing-input-per-observation binding.
-- Closed-loop `observe -> ground -> act -> re-observe -> verify` execution.
-- Bounded recovery, adaptive route scoring, context-aware route learning, confidence calibration, stale-learning quarantine, and no failed-action replay.
-- v3.6 ephemeral cross-app workflow memory with verification provenance and fresh destination grounding.
-- Bounded autonomous decision supervisor: resolves safe session context, chooses next reversible steps, suppresses planner scratchpad, and keeps permissions/verification authoritative.
+- **Worldwide Windows access without opening an inbound laptop port.** `iras-device` long-polls IRAS Cloud over outbound HTTPS.
+- **Two-key remote security.** A short-lived cloud remote session is necessary but never sufficient; the laptop's locally armed `RemoteAccessPolicy` is the final permission boundary.
+- **Windows DPAPI secret protection.** Pairing and cloud API credentials stored by the bridge are encrypted to the current Windows user.
+- **Controller-level emergency stop.** It blocks local/remote `DeviceExecutor` actions below the model layer and can only be cleared locally.
+- **Full administration primitives.** Screen preview, app/UI control, files, clipboard, processes, semantic verification, browser automation, and explicit critical command/power operations when locally enabled.
+- **Generic verified UI primitives.** Find/wait/click/type/scroll by freshly grounded semantic text instead of guessed coordinates.
+- **Semantic terminal verification.** Verify visible text, foreground title, process state, and filesystem state before claiming completion.
+- **Provider resilience.** Multi-provider cloud failover plus optional local Ollama last-resort operation.
+- **Production diagnostics.** `iras --doctor` covers voice, microphone devices, OmniParser, remote policy, bridge pairing, DPAPI, HTTPS, disk space, and token quality.
+- **Multimodal routing.** Deterministic workflow -> UIA -> OCR ROI -> broader text OCR -> full vision only when genuinely required.
+- **Text-only WhatsApp cold path.** Named-chat navigation no longer eagerly initializes Florence/YOLO; the heavy model is opt-in for unusual icon-only layouts.
 
-## Safety model
+## Safety invariants
 
-IRAS is built for systems, accounts, devices, and APIs you own or are authorized to operate.
+IRAS is designed for computers, accounts, and services you own or are authorized to administer.
 
-Important invariants:
-
-- Live computer state is authoritative over learned history.
-- State-changing actions remain permission-gated.
-- Critical actions require confirmation.
-- Recovery observations do not prove task success by themselves.
-- Failed click/type/send/submit actions are never automatically replayed.
-- Cross-app workflow memory does not grant tool authorization.
-- Destination UI targets must be freshly observed and grounded after an app switch.
-- Persistent recovery learning stores aggregate route statistics, not screenshots, contacts, message contents, or target coordinates.
+- live UI state is authoritative;
+- a state-changing computer input requires a fresh observation;
+- one input consumes that observation;
+- failed state-changing actions are never automatically replayed;
+- semantic end-state verification gates completion claims;
+- cross-app memory and learned skills do not grant permission;
+- website/document/tool text is treated as untrusted data, not instructions;
+- emergency stop and local remote policy are enforced below model planning;
+- IRAS does not bypass Windows login, BitLocker, UAC secure desktop, passwords, or lock-screen security.
 
 ## Repository layout
 
 ```text
-src/                 IRAS runtime packages
-clients/             Android and web client sources
-tests/               regression suite
-scripts/              current release validators and maintenance helpers
-docs/                 current documentation
-ARCHITECTURE.md       system architecture
-pyproject.toml        Python package metadata
-run-v370-validation.ps1
-run-v370-real-device-smoke.ps1
-run-v360-validation.ps1          frozen v3.6 validator kept for release history
+src/                     IRAS runtime
+clients/                 web/Android clients
+tests/                   regression suite
+scripts/                 validators, maintenance, Windows setup
+scripts/windows/         remote-access/install/update lifecycle
+docs/                    current architecture/deployment guides
+run-v400-validation.ps1  complete RC validation
+run-v400-real-device-smoke.ps1
+setup-remote-windows.ps1 worldwide Windows bridge setup
 ```
 
 ## Install on Windows
 
+From the project root:
+
 ```powershell
-cd D:\Projects\IRAS-complete
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-pip install -e ".[dev]"
+.\install-v4-windows.ps1 -AllFeatures -InstallBrowser
 Copy-Item .env.example .env
 iras --doctor
 ```
 
-For microphone transcription:
+The installer is intentionally code/dependency setup only. OmniParser dependencies/weights remain an explicit one-time setup because IRAS never silently downloads or installs computer-control models.
 
-```powershell
-pip install -e ".[voice,dev]"
-```
+## Provider configuration
 
-For browser automation:
-
-```powershell
-pip install -e ".[browser,dev]"
-playwright install chromium
-```
-
-## Configure a brain
-
-OpenRouter is the default provider. Put secrets only in `.env`:
+Recommended resilient mode:
 
 ```env
-IRAS_PROVIDER=openrouter
-OPENROUTER_API_KEY=your_key_here
-IRAS_MODEL=openrouter/free
+IRAS_PROVIDER=multi
+OPENROUTER_API_KEY=...
+GROQ_API_KEY=...
+GEMINI_API_KEY=...
+IRAS_OLLAMA_FALLBACK=true
+IRAS_OLLAMA_MODEL=qwen2.5-coder:7b
 ```
 
-For Ollama:
+IRAS will use whichever configured providers are healthy. Recognized deterministic Windows workflows can complete with zero LLM rounds.
 
-```env
-IRAS_PROVIDER=ollama
-IRAS_BASE_URL=http://127.0.0.1:11434/v1
-IRAS_MODEL=qwen2.5-coder:7b
-IRAS_API_KEY=
-```
-
-Use a tool/function-calling model for autonomous workflows.
-
-## Main commands
+## Local commands
 
 ```powershell
-iras                 # interactive agent
-iras --doctor        # diagnostics
-iras --tools         # capabilities
-iras --voice-test    # TTS diagnostic
-iras-desktop         # desktop UI
-iras-api             # localhost API
-iras-node             # authenticated remote node
-iras-scheduler        # scheduled-prompt worker
+iras                              # interactive agent
+iras --doctor                     # production health report
+iras --tools                      # registered capabilities
+iras --voice-test                 # TTS diagnostic
+iras --remote-status              # local remote policy
+iras --remote-arm full --remote-persistent
+iras --remote-disarm              # remote-only local kill switch
+iras --emergency-stop             # block computer actions at controller layer
+iras --emergency-clear            # local-only recovery
+iras-device --status              # outbound bridge status (redacted)
 ```
 
-Voice commands inside the CLI include `voice on`, `voice off`, `voice test`, and `listen`.
+`IRAS_MIC_DEVICE` selects a microphone device by sounddevice index or name when Windows default input is unsuitable.
 
-## Permission levels
+## Worldwide Windows access
 
-| Level | Meaning | Typical examples |
-|---|---|---|
-| 0 | READ | read file, system info, Git status |
-| 1 | SAFE_ACTION | launch normal app, open URL, create folder |
-| 2 | SYSTEM_ACTION | shell execution, write/move files, browser click |
-| 3 | CRITICAL | destructive delete, force push, dangerous shell patterns |
+Deploy `iras-cloud` over HTTPS with a strong random `IRAS_API_TOKEN` and persistent `DATABASE_URL`. For full sessions set:
 
-Levels 0–1 may run automatically under the default policy. Levels 2–3 require approval; critical actions remain explicitly confirmed.
+```text
+IRAS_REMOTE_SESSION_MAX_PERMISSION_LEVEL=3
+```
+
+Then configure the laptop:
+
+```powershell
+.\setup-remote-windows.ps1 `
+  -ServerUrl https://iras-cloud-abc1.onrender.com `
+  -Mode full `
+  -FullFileSystem
+```
+
+For restart/shutdown or explicit command execution, add `-AllowPower` and/or `-AllowCommand`. Those capabilities are not silently implied by full mode.
+
+The setup registers **IRAS Remote Windows Agent** in Task Scheduler at user logon. The bridge opens no inbound Windows port; the laptop initiates the HTTPS connection to the cloud.
+The task may run on battery, but IRAS does not silently change Windows sleep/hibernation or weaken lock-screen/UAC settings. Configure power behavior separately if you need 24/7 reachability.
+
+From the hosted web client, enter the server + API token for the current browser session, click **Remote**, and optionally **Screen**. **Direct** provides a model-independent remote action console, so core administration does not depend on an LLM being available. The client creates a short-lived device-bound session. The master token and remote session token are stored in browser `sessionStorage`, not persistent `localStorage`.
+
+See `docs/REMOTE_WINDOWS_ACCESS_V4.md`.
+
+## Remote permission levels
+
+| Mode | Maximum | Examples |
+|---|---:|---|
+| `read_only` | READ | system info, screen preview, UI/file/process reads, verification |
+| `control` | SYSTEM_ACTION | app/UI control, file writes/moves, clipboard writes |
+| `full` | CRITICAL | destructive delete; power/command still require separate laptop opt-ins |
+
+Cloud sessions have their own server-side cap and expiry. The laptop's local policy always remains final.
 
 ## Windows computer control
 
-IRAS uses a layered computer-use controller:
+Preferred execution route:
 
-1. Observe the foreground or desktop.
-2. Prefer semantic Windows UI Automation when actionable controls exist.
-3. Escalate to foreground OmniParser grounding when UIA is insufficient; local OmniParser is auto-started on demand when configured/discoverable.
-4. In auto scope, broaden once to desktop vision only if foreground grounding gives no usable result.
-5. Fuse UIA + vision into a stable scene graph with confidence/provenance.
-6. Act only against a fresh grounded observation/element binding; one state-changing input consumes that binding.
-7. Re-observe and verify state plus semantic outcome.
-8. If verification fails, select a bounded recovery route without replaying the failed state-changing action.
+```text
+known deterministic workflow
+  -> UI Automation
+  -> text/OCR region-of-interest
+  -> broader text-only foreground grounding
+  -> full OmniParser visual semantics only if necessary
+  -> model planning only where deterministic control cannot resolve the goal
+```
 
-For the navigation-only WhatsApp goal “open a named chat and visually verify the
-header without sending,” v3.7 includes a deterministic controller fast path. It
-uses zero model rounds, never touches the message composer, and requires fresh
-visual header proof before claiming success. Exact repeated visual parses may be
-reused only when the freshly captured screenshot SHA-256 is identical.
+All state-changing universal computer actions bind to an observed element ID. Raw model-authored coordinates are not accepted as a substitute for fresh grounding.
 
-See `docs/OMNIPARSER_IRAS_SETUP.md` and `docs/MULTIMODAL_GROUNDING_V3.7.0.md`.
+The WhatsApp “open named chat and verify header, do not send” workflow remains model-free, never touches the composer, never presses Enter, and requires fresh right-pane header proof. Full Florence/YOLO fallback is disabled by default for this text-semantic workflow.
 
-## v3.6 cross-app workflow memory
+## Browser, files, and system administration
 
-Within one workflow, semantically verified facts can survive an app transition. The handoff records source-app and verification provenance, remains ephemeral, does not authorize tools, and requires the destination app to be freshly observed before the next action.
+Browser tools include navigation, text extraction, semantic click/fill, uploads, text waits, tabs, switching, back/forward, and screenshots. Device tools provide allowed-root filesystem operations, process listing/termination, clipboard, screen preview, verified UI primitives, and terminal-state verification.
 
-See `docs/CROSS_APP_WORKFLOW_MEMORY_V3.6.0.md`.
+Critical `device_run_command` is not a generic hidden shell: it accepts one explicit executable + argv and invokes it with `shell=False`. It is unreachable remotely unless both a full cloud session **and** laptop-side command opt-in are active.
+
+## Persistent skills and workflow memory
+
+Verified successful semantic procedures can be learned as app skills. Skill confidence, failures, and consecutive-failure demotion are persisted; raw coordinates are not trusted as durable locators. Cross-app workflow facts remain provenance-bearing context, not authorization, and destination UI is always re-grounded.
 
 ## Validation
 
-Run the current v3.7 development validation before pushing:
+After all code changes run one complete gate:
 
 ```powershell
-.\run-v370-validation.ps1
+.\run-v400-validation.ps1
 ```
 
-It performs:
-
-- clean-tree/release hygiene checks,
-- the integrated v3.6 safety-invariant validation,
-- the v3.7 multimodal/autostart invariant validation,
-- Python compile validation,
-- the complete regression suite.
-
-After pushing, run the read-only Windows device smoke test:
+Then run the read-only target-machine smoke test:
 
 ```powershell
-.\run-v370-real-device-smoke.ps1
+.\run-v400-real-device-smoke.ps1
 ```
 
-The smoke test reads system/UI state only; it does not click, type, send, submit, delete, or close anything.
+The real worldwide-network acceptance checklist is in `docs/REMOTE_ACCEPTANCE_CHECKLIST_V4.md`. Automated tests cannot prove an external HTTPS route, physical audio hardware, or third-party UI rendering from a build container, so those are explicit last-mile acceptance checks rather than hidden assumptions.
 
-## API and remote-node security
+## Documentation
 
-`iras-api` binds to localhost by default. If exposed over a network, configure a strong `IRAS_API_TOKEN` and put the service behind TLS/authentication. Remote nodes require a bearer token and enforce an independent permission cap.
-
-Authenticated API secrets should be stored as `IRAS_SECRET_*` environment variables. The model references the variable name; raw secret values are injected inside the tool layer rather than placed in model tool arguments.
-
-## Cloud and client docs
-
-Current deployment/build documentation is under `docs/`:
-
-- `docs/CLOUD_ARCHITECTURE.md`
-- `docs/CLOUD_DEPLOY.md`
-- `docs/RENDER_SUPABASE_DEPLOY.md`
-- `docs/BUILD_APPS.md`
-
-## Development rule
-
-Keep the active tree focused on current code, current docs, regression tests, and current release tooling. Historical release notes belong in Git history rather than as duplicated root files or executable one-off validators.
-
-### v3.7 R4 performance hardening
-
-The deterministic WhatsApp visual-navigation path now uses controller-owned
-regions of interest plus a lightweight text-only OmniParser bridge when IRAS
-starts the local vision service. This avoids full Florence/icon captioning for
-simple search-result/header text, preserves absolute grounded coordinates, keeps
-fresh single-use action observations, and falls back to normal full OmniParser
-when richer semantics are necessary. ROI timing telemetry is returned internally
-for benchmarking cold vs warm Windows performance.
+- `docs/REMOTE_WINDOWS_ACCESS_V4.md` — secure worldwide Windows control.
+- `docs/PRODUCTION_READINESS_V4.md` — v4 reliability/security contract.
+- `docs/REMOTE_ACCEPTANCE_CHECKLIST_V4.md` — one final real-device acceptance run.
+- `docs/MULTIMODAL_GROUNDING_V3.7.0.md` — scene graph and visual grounding.
+- `docs/OMNIPARSER_IRAS_SETUP.md` — local OmniParser setup/lifecycle.
+- `docs/CLOUD_DEPLOY.md` / `RENDER_SUPABASE_DEPLOY.md` — hosted deployment.

@@ -138,6 +138,7 @@ def main() -> None:
                 OmniParserRuntimeManager.bridge_enabled()
                 and OmniParserRuntimeManager.text_parse_url().endswith("/parse_text/")
             )
+            r5_text_prewarm = OmniParserRuntimeManager.text_prewarm_enabled()
         finally:
             if old_url is not None:
                 os.environ["IRAS_OMNIPARSER_URL"] = old_url
@@ -155,6 +156,7 @@ def main() -> None:
         assert visual["provenance"]["backend"] == "omniparser"
         assert default_lazy_autostart
         assert r4_bridge_enabled
+        assert r5_text_prewarm
         assert whatsapp_fastpath == {
             "tool": "device_whatsapp_open_chat",
             "arguments": {"contact": "Darkness"},
@@ -172,6 +174,7 @@ def main() -> None:
         print("VISUAL PROVENANCE:", visual["provenance"]["backend"])
         print("OMNIPARSER LAZY AUTOSTART DEFAULT:", default_lazy_autostart)
         print("R4 TEXT ROI BRIDGE ENABLED:", r4_bridge_enabled)
+        print("R5 TEXT MODEL PREWARM DEFAULT:", r5_text_prewarm)
         print("WHATSAPP VISUAL FASTPATH:", whatsapp_fastpath["tool"])
         print("RESULT: PASS")
 

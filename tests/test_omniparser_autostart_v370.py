@@ -19,6 +19,7 @@ def test_v370_omniparser_defaults_to_lazy_local_autostart(monkeypatch):
     assert OmniParserRuntimeManager.text_parse_url().endswith("/parse_text/")
     assert OmniParserRuntimeManager.probe_url().endswith("/probe/")
     assert OmniParserRuntimeManager.bridge_enabled() is True
+    assert OmniParserRuntimeManager.text_prewarm_enabled() is True
 
 
 def test_v370_omniparser_can_be_fully_disabled(monkeypatch):
@@ -153,6 +154,7 @@ def test_v370_default_server_command_uses_lazy_iras_bridge(monkeypatch, tmp_path
     assert str(root.resolve()) in command
     assert "--caption-model-name" in command
     assert "--host" in command
+    assert "--prewarm-text" in command
     assert cwd == server.resolve()
 
 
@@ -196,3 +198,56 @@ def test_v370_runtime_ownership_survives_manager_instance_boundary(monkeypatch):
     )
 
     assert manager._owned_runtime_pid() == 4242
+
+
+
+def test_v370_text_prewarm_can_be_disabled(monkeypatch, tmp_path):
+    root = tmp_path / "OmniParser"
+    server = root / "omnitool" / "omniparserserver"
+    python = root / ".venv" / ("Scripts/python.exe" if __import__("os").name == "nt" else "bin/python")
+    server.mkdir(parents=True)
+    python.parent.mkdir(parents=True)
+    python.write_text("", encoding="utf-8")
+    monkeypatch.setenv("IRAS_OMNIPARSER_ROOT", str(root))
+    monkeypatch.setenv("IRAS_OMNIPARSER_TEXT_PREWARM", "false")
+    monkeypatch.delenv("IRAS_OMNIPARSER_START_JSON", raising=False)
+    monkeypatch.delenv("IRAS_OMNIPARSER_START_COMMAND", raising=False)
+
+    command, _ = OmniParserRuntimeManager()._build_command()
+
+    assert "--prewarm-text" not in command
+
+
+def test_v370_status_surfaces_bridge_text_warmup_state(monkeypatch):
+    manager = OmniParserRuntimeManager()
+    monkeypatch.setattr(
+        manager,
+        "probe",
+        lambda **_: RuntimeProbe(
+            ready=True,
+            status="ready",
+            pid=4242,
+            started_by_iras=True,
+            base_url="http://127.0.0.1:8010",
+        ),
+    )
+    monkeypatch.setattr(
+        manager,
+        "_probe_details",
+        lambda **_: {
+            "bridge": "iras-v3.7-r5",
+            "text_model_state": "ready",
+            "text_model_loaded": True,
+            "text_model_warmup_ms": 4321,
+            "text_model_error": None,
+            "full_model_loaded": False,
+        },
+    )
+
+    status = manager.status()
+
+    assert status["bridge_runtime"] == "iras-v3.7-r5"
+    assert status["text_model_state"] == "ready"
+    assert status["text_model_loaded"] is True
+    assert status["text_model_warmup_ms"] == 4321
+    assert status["full_model_loaded"] is False

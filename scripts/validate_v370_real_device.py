@@ -14,7 +14,7 @@ from iras.device_bridge.executor import DeviceExecutor
 
 
 def main() -> None:
-    print("=== IRAS v3.7.0 READ-ONLY REAL DEVICE SMOKE TEST ===")
+    print("=== IRAS v3.7+ READ-ONLY REAL DEVICE SMOKE TEST ===")
     print("IRAS VERSION:", __version__)
     print("OS:", platform.system(), platform.release())
 
@@ -36,7 +36,10 @@ def main() -> None:
     observation_id = str(observation.get("observation_id") or "")
     elements = observation.get("elements") or []
 
-    assert __version__ == "3.7.0"
+    import re
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", __version__)
+    assert match is not None
+    assert tuple(int(part) for part in match.groups()) >= (3, 7, 0)
     assert info
     assert status
     assert observation_id

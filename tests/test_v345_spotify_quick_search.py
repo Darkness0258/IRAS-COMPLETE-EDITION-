@@ -78,8 +78,8 @@ def test_v345_or_newer_version_contract():
 
     init = (ROOT / 'src/iras/__init__.py').read_text(encoding='utf-8')
     project = (ROOT / 'pyproject.toml').read_text(encoding='utf-8')
-    im = re.search(r'__version__\s*=\s*"(\d+)\.(\d+)\.(\d+)"', init)
-    pm = re.search(r'(?m)^version\s*=\s*"(\d+)\.(\d+)\.(\d+)"', project)
+    im = re.search(r'__version__\s*=\s*"(\d+)\.(\d+)\.(\d+)', init)
+    pm = re.search(r'(?m)^version\s*=\s*"(\d+)\.(\d+)\.(\d+)', project)
     assert im is not None and pm is not None
     version = tuple(int(x) for x in im.groups())
     assert version >= (3, 4, 5)

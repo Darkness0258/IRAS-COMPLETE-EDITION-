@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import io
 import json
 import os
 import platform
@@ -27,6 +30,9 @@ from iras.device_bridge.computer_use import (
 from iras.device_bridge.whatsapp_workflow import (
     open_chat_and_verify as open_whatsapp_chat_and_verify,
 )
+from iras.device_bridge.primitives import VerifiedUIPrimitives
+from iras.device_bridge.verifiers import SemanticVerifier
+from iras.safety_runtime import EmergencyStop
 
 
 DEFAULT_CAPABILITIES = [
@@ -52,6 +58,24 @@ DEFAULT_CAPABILITIES = [
     "spotify_search",
     "spotify_play",
     "media_control",
+    "screen_preview",
+    "list_processes",
+    "kill_process",
+    "write_text",
+    "make_directory",
+    "copy_path",
+    "move_path",
+    "delete_path",
+    "clipboard_get",
+    "clipboard_set",
+    "ui_find_text",
+    "ui_click_text",
+    "ui_type_text",
+    "ui_wait_text",
+    "ui_scroll_until_text",
+    "verify_state",
+    "power_action",
+    "run_command",
 ]
 
 
@@ -114,6 +138,9 @@ class DeviceExecutor:
             self.ui,
             self.visual,
         )
+        self.primitives = VerifiedUIPrimitives(self.ui, self.computer)
+        self.verifier = SemanticVerifier(self)
+        self.emergency_stop = EmergencyStop()
 
     @staticmethod
     def default_roots() -> list[str]:
@@ -192,6 +219,7 @@ class DeviceExecutor:
             arguments
             or {}
         )
+        self.emergency_stop.assert_clear()
 
         handlers = {
             "system_info": self.system_info,
@@ -216,6 +244,24 @@ class DeviceExecutor:
             "spotify_search": self.spotify_search,
             "spotify_play": self.spotify_play,
             "media_control": self.media_control,
+            "screen_preview": self.screen_preview,
+            "list_processes": self.list_processes,
+            "kill_process": self.kill_process,
+            "write_text": self.write_text,
+            "make_directory": self.make_directory,
+            "copy_path": self.copy_path,
+            "move_path": self.move_path,
+            "delete_path": self.delete_path,
+            "clipboard_get": self.clipboard_get,
+            "clipboard_set": self.clipboard_set,
+            "ui_find_text": self.ui_find_text,
+            "ui_click_text": self.ui_click_text,
+            "ui_type_text": self.ui_type_text,
+            "ui_wait_text": self.ui_wait_text,
+            "ui_scroll_until_text": self.ui_scroll_until_text,
+            "verify_state": self.verify_state,
+            "power_action": self.power_action,
+            "run_command": self.run_command,
         }
 
         handler = handlers.get(
@@ -844,4 +890,235 @@ class DeviceExecutor:
             "bytes": (
                 target.stat().st_size
             ),
+        }
+
+
+    def screen_preview(self, max_width: int = 1100, quality: int = 62):
+        """Return a bounded JPEG preview suitable for an authenticated remote UI."""
+        from PIL import ImageGrab
+
+        max_width = max(480, min(int(max_width), 1600))
+        quality = max(40, min(int(quality), 82))
+        image = ImageGrab.grab(all_screens=True).convert("RGB")
+        source_size = image.size
+        if image.width > max_width:
+            ratio = max_width / float(image.width)
+            image = image.resize((max_width, max(1, int(image.height * ratio))))
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=quality, optimize=True)
+        raw = buffer.getvalue()
+        if len(raw) > 2_500_000:
+            raise RuntimeError("Remote screen preview exceeded the bounded payload size.")
+        return {
+            "mime": "image/jpeg",
+            "base64": base64.b64encode(raw).decode("ascii"),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "width": image.width,
+            "height": image.height,
+            "source_width": source_size[0],
+            "source_height": source_size[1],
+            "bytes": len(raw),
+        }
+
+    def list_processes(self, limit: int = 300):
+        limit = max(1, min(int(limit), 1000))
+        if os.name == "nt":
+            result = subprocess.run(
+                ["tasklist", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=20,
+                shell=False,
+            )
+            lines = [line for line in result.stdout.splitlines() if line.strip()]
+            return {"processes": lines[:limit], "returncode": result.returncode}
+        result = subprocess.run(
+            ["ps", "-eo", "pid,comm,%cpu,%mem"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=20,
+            shell=False,
+        )
+        return {"processes": result.stdout.splitlines()[:limit], "returncode": result.returncode}
+
+    def kill_process(self, pid: int):
+        pid = int(pid)
+        if pid <= 0:
+            raise ValueError("pid must be positive.")
+        if os.name == "nt":
+            result = subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=20,
+                shell=False,
+            )
+        else:
+            result = subprocess.run(
+                ["kill", "-TERM", str(pid)],
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=20,
+                shell=False,
+            )
+        return {"pid": pid, "returncode": result.returncode, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]}
+
+    def write_text(self, path: str, content: str, append: bool = False):
+        target = self._path(path, must_exist=False)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        mode = "a" if append else "w"
+        with target.open(mode, encoding="utf-8") as handle:
+            handle.write(str(content))
+        return {"path": str(target), "bytes": target.stat().st_size, "append": bool(append)}
+
+    def make_directory(self, path: str):
+        target = self._path(path, must_exist=False)
+        target.mkdir(parents=True, exist_ok=True)
+        return {"path": str(target), "created": True}
+
+    def copy_path(self, source: str, destination: str):
+        src = self._path(source)
+        dst = self._path(destination, must_exist=False)
+        if src.is_dir():
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        else:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+        return {"source": str(src), "destination": str(dst)}
+
+    def move_path(self, source: str, destination: str):
+        src = self._path(source)
+        dst = self._path(destination, must_exist=False)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        moved = shutil.move(str(src), str(dst))
+        return {"source": str(src), "destination": str(Path(moved))}
+
+    def delete_path(self, path: str):
+        target = self._path(path)
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+        return {"deleted": str(target)}
+
+    @staticmethod
+    def _clipboard_root():
+        if os.name != "nt":
+            raise RuntimeError("Remote clipboard control is currently Windows-only.")
+        import tkinter as tk
+        root = tk.Tk()
+        root.withdraw()
+        return root
+
+    def clipboard_get(self):
+        root = self._clipboard_root()
+        try:
+            try:
+                text = root.clipboard_get()
+            except Exception:
+                text = ""
+            return {"text": str(text)[:100000]}
+        finally:
+            root.destroy()
+
+    def clipboard_set(self, text: str):
+        root = self._clipboard_root()
+        try:
+            root.clipboard_clear()
+            root.clipboard_append(str(text))
+            root.update()
+            return {"set": True, "chars": len(str(text))}
+        finally:
+            root.destroy()
+
+    def ui_find_text(self, text: str, exact: bool = False, role: str = "", vision: str = "auto"):
+        return self.primitives.find_text(text, exact=bool(exact), role=role, vision=vision)
+
+    def ui_click_text(self, text: str, exact: bool = False, role: str = "", vision: str = "auto", verify_text: str = ""):
+        return self.primitives.click_text(text, exact=bool(exact), role=role, vision=vision, verify_text=verify_text)
+
+    def ui_type_text(self, target: str, text: str, replace: bool = True, exact: bool = False, role: str = "", vision: str = "auto"):
+        return self.primitives.type_into_text(target, text, replace=bool(replace), exact=bool(exact), role=role, vision=vision)
+
+    def ui_wait_text(self, text: str, timeout: float = 8.0, exact: bool = False, role: str = "", vision: str = "auto"):
+        return self.primitives.wait_text(text, timeout=timeout, exact=bool(exact), role=role, vision=vision)
+
+    def ui_scroll_until_text(self, text: str, amount: int = -620, max_steps: int = 6, vision: str = "auto"):
+        return self.primitives.scroll_until_text(text, amount=amount, max_steps=max_steps, vision=vision)
+
+    def verify_state(self, kind: str, target: str = "", vision: str = "auto", scope: str = "foreground"):
+        return self.verifier.verify(kind, target, vision=vision, scope=scope)
+
+    def power_action(self, action: str):
+        action = str(action or "").strip().lower()
+        if os.name != "nt":
+            raise RuntimeError("Remote power actions are Windows-only.")
+        if action == "lock":
+            import ctypes
+            if not ctypes.windll.user32.LockWorkStation():
+                raise RuntimeError("Windows refused to lock the workstation.")
+            return {"action": action, "requested": True}
+        mapping = {
+            "restart": ["shutdown.exe", "/r", "/t", "5", "/c", "IRAS remote restart"],
+            "shutdown": ["shutdown.exe", "/s", "/t", "5", "/c", "IRAS remote shutdown"],
+        }
+        command = mapping.get(action)
+        if not command:
+            raise ValueError("power_action supports lock, restart, or shutdown.")
+        process = subprocess.Popen(command, shell=False)
+        return {"action": action, "requested": True, "pid": process.pid, "delay_seconds": 5}
+
+
+    def run_command(
+        self,
+        executable: str,
+        args=None,
+        cwd: str = "",
+        timeout: float = 60.0,
+    ):
+        """Run one explicitly named executable with argv and shell=False.
+
+        This is intentionally classified as CRITICAL by remote policy. It becomes
+        available only when the laptop is locally armed for full mode with the
+        shell/command opt-in and the cloud request carries a full remote session.
+        """
+        executable = str(executable or "").strip()
+        if not executable:
+            raise ValueError("executable is required.")
+        if any(ch in executable for ch in "\r\n\x00"):
+            raise ValueError("Invalid executable name.")
+        resolved = shutil.which(executable)
+        if not resolved:
+            candidate = Path(executable).expanduser()
+            if candidate.is_file():
+                resolved = str(candidate.resolve())
+        if not resolved:
+            raise FileNotFoundError(f"Executable {executable!r} was not found.")
+        argv = [str(resolved)] + [str(item) for item in (args or [])[:64]]
+        workdir = None
+        if cwd:
+            workdir = self._path(cwd)
+            if not workdir.is_dir():
+                raise NotADirectoryError(workdir)
+        timeout = max(1.0, min(float(timeout), 300.0))
+        completed = subprocess.run(
+            argv,
+            cwd=str(workdir) if workdir else None,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=timeout,
+            shell=False,
+        )
+        return {
+            "executable": str(resolved),
+            "args": argv[1:],
+            "cwd": str(workdir) if workdir else None,
+            "returncode": completed.returncode,
+            "stdout": completed.stdout[-30000:],
+            "stderr": completed.stderr[-12000:],
         }

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "iras-agent"
-version = "3.7.0"
+version = "4.0.0rc1"
 description = "IRAS - permissioned voice-first local AI agent"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -45,6 +45,7 @@ iras-node = "iras.nodes.server:main"
 iras-scheduler = "iras.automations.scheduler:main"
 iras-cloud = "iras.cloud_api:main"
 iras-remote = "iras.remote_desktop:main"
+iras-device = "iras.device_bridge.agent:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

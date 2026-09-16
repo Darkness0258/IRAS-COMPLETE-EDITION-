@@ -302,7 +302,7 @@ class _ROIFakeComputer(_FakeComputer):
         raise AssertionError("R4 ROI fast path should not broaden on successful flow")
 
 
-def test_r4_roi_fastpath_uses_text_regions_and_preserves_fresh_action_binding(monkeypatch):
+def test_r5_roi_fastpath_uses_text_regions_and_preserves_fresh_action_binding(monkeypatch):
     from iras.device_bridge.whatsapp_workflow import open_chat_and_verify
     import iras.device_bridge.whatsapp_workflow as workflow
 
@@ -333,7 +333,8 @@ def test_r4_roi_fastpath_uses_text_regions_and_preserves_fresh_action_binding(mo
     }
     computer = _ROIFakeComputer(
         [
-            _obs("roi-top", [search]),
+            _obs("roi-header-initial", []),
+            _obs("roi-search", [search]),
             _obs("roi-results", [contact]),
             _obs("roi-header", [header]),
         ]
@@ -344,22 +345,24 @@ def test_r4_roi_fastpath_uses_text_regions_and_preserves_fresh_action_binding(mo
     assert result["verified"] is True
     assert result["roi_fastpath"] is True
     assert result["verification_source"] == "vision_roi_text"
-    assert result["observations"] == 3
+    assert result["observations"] == 4
+    assert result["route"] == "r5_search_results_header"
     assert [call["label"] for call in computer.roi_calls] == [
-        "whatsapp_top",
+        "whatsapp_header",
+        "whatsapp_search",
         "whatsapp_results",
         "whatsapp_header",
     ]
     assert all(call["mode"] == "text" for call in computer.roi_calls)
     assert [item["action"] for item in computer.actions] == ["type_into", "click"]
-    assert computer.actions[0]["observation_id"] == "roi-top"
+    assert computer.actions[0]["observation_id"] == "roi-search"
     assert computer.actions[1]["observation_id"] == "roi-results"
     assert result["messages_sent"] == 0
     assert result["typed_into_composer"] is False
     assert result["action_replay_allowed"] is False
 
 
-def test_r4_roi_fastpath_finishes_after_top_band_when_chat_already_open():
+def test_r5_roi_fastpath_finishes_after_header_roi_when_chat_already_open():
     from iras.device_bridge.whatsapp_workflow import open_chat_and_verify
 
     header = {
@@ -370,7 +373,7 @@ def test_r4_roi_fastpath_finishes_after_top_band_when_chat_already_open():
         "confidence": 0.98,
         "rect": {"left": 610, "top": 48, "width": 140, "height": 30},
     }
-    computer = _ROIFakeComputer([_obs("roi-top", [header])])
+    computer = _ROIFakeComputer([_obs("roi-header", [header])])
 
     result = open_chat_and_verify(_FakeUI(), computer, contact="Darkness")
 
@@ -378,4 +381,100 @@ def test_r4_roi_fastpath_finishes_after_top_band_when_chat_already_open():
     assert result["observations"] == 1
     assert result["actions"] == []
     assert len(computer.roi_calls) == 1
-    assert computer.roi_calls[0]["label"] == "whatsapp_top"
+    assert computer.roi_calls[0]["label"] == "whatsapp_header"
+    assert result["route"] == "r5_header_roi"
+
+
+
+def test_r5_cold_text_retries_stay_in_roi_and_do_not_broaden(monkeypatch):
+    from iras.device_bridge.whatsapp_workflow import open_chat_and_verify
+    import iras.device_bridge.whatsapp_workflow as workflow
+
+    monkeypatch.setattr(workflow.time, "sleep", lambda *_: None)
+    monkeypatch.setenv("IRAS_WHATSAPP_COLD_ROI_RETRIES", "2")
+    search = {
+        "element_id": "vision:search-cold",
+        "source": "vision",
+        "label": "Search or start new chat",
+        "role": "text",
+        "confidence": 0.95,
+        "rect": {"left": 90, "top": 90, "width": 250, "height": 30},
+    }
+    contact = {
+        "element_id": "vision:contact-cold",
+        "source": "vision",
+        "label": "Darkness",
+        "role": "text",
+        "confidence": 0.95,
+        "rect": {"left": 105, "top": 190, "width": 130, "height": 30},
+    }
+    header = {
+        "element_id": "vision:header-cold",
+        "source": "vision",
+        "label": "DARKNESS",
+        "role": "text",
+        "confidence": 0.98,
+        "rect": {"left": 610, "top": 48, "width": 140, "height": 30},
+    }
+    computer = _ROIFakeComputer(
+        [
+            _obs("cold-header-0", []),
+            _obs("cold-search-0", []),
+            _obs("cold-search-1", [search]),
+            _obs("cold-results-0", []),
+            _obs("cold-results-1", [contact]),
+            _obs("cold-header-1", []),
+            _obs("cold-header-2", [header]),
+        ]
+    )
+
+    result = open_chat_and_verify(_FakeUI(), computer, contact="Darkness")
+
+    assert result["verified"] is True
+    assert result["roi_fastpath"] is True
+    assert result["route"] == "r5_search_results_header"
+    assert result["observations"] == 7
+    assert [call["label"] for call in computer.roi_calls] == [
+        "whatsapp_header",
+        "whatsapp_search",
+        "whatsapp_search",
+        "whatsapp_results",
+        "whatsapp_results",
+        "whatsapp_header",
+        "whatsapp_header",
+    ]
+    assert [item["action"] for item in computer.actions] == ["type_into", "click"]
+
+
+def test_r5_never_retypes_search_after_state_change_when_results_stay_missing(monkeypatch):
+    from iras.device_bridge.whatsapp_workflow import open_chat_and_verify
+    import iras.device_bridge.whatsapp_workflow as workflow
+
+    monkeypatch.setattr(workflow.time, "sleep", lambda *_: None)
+    monkeypatch.setenv("IRAS_WHATSAPP_COLD_ROI_RETRIES", "2")
+    search = {
+        "element_id": "vision:search-only",
+        "source": "vision",
+        "label": "Search or start new chat",
+        "role": "text",
+        "confidence": 0.96,
+        "rect": {"left": 90, "top": 90, "width": 250, "height": 30},
+    }
+    computer = _ROIFakeComputer(
+        [
+            _obs("header-empty", []),
+            _obs("search-found", [search]),
+            _obs("results-empty-1", []),
+            _obs("results-empty-2", []),
+        ]
+    )
+
+    try:
+        open_chat_and_verify(_FakeUI(), computer, contact="Darkness")
+    except RuntimeError as exc:
+        text = str(exc)
+    else:
+        raise AssertionError("expected bounded missing-result failure")
+
+    assert "not replayed" in text
+    assert [item["action"] for item in computer.actions] == ["type_into"]
