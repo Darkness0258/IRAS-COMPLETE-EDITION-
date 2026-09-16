@@ -1,8 +1,21 @@
-# IRAS 4.2.0 RC4 — Direct + Multi-Agent Resilient Windows Agent
+# IRAS 4.2.0 RC5 — Autonomous Chat Execution Router
 
 IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, secure worldwide Windows control, parallel multitasking, and dependency-aware multi-agent execution.
 
-**Release status:** `4.2.0-rc4` adds Direct/Cloud deterministic parity: narrow exact-file write/verify/review requests now use the same provider-independent Windows execution path as multi-agent Tasks. General reasoning still uses the configured provider pool. The v4 remote protocol remains `1`.
+**Release status:** `4.2.0-rc5` makes execution-mode selection automatic from normal chat. IRAS locally chooses direct, provider-independent deterministic, parallel, or dependency-aware multi-agent execution without requiring `/parallel` or `/goal`. Explicit commands remain available as overrides. The v4 remote protocol remains `1`.
+
+## v4.2 autonomous chat execution
+
+Normal chat is now the primary interface. IRAS applies a local provider-independent execution router before calling an LLM:
+
+- simple conversation or one action -> **Direct**;
+- exact bounded file write/verify requests -> **Deterministic**;
+- clearly independent jobs -> **Parallel** execution;
+- dependent build/fix/test/review workflows -> **Multi-agent DAG**.
+
+The router is conservative so ordinary conversation is not over-split. `/parallel` and `/goal` still force a mode when you explicitly want one. `IRAS_AUTONOMOUS_EXECUTION=true` enables automatic routing (default), and `IRAS_AUTONOMOUS_WAIT_TIMEOUT=600` bounds synchronous automatic parallel waits.
+
+IRAS never self-grants Windows authority. When a deterministic state-changing request needs a Remote session, the web client prompts you to authorize one and the server refuses to start that state-changing graph without it.
 
 ## v4.2 multi-agent execution
 
@@ -16,7 +29,7 @@ Give IRAS one objective and it can plan and supervise the work instead of requir
 - `IRAS_ORCHESTRATION_MAX_TASKS` controls planned graph size (default `12`, bounded `2..20`; the final Coordinator is added automatically).
 - `IRAS_ORCHESTRATION_PROVIDER_WAIT_SECONDS` controls how long graph tasks automatically wait through temporary all-provider cooldowns before consuming their normal task retry budget (default `900`, bounded `0..1800`).
 
-For exact text-file goals of the form `Create C:\path\file.txt containing exactly "..."`, RC4 uses the same deterministic executor in both Direct chat and multi-agent Tasks: only `write_text`, `read_text`, and `git_status` are allowed, state-changing writes still require an active Remote session, and Windows allowed-root/local-policy/emergency-stop checks remain authoritative. This path does not execute shell commands.
+For exact text-file goals of the form `Create C:\path\file.txt containing exactly "..."`, RC5 uses the same deterministic executor in both Direct chat and multi-agent Tasks: only `write_text`, `read_text`, and `git_status` are allowed, state-changing writes still require an active Remote session, and Windows allowed-root/local-policy/emergency-stop checks remain authoritative. This path does not execute shell commands.
 
 IRAS v4.1 `/parallel` mode remains available for independent jobs. Multi-agent workers do **not** bypass the existing safety model: each worker has isolated permission state and conversation context; remote session/device targeting remains request-local; upstream outputs are treated as untrusted data; Windows commands still pass through the authenticated queue, local policy, and emergency stop.
 

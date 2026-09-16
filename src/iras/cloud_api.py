@@ -61,6 +61,10 @@ from iras.deterministic_orchestration import (
     exact_file_plan,
     parse_exact_file_objective,
 )
+from iras.execution_router import (
+    decide_execution,
+    parallel_graph,
+)
 from iras.config import Settings
 from iras.voice.humanize import (
     speech_text,
@@ -697,6 +701,61 @@ def _start_multitask(
     return run
 
 
+def _autonomous_execution_enabled() -> bool:
+    return str(os.getenv("IRAS_AUTONOMOUS_EXECUTION", "true")).strip().lower() not in {
+        "0", "false", "no", "off"
+    }
+
+
+def _auto_decision(message: str):
+    if not _autonomous_execution_enabled():
+        return None
+    decision = decide_execution(message)
+    runtime.audit.record(
+        "autonomous_execution_decision",
+        {
+            "mode": decision.mode,
+            "reason": decision.reason,
+            "task_count": len(decision.tasks),
+            "confidence": decision.confidence,
+            "message": str(message or "")[:500],
+        },
+    )
+    return decision
+
+
+def _start_auto_parallel_graph(
+    tasks: tuple[str, ...] | list[str],
+    *,
+    objective: str,
+    remote_session: dict | None,
+    requester_device: str,
+) -> dict[str, Any]:
+    graph = parallel_graph(tasks)
+    if len(graph) < 2:
+        raise ValueError("Automatic parallel execution requires at least two independent tasks.")
+    run = orchestration_manager.submit_graph(
+        objective or "Execute the independent tasks in parallel.",
+        graph,
+        context=_multitask_context(
+            remote_session=remote_session,
+            requester_device=requester_device,
+        ),
+        requester_device=requester_device,
+        add_coordinator=True,
+    )
+    runtime.audit.record(
+        "autonomous_parallel_run_started",
+        {
+            "run_id": run["run_id"],
+            "task_count": len(graph),
+            "requester_device": requester_device,
+            "remote_session_id": (remote_session or {}).get("session_id"),
+        },
+    )
+    return run
+
+
 def _sse(
     event: str,
     payload: dict,
@@ -774,6 +833,11 @@ def readiness():
             "max_tasks_per_run": orchestration_manager.max_tasks_per_run,
             "roles": ["planner", "researcher", "coder", "tester", "reviewer", "coordinator", "general"],
         },
+        "autonomous_execution": {
+            "enabled": _autonomous_execution_enabled(),
+            "router": "local-policy-first",
+            "modes": ["direct", "deterministic", "parallel", "orchestrate"],
+        },
         "latency_optimization": {
             "smart_tools": os.getenv("IRAS_SMART_TOOLS", "true"),
             "context_messages": os.getenv("IRAS_CONTEXT_MESSAGES", "8"),
@@ -850,6 +914,14 @@ def create_orchestration_run(
         x_iras_remote_token,
     )
     requester = str(x_device_id or "web")[:128]
+    if exact_file_plan(body.objective) is not None and not remote_session:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "This goal changes Windows state and requires a live IRAS Remote session. "
+                "Enable Remote, authorize the session, then start the goal again."
+            ),
+        )
     context = _multitask_context(
         remote_session=remote_session,
         requester_device=requester,
@@ -988,7 +1060,19 @@ def chat(
     try:
         goal_objective = parse_goal_command(body.message)
         parallel_tasks = parse_parallel_command(body.message)
-        if goal_objective:
+        decision = None if (goal_objective or parallel_tasks) else _auto_decision(body.message)
+        if goal_objective and exact_file_plan(goal_objective) is not None and not remote_session:
+            response = (
+                "This goal changes Windows state and needs a live IRAS Remote session. "
+                "Enable Remote, authorize the session, then send the goal again."
+            )
+            metrics = {
+                "model": "autonomous-execution-safety-gate",
+                "total_ms": 0,
+                "model_ms": 0,
+                "tool_schema_count": 0,
+            }
+        elif goal_objective:
             run = orchestration_manager.submit_objective(
                 goal_objective,
                 context=_multitask_context(
@@ -1020,6 +1104,53 @@ def chat(
             response = format_parallel_result(run)
             metrics = {
                 "model": "parallel-task-supervisor",
+                "total_ms": max(
+                    [
+                        int((task.get("metrics") or {}).get("total_ms") or 0)
+                        for task in run.get("tasks") or []
+                    ]
+                    or [0]
+                ),
+                "model_ms": 0,
+                "tool_schema_count": 0,
+            }
+        elif decision is not None and decision.mode == "orchestrate":
+            run = orchestration_manager.submit_objective(
+                decision.objective or body.message,
+                context=_multitask_context(
+                    remote_session=remote_session,
+                    requester_device=device_id,
+                ),
+                requester_device=device_id,
+            )
+            response = (
+                f"I chose multi-agent execution for this request and started run {run['run_id']} "
+                f"because {decision.reason}. Open Tasks to watch the graph while I work."
+            )
+            metrics = {
+                "model": "autonomous-execution-router",
+                "total_ms": 0,
+                "model_ms": 0,
+                "tool_schema_count": 0,
+            }
+        elif decision is not None and decision.mode == "parallel":
+            run = _start_auto_parallel_graph(
+                decision.tasks,
+                objective=decision.objective or body.message,
+                remote_session=remote_session,
+                requester_device=device_id,
+            )
+            try:
+                auto_timeout = float(os.getenv("IRAS_AUTONOMOUS_WAIT_TIMEOUT", "600"))
+            except ValueError:
+                auto_timeout = 600.0
+            run = orchestration_manager.wait(
+                run["run_id"],
+                timeout=max(30.0, min(auto_timeout, 600.0)),
+            )
+            response = format_orchestration_result(run)
+            metrics = {
+                "model": "autonomous-parallel-router",
                 "total_ms": max(
                     [
                         int((task.get("metrics") or {}).get("total_ms") or 0)
@@ -1150,10 +1281,14 @@ def chat_stream(
 
     goal_objective = parse_goal_command(body.message)
     parallel_tasks = parse_parallel_command(body.message)
+    decision = None if (goal_objective or parallel_tasks) else _auto_decision(body.message)
     direct_deterministic_candidate = parse_exact_file_objective(body.message) is not None
+    autonomous_non_direct = bool(
+        decision is not None and decision.mode in {"parallel", "orchestrate", "deterministic"}
+    )
     direct_stream = (
         False
-        if (parallel_tasks or goal_objective or direct_deterministic_candidate)
+        if (parallel_tasks or goal_objective or direct_deterministic_candidate or autonomous_non_direct)
         else runtime.agent.can_stream(body.message)
     )
 
@@ -1186,6 +1321,27 @@ def chat_stream(
         acquired = False
 
         try:
+            if goal_objective and exact_file_plan(goal_objective) is not None and not remote_session:
+                text = (
+                    "This goal changes Windows state and needs a live IRAS Remote session. "
+                    "Enable Remote, authorize the session, then send the goal again."
+                )
+                yield _sse("token", {"text": text})
+                yield _sse(
+                    "done",
+                    {
+                        "request_id": request_id,
+                        "model": "autonomous-execution-safety-gate",
+                        "timing_ms": 0,
+                        "model_ms": 0,
+                        "first_token_ms": 0,
+                        "tool_schema_count": 0,
+                        "streamed": False,
+                        "queue_wait_ms": 0,
+                        "execution_mode": "authorization_required",
+                    },
+                )
+                return
             if goal_objective:
                 run = orchestration_manager.submit_objective(
                     goal_objective,
@@ -1288,6 +1444,111 @@ def chat_stream(
                         "streamed": False,
                         "queue_wait_ms": 0,
                         "parallel_run_id": run.get("run_id"),
+                    },
+                )
+                return
+            if decision is not None and decision.mode == "orchestrate":
+                run = orchestration_manager.submit_objective(
+                    decision.objective or body.message,
+                    context=_multitask_context(
+                        remote_session=remote_session,
+                        requester_device=device_id,
+                    ),
+                    requester_device=device_id,
+                )
+                text = (
+                    f"I chose multi-agent execution and started run {run['run_id']} "
+                    f"because {decision.reason}. Open Tasks to watch the graph while I work."
+                )
+                yield _sse("token", {"text": text})
+                yield _sse(
+                    "done",
+                    {
+                        "request_id": request_id,
+                        "model": "autonomous-execution-router",
+                        "timing_ms": 0,
+                        "model_ms": 0,
+                        "first_token_ms": 0,
+                        "tool_schema_count": 0,
+                        "streamed": False,
+                        "queue_wait_ms": 0,
+                        "orchestration_run_id": run.get("run_id"),
+                        "execution_mode": "orchestrate",
+                    },
+                )
+                return
+            if decision is not None and decision.mode == "parallel":
+                run = _start_auto_parallel_graph(
+                    decision.tasks,
+                    objective=decision.objective or body.message,
+                    remote_session=remote_session,
+                    requester_device=device_id,
+                )
+                yield _sse(
+                    "queued",
+                    {
+                        "request_id": request_id,
+                        "message": (
+                            f"IRAS chose parallel execution for {len(decision.tasks)} independent tasks."
+                        ),
+                        "run_id": run["run_id"],
+                        "waited_ms": 0,
+                    },
+                )
+                try:
+                    auto_timeout = float(os.getenv("IRAS_AUTONOMOUS_WAIT_TIMEOUT", "600"))
+                except ValueError:
+                    auto_timeout = 600.0
+                auto_timeout = max(30.0, min(auto_timeout, 600.0))
+                wait_started = time.perf_counter()
+                deadline = time.monotonic() + auto_timeout
+                last_completed = -1
+                while time.monotonic() < deadline:
+                    snapshot = orchestration_manager.get(run["run_id"])
+                    if snapshot is None:
+                        raise RuntimeError("Autonomous parallel run disappeared.")
+                    completed = int(snapshot.get("completed_count") or 0)
+                    if completed != last_completed:
+                        last_completed = completed
+                        yield _sse(
+                            "queued",
+                            {
+                                "request_id": request_id,
+                                "message": (
+                                    f"Autonomous parallel progress: {completed}/{snapshot.get('task_count', 0)} tasks complete."
+                                ),
+                                "run_id": run["run_id"],
+                                "waited_ms": int((time.perf_counter() - wait_started) * 1000),
+                            },
+                        )
+                    if snapshot.get("state") in {
+                        "succeeded",
+                        "partial_failure",
+                        "failed",
+                        "cancelled",
+                    }:
+                        run = snapshot
+                        break
+                    time.sleep(0.20)
+                else:
+                    run = orchestration_manager.get(run["run_id"]) or run
+
+                text = format_orchestration_result(run)
+                yield _sse("token", {"text": text})
+                total_ms = int((time.perf_counter() - wait_started) * 1000)
+                yield _sse(
+                    "done",
+                    {
+                        "request_id": request_id,
+                        "model": "autonomous-parallel-router",
+                        "timing_ms": total_ms,
+                        "model_ms": 0,
+                        "first_token_ms": total_ms,
+                        "tool_schema_count": 0,
+                        "streamed": False,
+                        "queue_wait_ms": 0,
+                        "orchestration_run_id": run.get("run_id"),
+                        "execution_mode": "parallel",
                     },
                 )
                 return

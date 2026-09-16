@@ -22,6 +22,7 @@ from iras.deterministic_orchestration import (
     exact_file_plan,
     parse_exact_file_objective,
 )
+from iras.execution_router import decide_execution, parallel_graph
 from iras.remote_access import RemoteAccessPolicy, action_permission
 from iras.remote_protocol import REMOTE_PROTOCOL_VERSION, validate_cloud_health
 from iras.safety_runtime import EmergencyStop
@@ -58,8 +59,8 @@ class _Memory:
 
 
 def main() -> None:
-    print("=== IRAS v4.2 RC4 MULTI-AGENT INTEGRATED VALIDATION ===")
-    assert __version__ == "4.2.0-rc4"
+    print("=== IRAS v4.2 RC5 MULTI-AGENT INTEGRATED VALIDATION ===")
+    assert __version__ == "4.2.0-rc5"
     assert SCENE_GRAPH_VERSION == "3.7.0"
     assert REMOTE_PROTOCOL_VERSION == 1
     cloud_contract = validate_cloud_health({
@@ -237,6 +238,17 @@ def main() -> None:
     assert parse_parallel_command("/parallel one || two || three") == ["one", "two", "three"]
     assert parse_goal_command("/goal improve and verify IRAS") == "improve and verify IRAS"
 
+    assert decide_execution("Open Spotify and play naat").mode == "direct"
+    auto_parallel = decide_execution(
+        "Research provider changes, check my Windows PC status, and summarize project state"
+    )
+    assert auto_parallel.mode == "parallel" and len(auto_parallel.tasks) == 3
+    assert len(parallel_graph(auto_parallel.tasks)) == 3
+    auto_graph = decide_execution(
+        "Improve voice latency, inspect the code, implement the safest fix, run tests, review regressions, and report the final result"
+    )
+    assert auto_graph.mode == "orchestrate"
+
     sample = "v4.2-secret-roundtrip"
     protected = protect_secret(sample)
     assert unprotect_secret(protected) == sample
@@ -281,6 +293,8 @@ def main() -> None:
     assert "completed and verified" in direct_result["result"].lower()
     print("DETERMINISTIC EXACT-FILE FALLBACK: True")
     print("DIRECT DETERMINISTIC PARITY: True")
+    print("AUTONOMOUS CHAT ROUTING: True")
+    print("AUTONOMOUS PARALLEL GRAPH: True")
     print("MULTI-AGENT PAUSE/RESUME/CANCEL: True")
     print("SPECIALIZED AGENT ROLES: planner/researcher/coder/tester/reviewer/coordinator")
     print("REMOTE CONTEXT DEVICE BINDING: True")

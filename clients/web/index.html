@@ -133,7 +133,28 @@ function config(){
 }
 
 function remoteSession(){
-  try{return JSON.parse(sessionStorage.getItem("iras-remote-session")||"null")}catch(_){return null}
+  try{
+    const s=JSON.parse(sessionStorage.getItem("iras-remote-session")||"null");
+    if(!s)return null;
+    const expires=Number(s.expires_at||0);
+    if(expires&&Date.now()/1000>=expires){
+      sessionStorage.removeItem("iras-remote-session");
+      return null;
+    }
+    return s;
+  }catch(_){return null}
+}
+
+function deterministicWriteNeedsRemote(text){
+  return /\bcreate\s+[A-Za-z]:\\.+?\.txt\s+containing\s+exactly\b/i.test(String(text||""));
+}
+
+async function ensureRemoteForDeterministicWrite(text){
+  if(!deterministicWriteNeedsRemote(text))return true;
+  if(remoteSession())return true;
+  status.textContent="This Windows write needs your Remote authorization...";
+  await createRemoteSession();
+  return !!remoteSession();
 }
 
 function setRemoteSession(value){
@@ -274,6 +295,11 @@ async function startAgentGoal(){
   if(!c.token){cfg.showModal();return}
   const objective=goalInput.value.trim();
   if(!objective)throw new Error("Enter a multi-agent objective first.");
+  if(!(await ensureRemoteForDeterministicWrite(objective))){
+    taskOut.textContent="This goal changes Windows state and needs an authorized Remote session. Start Remote and try again.";
+    status.textContent="Remote authorization required";
+    return;
+  }
   const base=c.server||location.origin;
   taskOut.textContent="Planner is building the task graph...";
   status.textContent="Starting multi-agent run...";
@@ -690,6 +716,7 @@ async function streamReply(base,c,text,bubble,session,signal){
         bubble.classList.remove("cursor");
         drainVoiceBuffer(session,true);
         conversationUntil=Date.now()+20000;
+        if(data.orchestration_run_id)activeGoalRunId=data.orchestration_run_id;
 
         const first=data.first_token_ms||0,total=data.timing_ms||0;
         const queueWait=data.queue_wait_ms||0;
@@ -716,6 +743,11 @@ async function sendText(text,{interrupt=false}={}){
 
   const c=config();
   if(!c.token){cfg.showModal();return}
+
+  if(!(await ensureRemoteForDeterministicWrite(text))){
+    status.textContent="Remote authorization required";
+    return;
+  }
 
   if(sending&&!interrupt)return;
   if(interrupt)interruptCurrentTurn();

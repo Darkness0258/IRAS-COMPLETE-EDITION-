@@ -291,3 +291,24 @@ The v4.2 cloud runtime adds `OrchestrationManager`, a bounded dependency-DAG sup
 Each graph worker receives a role-specific system directive plus request-local remote-session context. Dependency outputs are included only as explicitly labelled untrusted data. Normal downstream nodes require successful dependencies; failed branches are marked blocked. The automatically added Coordinator uses `continue_on_failure` so it can synthesize a truthful result after partial failure.
 
 Pause is cooperative: running bounded turns complete, but no new nodes start. Cancel marks queued nodes cancelled and discards late results from already-running workers. The Windows device queue, permission engine, local policy, fresh-state verification, and emergency-stop controller remain below this orchestration layer and therefore remain authoritative.
+
+## v4.2 RC5 — Autonomous Chat Execution Router
+
+RC5 moves execution-mode selection in front of the normal chat agent. A local,
+provider-independent `execution_router` classifies each ordinary turn as direct,
+deterministic, parallel, or dependency-aware orchestration. This keeps routing
+available even when every cloud model provider is cooling down. Explicit
+`/parallel` and `/goal` syntax remains a user override, not a requirement.
+
+Automatic parallel jobs are converted into a dependency-free orchestration graph
+rather than using the older one-shot supervisor, so they inherit provider-cooldown
+waiting, isolated worker contexts, pause/cancel lifecycle, request-local remote
+provenance, and final synthesis. Dependency-heavy implementation/test/review work
+is promoted to the Planner/Coder/Tester/Reviewer/Coordinator graph instead.
+
+The router chooses execution strategy only; it never grants authority. Browser
+Remote sessions are still explicit user authorization. Exact deterministic Windows
+writes are preflighted in both chat and the Tasks panel, and the cloud API refuses
+to start such state-changing work without a live Remote session. Local laptop
+policy, allowed roots, permission classification, and emergency stop remain the
+final execution boundary.

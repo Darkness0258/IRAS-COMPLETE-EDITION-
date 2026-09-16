@@ -117,6 +117,15 @@ def run(settings):
         ),
     )
 
+    autonomous_execution = str(os.getenv("IRAS_AUTONOMOUS_EXECUTION", "true")).strip().lower() not in {
+        "0", "false", "no", "off"
+    }
+    add(
+        "Autonomous execution routing",
+        autonomous_execution,
+        "direct/deterministic/parallel/orchestrate automatic chat routing",
+    )
+
     mic = Listener.microphone_status()
     add("Microphone input", mic.get("available"), f"{mic.get('count', 0)} input device(s)")
 
