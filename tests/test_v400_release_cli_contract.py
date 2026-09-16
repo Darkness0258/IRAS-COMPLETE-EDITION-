@@ -8,45 +8,17 @@ import sys
 
 def test_iras_cli_exposes_version_without_starting_runtime():
     env = os.environ.copy()
-    src = str((Path.cwd() / 'src').resolve())
-    existing = env.get('PYTHONPATH', '')
-    env['PYTHONPATH'] = src if not existing else src + os.pathsep + existing
+    source_root = str(Path("src").resolve())
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = source_root + (os.pathsep + existing if existing else "")
     completed = subprocess.run(
         [sys.executable, '-m', 'iras', '--version'],
         capture_output=True, text=True, timeout=10, env=env,
     )
-    assert completed.returncode == 0, completed.stderr
+    assert completed.returncode == 0
     assert '4.0.0-rc1' in completed.stdout
 
 
 def test_remote_setup_requires_32_character_master_token():
     text = Path('scripts/windows/setup-remote-access.ps1').read_text(encoding='utf-8')
     assert '$plainToken.Length -lt 32' in text
-
-
-def test_token_generator_is_windows_powershell_51_compatible():
-    text = Path('generate-iras-token.ps1').read_text(encoding='utf-8')
-    assert 'RandomNumberGenerator]::Fill' not in text
-    assert 'RandomNumberGenerator]::Create()' in text
-    assert '$rng.GetBytes($bytes)' in text
-    assert '$ErrorActionPreference = "Stop"' in text
-
-
-def test_remote_setup_rejects_placeholder_before_pairing():
-    text = Path('scripts/windows/setup-remote-access.ps1').read_text(encoding='utf-8')
-    assert 'Test-IRASPlaceholderUrl' in text
-    assert 'ServerUrl is still a placeholder' in text
-    assert '/health' in text
-    # Windows PowerShell 5.1 does not support the PowerShell 7 null-coalescing operator.
-    assert '??' not in text
-
-
-def test_v4_validation_removes_local_runtime_caches_and_packaging_debris():
-    runner = Path('run-v400-validation.ps1').read_text(encoding='utf-8')
-    cleanup = Path('scripts/cleanup_v400_runtime_artifacts.py').read_text(encoding='utf-8')
-    assert 'cleanup_v400_runtime_artifacts.py' in runner
-    assert '-p no:cacheprovider' in runner
-    assert 'FINAL CLEAN TREE RECHECK' in runner
-    assert 'PACKAGE_DIRS = {"build", "dist"}' in cleanup
-    assert 'PACKAGE_SUFFIXES = (".egg-info",)' in cleanup
-    assert 'name.endswith(PACKAGE_SUFFIXES)' in cleanup

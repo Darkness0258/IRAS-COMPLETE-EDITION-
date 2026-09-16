@@ -312,23 +312,31 @@ def _sse(
 
 @app.get("/health")
 def health():
-    profile = get_profile(
-        settings.voice_profile
-    )
+    """Render deployment liveness probe.
 
+    Keep this endpoint dependency-free and fast: Render requires an HTTP health
+    check response within five seconds during deploys. Rich provider/database
+    diagnostics belong on /ready and must never gate port detection.
+    """
     return {
         "ok": True,
         "service": "IRAS Cloud",
         "version": __version__,
-        "provider": (
-            settings.provider
-        ),
+        "uptime_seconds": int(time.time() - started_at),
+    }
+
+
+@app.get("/ready")
+def readiness():
+    """Detailed runtime status for diagnostics; not used as Render's health gate."""
+    profile = get_profile(settings.voice_profile)
+    return {
+        "ok": True,
+        "service": "IRAS Cloud",
+        "version": __version__,
+        "provider": settings.provider,
         "model": (
-            getattr(
-                runtime.agent.provider,
-                "last_model",
-                None,
-            )
+            getattr(runtime.agent.provider, "last_model", None)
             or settings.model
         ),
         "active_ai_provider": getattr(
@@ -338,62 +346,25 @@ def health():
         ),
         "ai_providers": (
             runtime.agent.provider.status()
-            if callable(
-                getattr(
-                    runtime.agent.provider,
-                    "status",
-                    None,
-                )
-            )
-            else [
-                {
-                    "name": settings.provider,
-                    "model": settings.model,
-                    "ready": True,
-                    "cooldown_seconds": 0,
-                }
-            ]
+            if callable(getattr(runtime.agent.provider, "status", None))
+            else [{
+                "name": settings.provider,
+                "model": settings.model,
+                "ready": True,
+                "cooldown_seconds": 0,
+            }]
         ),
-        "database": (
-            "postgres"
-            if settings.database_url
-            else "sqlite-local"
-        ),
-        "voice_profile": (
-            settings.voice_profile
-        ),
+        "database": "postgres" if settings.database_url else "sqlite-local",
+        "voice_profile": settings.voice_profile,
         "voice": profile.voice,
         "streaming": True,
         "latency_optimization": {
-            "smart_tools": (
-                os.getenv(
-                    "IRAS_SMART_TOOLS",
-                    "true",
-                )
-            ),
-            "context_messages": (
-                os.getenv(
-                    "IRAS_CONTEXT_MESSAGES",
-                    "8",
-                )
-            ),
-            "context_facts": (
-                os.getenv(
-                    "IRAS_CONTEXT_FACTS",
-                    "10",
-                )
-            ),
-            "provider_sort": (
-                os.getenv(
-                    "IRAS_PROVIDER_SORT",
-                    "latency",
-                )
-            ),
+            "smart_tools": os.getenv("IRAS_SMART_TOOLS", "true"),
+            "context_messages": os.getenv("IRAS_CONTEXT_MESSAGES", "8"),
+            "context_facts": os.getenv("IRAS_CONTEXT_FACTS", "10"),
+            "provider_sort": os.getenv("IRAS_PROVIDER_SORT", "latency"),
         },
-        "uptime_seconds": int(
-            time.time()
-            - started_at
-        ),
+        "uptime_seconds": int(time.time() - started_at),
     }
 
 
@@ -1355,8 +1326,13 @@ def main():
     port = int(
         os.getenv(
             "PORT",
-            "8765",
+            "10000",
         )
+    )
+
+    print(
+        f"[IRAS CLOUD] binding 0.0.0.0:{port}",
+        flush=True,
     )
 
     uvicorn.run(

@@ -460,24 +460,6 @@ class DeviceBridgeAgent:
 
 
 
-def _migrate_legacy_bridge_secrets(config: dict) -> dict:
-    """Rewrite legacy plaintext bridge secrets through the active OS backend."""
-    config = dict(config or {})
-
-    legacy_device_token = str(config.get("device_token") or "").strip()
-    if legacy_device_token and not str(config.get("device_token_protected") or "").strip():
-        config["device_token_protected"] = protect_secret(legacy_device_token)
-    config.pop("device_token", None)
-
-    legacy_api_token = str(config.get("api_token") or "").strip()
-    if legacy_api_token and not str(config.get("api_token_protected") or "").strip():
-        config["api_token_protected"] = protect_secret(legacy_api_token)
-    config.pop("api_token", None)
-
-    config["secret_backend"] = protection_backend()
-    return config
-
-
 def configure_remote_bridge(
     *,
     server_url: str,
@@ -485,7 +467,7 @@ def configure_remote_bridge(
     display_name: str = "",
     allowed_roots: list[str] | None = None,
 ) -> dict:
-    config = _migrate_legacy_bridge_secrets(_load_config())
+    config = _load_config()
     server_url = str(server_url or "").strip().rstrip("/")
     api_token = str(api_token or "").strip()
     if not server_url.startswith(("https://", "http://127.0.0.1", "http://localhost")):
@@ -495,7 +477,6 @@ def configure_remote_bridge(
     config["server_url"] = server_url
     config["api_token_protected"] = protect_secret(api_token)
     config.pop("api_token", None)
-    config.pop("device_token", None)
     config["secret_backend"] = protection_backend()
     if display_name:
         config["display_name"] = str(display_name)[:128]

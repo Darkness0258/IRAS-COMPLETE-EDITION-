@@ -97,6 +97,19 @@ IRAS_CORS_ORIGINS=*
 
 Do not add `PORT` manually unless Render specifically requires it. Render supplies a port environment variable to web services.
 
+
+## Render deploy health-check hardening
+
+IRAS binds `0.0.0.0:$PORT`; the Docker image defaults and exposes port `10000`,
+matching Render's web-service default. `GET /health` is intentionally a shallow,
+dependency-free liveness endpoint used only by Render's rollout gate. Detailed
+provider/runtime diagnostics are available from `GET /ready` so a slow provider
+or database cannot block a deployment health check.
+
+If a deploy reaches `Uvicorn running on http://0.0.0.0:10000` but Render still
+reports `Timed Out`, verify the service is a **Web Service**, that the health check
+path is `/health`, and that no dashboard-level `PORT` override points elsewhere.
+
 ## 4. Test deployment
 
 When Render finishes deployment, test:

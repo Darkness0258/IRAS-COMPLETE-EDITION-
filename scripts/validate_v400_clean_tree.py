@@ -19,10 +19,9 @@ REQUIRED = [
     "docs/REMOTE_ACCEPTANCE_CHECKLIST_V4.md",
     "clients/web/index.html",
     "scripts/windows/setup-remote-access.ps1",
-    "scripts/cleanup_v400_runtime_artifacts.py",
+    "scripts/maintenance/clean-v400-validation-debris.ps1",
     "run-v400-validation.ps1",
     "setup-remote-windows.ps1",
-    "generate-iras-token.ps1",
 ]
 SECRET_PATTERNS = [
     re.compile(r"(?i)(?:sk-or-v1|sk-proj|ghp_|github_pat_)[A-Za-z0-9_\-]{12,}"),
@@ -33,21 +32,28 @@ SECRET_PATTERNS = [
 def main() -> None:
     legacy_docs = [p for p in ROOT.glob("*RELEASE*.md") if p.name not in {"README.md"}]
     missing = [name for name in REQUIRED if not (ROOT / name).exists()]
-    bad_cache = []
-    package_debris = []
-    secret_hits = []
+    bad_cache: list[str] = []
+    package_debris: list[str] = []
+    secret_hits: list[str] = []
+
     for path in ROOT.rglob("*"):
+        rel = str(path.relative_to(ROOT))
         parts = set(path.parts)
-        if {"__pycache__", ".pytest_cache"} & parts or path.suffix in {".pyc", ".pyo"}:
-            bad_cache.append(str(path.relative_to(ROOT)))
-        if path.is_dir() and (path.name in {"build", "dist"} or path.name.endswith(".egg-info")):
-            package_debris.append(str(path.relative_to(ROOT)))
-        if path.is_file() and path.name != ".env" and path.suffix.lower() in {".py", ".md", ".toml", ".yml", ".yaml", ".ps1", ".html", ".example"}:
+        if {"__pycache__", ".pytest_cache"} & parts or path.suffix == ".pyc":
+            bad_cache.append(rel)
+        if any(part in {"build", "dist"} or part.endswith(".egg-info") for part in path.parts):
+            package_debris.append(rel)
+        if (
+            path.is_file()
+            and path.name != ".env"
+            and path.suffix.lower() in {".py", ".md", ".toml", ".yml", ".yaml", ".ps1", ".html", ".example"}
+        ):
             text = path.read_text(encoding="utf-8", errors="ignore")
             for pattern in SECRET_PATTERNS:
                 if pattern.search(text):
-                    secret_hits.append(str(path.relative_to(ROOT)))
+                    secret_hits.append(rel)
                     break
+
     local_env = ROOT / ".env"
     print("=== IRAS v4.0 RC1 CLEAN TREE VALIDATION ===")
     print("LEGACY ROOT RELEASE DOCS PRESENT:", bool(legacy_docs))

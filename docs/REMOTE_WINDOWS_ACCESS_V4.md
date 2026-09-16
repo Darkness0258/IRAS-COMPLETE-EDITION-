@@ -45,7 +45,7 @@ Then on the laptop:
 
 ```powershell
 .\setup-remote-windows.ps1 `
-  -ServerUrl https://iras-cloud-abc1.onrender.com `
+  -ServerUrl https://YOUR-IRAS-CLOUD.example `
   -Mode full `
   -FullFileSystem
 ```
@@ -55,7 +55,7 @@ The script asks for `IRAS_API_TOKEN` through a PowerShell SecureString prompt. I
 Optional high-risk capabilities are **separate local opt-ins**:
 
 ```powershell
-.\setup-remote-windows.ps1 -ServerUrl https://iras-cloud-abc1.onrender.com -Mode full -FullFileSystem -AllowPower -AllowCommand
+.\setup-remote-windows.ps1 -ServerUrl https://YOUR-SERVER -Mode full -FullFileSystem -AllowPower -AllowCommand
 ```
 
 `-AllowPower` permits remote restart/shutdown. `-AllowCommand` permits the critical `run_command` primitive. `run_command` still uses an explicit executable + argv with `shell=False`; using PowerShell/cmd itself is therefore an explicit full-admin choice.
@@ -129,3 +129,10 @@ Remove remote startup and disarm the laptop with:
 ## Operational limitations
 
 Worldwide access depends on four independent components: the laptop must be powered on, Windows must have an interactive logged-in user for GUI tasks, Internet must be available, and the cloud service must be reachable. A locked workstation can still perform some file/process operations, but IRAS deliberately does not bypass the Windows secure desktop or login screen.
+
+### Windows PowerShell token generation
+
+Use `generate-iras-token.ps1`. It uses `RandomNumberGenerator.Create().GetBytes()`
+for compatibility with Windows PowerShell 5.1 and fails closed if secure token
+generation fails. Do not continue with an all-`A` token or a placeholder server
+URL. `setup-remote-windows.ps1` requires the real deployed HTTPS URL.

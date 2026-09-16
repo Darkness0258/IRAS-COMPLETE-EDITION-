@@ -105,7 +105,7 @@ Then configure the laptop:
 
 ```powershell
 .\setup-remote-windows.ps1 `
-  -ServerUrl https://iras-cloud-abc1.onrender.com `
+  -ServerUrl https://YOUR-IRAS-CLOUD.example `
   -Mode full `
   -FullFileSystem
 ```

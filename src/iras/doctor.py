@@ -108,21 +108,18 @@ def run(settings):
         bool(bridge.get("present") and bridge.get("server_url") and bridge.get("device_id")),
         bridge,
     )
-    secrets_ok = bool(
-        os.name != "nt"
-        or (
-            bridge.get("protected_device_token")
-            and not bridge.get("legacy_plain_device_token")
-            and bridge.get("secret_backend") == "windows-dpapi"
-        )
+    add(
+        "Remote secrets protected",
+        bool(
+            os.name != "nt"
+            or (
+                bridge.get("protected_device_token")
+                and not bridge.get("legacy_plain_device_token")
+                and bridge.get("secret_backend") == "windows-dpapi"
+            )
+        ),
+        bridge.get("secret_backend") or protection_backend(),
     )
-    if bridge.get("legacy_plain_device_token"):
-        secret_detail = "legacy plaintext device token detected; rerun setup-remote-windows.ps1 to migrate it to Windows DPAPI"
-    elif os.name == "nt" and bridge.get("present") and not bridge.get("protected_device_token"):
-        secret_detail = "device has not completed protected cloud pairing yet; run/restart the configured iras-device bridge"
-    else:
-        secret_detail = bridge.get("secret_backend") or protection_backend()
-    add("Remote secrets protected", secrets_ok, secret_detail)
 
     free_gb = _free_gb(Path.home())
     add("Free disk space", free_gb >= 2.0, f"{free_gb:.1f} GB free")
