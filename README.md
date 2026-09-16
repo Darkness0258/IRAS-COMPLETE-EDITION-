@@ -1,8 +1,17 @@
-# IRAS 4.2.0 RC6 — Specialized Autonomous Agents
+# IRAS 4.3.0 RC1 — Deep Audit & Hardened Autonomous Agents
 
 IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, secure worldwide Windows control, parallel multitasking, and dependency-aware multi-agent execution.
 
-**Release status:** `4.2.0-rc6` keeps automatic Direct/Deterministic/Parallel/Multi-agent routing and hardens the specialized workers: Researcher uses text-first public-web retrieval, Coder gets bounded exact source patching, Planner fallback preserves engineering phases, and orchestration workers get a dedicated bounded step budget. Explicit commands remain available as overrides. The v4 remote protocol remains `1`.
+**Release status:** `4.3.0-rc1` keeps the accepted v4.2 autonomous execution model and performs a deep security/reliability audit of the tool boundary: untrusted external-content labelling, schema-validated tool calls, stronger secret redaction, dynamic permission alignment, atomic/symlink-safe file operations, bounded project-inspection tools, restart-safe orchestration history, and active-run backpressure. The v4 remote protocol remains `1`.
+
+
+## v4.3 RC1 deep audit hardening
+
+RC1 treats every web/API/browser result as untrusted external data before it is returned to the model. Retrieval metadata explicitly marks trust level and common prompt-injection signals. Tool arguments are schema-validated before authorization/execution, and audit redaction covers bearer/env/JWT/common provider token shapes even when secrets are embedded inside generic strings.
+
+The Windows/project tool surface is now better suited to real engineering work without adding arbitrary shell access: `device_read_text_range`, `device_search_text`, `device_file_info`/SHA-256, `device_git_diff`, `device_git_log`, and targeted `device_run_tests`. File writes/replacements are atomic, recursive copies fail closed on symlinks, searches skip credential paths, and sensitive files/process termination dynamically require `CRITICAL` permission. Device tool permission resolvers now use the exact remote action and arguments so the cloud permission gate and laptop-local policy cannot silently disagree.
+
+Public web/API retrieval is bounded by response size/content type, rejects embedded URL credentials and unsafe headers, and validates public redirect targets. Orchestration and multitasking enforce per-requester active-run caps. Observable orchestration history survives Render restarts, but interrupted runs are marked failed and are never automatically replayed.
 
 ## v4.2 autonomous chat execution
 

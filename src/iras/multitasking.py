@@ -168,6 +168,9 @@ class MultitaskManager:
             "IRAS_MULTITASK_MAX_TASKS", 8, 2, 12
         )
         self.retained_runs = max(5, min(int(retained_runs), 200))
+        self.max_active_runs_per_requester = _env_int(
+            "IRAS_MULTITASK_MAX_ACTIVE_RUNS", 4, 1, 20
+        )
         self._executor = ThreadPoolExecutor(
             max_workers=self.max_workers,
             thread_name_prefix="iras-task",
@@ -231,6 +234,16 @@ class MultitaskManager:
         base_context = dict(context or {})
 
         with self._lock:
+            active = sum(
+                1 for item in self._runs.values()
+                if item.requester_device == run.requester_device
+                and not all(task.state in TERMINAL_STATES for task in item.tasks)
+            )
+            if active >= self.max_active_runs_per_requester:
+                raise RuntimeError(
+                    f"Too many active parallel runs for {run.requester_device!r}; "
+                    f"limit is {self.max_active_runs_per_requester}."
+                )
             self._runs[run_id] = run
             self._prune_locked()
             for task in run.tasks:

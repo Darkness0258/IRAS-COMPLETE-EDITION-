@@ -322,3 +322,12 @@ RC6 makes the autonomous execution modes operationally asymmetric on purpose: ea
 Research web retrieval also remains fail-closed against SSRF: public HTTP URLs are resolved and checked before each request, and every redirect target is revalidated before it is followed. HTML is converted to readable text in-process so a Researcher can inspect documentation without opening or visually scraping Chrome.
 
 When the Planner provider is unavailable, implementation-oriented goals now use a local fallback DAG that preserves `Inspect -> Coder -> Tester -> Reviewer -> Coordinator` dependencies instead of collapsing the entire objective into one general worker. Orchestration workers have a separate bounded tool-step budget (`IRAS_ORCHESTRATION_AGENT_MAX_STEPS`, default 14, maximum 24); ordinary chat keeps its existing conservative budget.
+
+
+## v4.3 RC1 — Deep Tool-Boundary Audit
+
+v4.3 hardens the boundary between model reasoning and external state. Retrieved web/API/browser content is wrapped with explicit untrusted-data metadata before it re-enters the model loop, including prompt-injection indicators. Tool arguments are schema-validated before authorization and execution, while audit redaction is applied to richer credential/token patterns.
+
+Remote Windows tools now resolve their cloud permission dynamically from the exact `RemoteAccessPolicy` action and arguments. Sensitive credential paths and process termination are `CRITICAL`; this closes the class of bugs where a generic cloud tool permission could be weaker than the device-side action permission. The project surface adds bounded search, ranged reads, hashing, Git diff/log, and targeted tests without granting a general shell.
+
+Filesystem mutation uses atomic replacement and recursive copy refuses symlink-containing trees. Public network tools bound response size/type and revalidate redirects. Supervisors cap active runs per requester. Orchestration journals are loaded only for observable history; active work found after a restart is failed as interrupted rather than replayed, and no remote-session secrets are restored.

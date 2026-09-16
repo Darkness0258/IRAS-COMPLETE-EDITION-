@@ -69,6 +69,10 @@ def _validate_public(url):
     u = urlparse(url)
     if u.scheme not in {"http", "https"} or not u.hostname:
         raise ValueError("Only http/https URLs are allowed.")
+    if u.username is not None or u.password is not None:
+        raise ValueError("Credentials embedded in URLs are not allowed.")
+    if len(str(url)) > 4096:
+        raise ValueError("URL exceeds the 4096-character safety limit.")
     for info in socket.getaddrinfo(
         u.hostname,
         u.port or (443 if u.scheme == "https" else 80),
@@ -86,36 +90,90 @@ def _validate_public(url):
             raise PermissionError("Private/local network destinations are blocked by http_get.")
 
 
+def _bounded_response_bytes(response, *, max_bytes: int = 2_000_000) -> bytes:
+    max_bytes = max(1024, min(int(max_bytes), 5_000_000))
+    declared = response.headers.get("content-length")
+    if declared:
+        try:
+            if int(declared) > max_bytes:
+                raise ValueError(f"HTTP response exceeds the {max_bytes:,}-byte safety limit.")
+        except ValueError as exc:
+            if "safety limit" in str(exc):
+                raise
+    chunks = []
+    total = 0
+    for chunk in response.iter_bytes():
+        total += len(chunk)
+        if total > max_bytes:
+            raise ValueError(f"HTTP response exceeds the {max_bytes:,}-byte safety limit.")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _decode_response(response, raw: bytes) -> str:
+    encoding = response.encoding or "utf-8"
+    try:
+        return raw.decode(encoding, errors="replace")
+    except LookupError:
+        return raw.decode("utf-8", errors="replace")
+
+
+def _is_textual_content_type(content_type: str) -> bool:
+    value = str(content_type or "").lower().split(";", 1)[0].strip()
+    if not value:
+        return True
+    return (
+        value.startswith("text/")
+        or value in {
+            "application/json", "application/ld+json", "application/xml",
+            "application/xhtml+xml", "application/javascript", "application/x-javascript",
+            "application/x-www-form-urlencoded",
+        }
+        or value.endswith("+json")
+        or value.endswith("+xml")
+    )
+
+
 def http_get(url, max_chars=30000):
     max_chars = max(1, min(int(max_chars), 100000))
     current = str(url)
     with httpx.Client(
-        timeout=30,
+        timeout=httpx.Timeout(30.0, connect=10.0),
         follow_redirects=False,
-        headers={"User-Agent": "IRAS/4.2 (+https://github.com/Darkness0258/IRAS-COMPLETE-EDITION-)"},
+        headers={"User-Agent": "IRAS/4.3 (+https://github.com/Darkness0258/IRAS-COMPLETE-EDITION-)"},
     ) as client:
         response = None
+        raw = b""
         for _ in range(6):
             _validate_public(current)
-            response = client.get(current)
-            if response.status_code not in {301, 302, 303, 307, 308}:
+            with client.stream("GET", current) as streamed:
+                if streamed.status_code in {301, 302, 303, 307, 308}:
+                    location = str(streamed.headers.get("location") or "").strip()
+                    if not location:
+                        response = streamed
+                        raw = _bounded_response_bytes(streamed)
+                        break
+                    current = urljoin(current, location)
+                    continue
+                response = streamed
+                raw = _bounded_response_bytes(streamed)
                 break
-            location = str(response.headers.get("location") or "").strip()
-            if not location:
-                break
-            current = urljoin(current, location)
         else:
             raise RuntimeError("Too many HTTP redirects.")
     if response is None:
         raise RuntimeError("HTTP request did not produce a response.")
     content_type = str(response.headers.get("content-type") or "")
-    raw = response.text
-    text = html_to_text(raw, max_chars=max_chars) if "html" in content_type.lower() else raw[:max_chars]
+    if not _is_textual_content_type(content_type):
+        raise ValueError(f"http_get only accepts text/JSON/XML responses, not {content_type or 'binary data'!r}.")
+    text_raw = _decode_response(response, raw)
+    text = html_to_text(text_raw, max_chars=max_chars) if "html" in content_type.lower() else text_raw[:max_chars]
     return {
         "status": response.status_code,
         "content_type": content_type,
         "url": str(response.url),
         "text": text,
+        "truncated": len(text_raw) > max_chars,
+        "bytes": len(raw),
     }
 
 
@@ -215,9 +273,14 @@ def web_search(query, max_results=6):
 
 
 def open_url(url):
-    if urlparse(url).scheme not in {"http", "https"}:
+    parsed = urlparse(str(url))
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("Only http/https URLs are allowed.")
-    return {"opened": bool(webbrowser.open(url)), "url": url}
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("Credentials embedded in URLs are not allowed.")
+    if len(str(url)) > 4096:
+        raise ValueError("URL exceeds the 4096-character safety limit.")
+    return {"opened": bool(webbrowser.open(url)), "url": str(url)}
 
 
 TOOLS = [

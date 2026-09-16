@@ -10,6 +10,7 @@ from iras.autonomy import (
     looks_like_private_deliberation,
 )
 
+from iras.security.tool_content import secure_tool_payload
 from iras.persona import (
     SYSTEM_PROMPT,
     build_system_prompt,
@@ -434,6 +435,15 @@ class IRASAgent:
                 "open explorer",
                 "open project",
                 "git status",
+                "git diff",
+                "git log",
+                "search my project",
+                "search the project",
+                "find in project",
+                "find in files",
+                "sha256",
+                "checksum",
+                "file hash",
                 "run tests",
                 "run the tests",
                 "test my project",
@@ -494,6 +504,21 @@ class IRASAgent:
 
         if "git status" in q:
             return {"device_git_status"}
+
+        if "git diff" in q or "show changes" in q or "show the diff" in q:
+            return {"device_git_diff"}
+
+        if "git log" in q or "recent commits" in q or "commit history" in q:
+            return {"device_git_log"}
+
+        if cls._contains_any(
+            q,
+            ("search my project", "search the project", "find in project", "find in files", "search files for"),
+        ):
+            return {"device_search_text"}
+
+        if cls._contains_any(q, ("sha256", "checksum", "file hash", "hash of")):
+            return {"device_file_info"}
 
         if cls._contains_any(
             q,
@@ -1632,6 +1657,7 @@ class IRASAgent:
                             result.error
                         ),
                     }
+                    payload = secure_tool_payload(call.name, payload)
 
                 messages.append(
                     {
@@ -2536,3 +2562,4 @@ class IRASAgent:
             f"{self.last_metrics['model']}",
             flush=True,
         )
+

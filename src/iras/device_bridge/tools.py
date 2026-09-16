@@ -349,6 +349,27 @@ def make_tools(store):
             device_id,
         )
 
+    def device_read_text_range(path, start_line=1, end_line=200, device_id=None):
+        return request(
+            "read_text_range",
+            {"path": path, "start_line": start_line, "end_line": end_line},
+            device_id,
+        )
+
+    def device_search_text(root, query, pattern="*", regex=False, case_sensitive=False, max_matches=120, max_files=600, device_id=None):
+        return request(
+            "search_text",
+            {
+                "root": root, "query": query, "pattern": pattern, "regex": regex,
+                "case_sensitive": case_sensitive, "max_matches": max_matches, "max_files": max_files,
+            },
+            device_id,
+            timeout=60,
+        )
+
+    def device_file_info(path, sha256=True, device_id=None):
+        return request("file_info", {"path": path, "sha256": sha256}, device_id)
+
     def device_git_status(
         repo,
         device_id=None,
@@ -361,17 +382,31 @@ def make_tools(store):
             device_id,
         )
 
+    def device_git_diff(repo, path="", staged=False, max_chars=30000, device_id=None):
+        return request(
+            "git_diff",
+            {"repo": repo, "path": path, "staged": staged, "max_chars": max_chars},
+            device_id,
+        )
+
+    def device_git_log(repo, limit=20, device_id=None):
+        return request("git_log", {"repo": repo, "limit": limit}, device_id)
+
     def device_run_tests(
         project,
+        target="",
+        timeout=180.0,
         device_id=None,
     ):
         return request(
             "run_tests",
             {
                 "project": project,
+                "target": target,
+                "timeout": timeout,
             },
             device_id,
-            timeout=90,
+            timeout=max(30, min(int(timeout) + 5, 180)),
         )
 
     def device_capture_screen(
@@ -460,7 +495,7 @@ def make_tools(store):
         }
     }
 
-    return [
+    tools = [
         Tool(
             "device_list",
             (
@@ -1100,6 +1135,57 @@ def make_tools(store):
             PermissionLevel.READ,
         ),
         Tool(
+            "device_read_text_range",
+            "Read a bounded line range from an allowed text/code file. Prefer this over reading a whole large source file.",
+            {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "start_line": {"type": "integer", "minimum": 1},
+                    "end_line": {"type": "integer", "minimum": 1},
+                    **optional_device,
+                },
+                "required": ["path"],
+            },
+            device_read_text_range,
+            PermissionLevel.READ,
+        ),
+        Tool(
+            "device_search_text",
+            "Search bounded text/code files recursively inside an allowed root and return matching lines with paths and line numbers. Symlinks and oversized files are skipped.",
+            {
+                "type": "object",
+                "properties": {
+                    "root": {"type": "string"},
+                    "query": {"type": "string", "maxLength": 1000},
+                    "pattern": {"type": "string", "maxLength": 200},
+                    "regex": {"type": "boolean"},
+                    "case_sensitive": {"type": "boolean"},
+                    "max_matches": {"type": "integer", "minimum": 1, "maximum": 500},
+                    "max_files": {"type": "integer", "minimum": 1, "maximum": 3000},
+                    **optional_device,
+                },
+                "required": ["root", "query"],
+            },
+            device_search_text,
+            PermissionLevel.READ,
+        ),
+        Tool(
+            "device_file_info",
+            "Inspect one allowed file/directory and optionally compute a SHA-256 hash for verification.",
+            {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "sha256": {"type": "boolean"},
+                    **optional_device,
+                },
+                "required": ["path"],
+            },
+            device_file_info,
+            PermissionLevel.READ,
+        ),
+        Tool(
             "device_git_status",
             "Run read-only git status in an allowed repository on the paired PC.",
             {
@@ -1118,9 +1204,41 @@ def make_tools(store):
             PermissionLevel.READ,
         ),
         Tool(
+            "device_git_diff",
+            "Read a bounded Git diff from an allowed repository, optionally for one path or staged changes.",
+            {
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string"},
+                    "path": {"type": "string"},
+                    "staged": {"type": "boolean"},
+                    "max_chars": {"type": "integer", "minimum": 1000, "maximum": 100000},
+                    **optional_device,
+                },
+                "required": ["repo"],
+            },
+            device_git_diff,
+            PermissionLevel.READ,
+        ),
+        Tool(
+            "device_git_log",
+            "Read recent Git commit summaries from an allowed repository.",
+            {
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                    **optional_device,
+                },
+                "required": ["repo"],
+            },
+            device_git_log,
+            PermissionLevel.READ,
+        ),
+        Tool(
             "device_run_tests",
             (
-                "Run the detected project test suite on the paired computer. "
+                "Run the detected project test suite, or one bounded pytest target, on the paired computer. "
                 "Only pytest or the package.json test script is allowed; no arbitrary shell."
             ),
             {
@@ -1129,6 +1247,15 @@ def make_tools(store):
                     "project": {
                         "type": "string",
                     },
+                    "target": {
+                        "type": "string",
+                        "description": "Optional pytest file or file::test node inside the project.",
+                    },
+                    "timeout": {
+                        "type": "number",
+                        "minimum": 10,
+                        "maximum": 180,
+                    },
                     **optional_device,
                 },
                 "required": [
@@ -1136,7 +1263,7 @@ def make_tools(store):
                 ],
             },
             device_run_tests,
-            PermissionLevel.SAFE_ACTION,
+            PermissionLevel.SYSTEM_ACTION,
         ),
         Tool(
             "device_capture_screen",
@@ -1303,3 +1430,43 @@ def make_tools(store):
             PermissionLevel.CRITICAL,
         ),
     ]
+
+    # Keep cloud-side approval classification aligned with the exact action the
+    # Windows bridge will enforce. This prevents a dynamic SYSTEM/CRITICAL
+    # action from being under-classified by a static tool permission.
+    action_by_tool = {
+        "device_list": None,
+        "device_system_info": "system_info", "device_detect_apps": "detect_apps",
+        "device_app_control": "app_control", "device_open_app": "open_app",
+        "device_interact_app": "interact_app", "device_observe_ui": "observe_ui",
+        "device_semantic_action": "semantic_action", "device_computer_status": "computer_status",
+        "device_computer_observe": "computer_observe", "device_computer_action": "computer_action",
+        "device_computer_verify": "computer_verify", "device_whatsapp_open_chat": "whatsapp_open_chat",
+        "device_spotify_search": "spotify_search", "device_spotify_play": "spotify_play",
+        "device_media_control": "media_control", "device_open_url": "open_url",
+        "device_open_project": "open_project", "device_list_files": "list_directory",
+        "device_read_text": "read_text", "device_read_text_range": "read_text_range",
+        "device_search_text": "search_text", "device_file_info": "file_info",
+        "device_git_status": "git_status", "device_git_diff": "git_diff", "device_git_log": "git_log",
+        "device_run_tests": "run_tests", "device_capture_screen": "capture_screen",
+        "device_screen_preview": "screen_preview", "device_list_processes": "list_processes",
+        "device_kill_process": "kill_process", "device_write_text": "write_text",
+        "device_replace_text": "replace_text", "device_make_directory": "make_directory",
+        "device_copy_path": "copy_path", "device_move_path": "move_path",
+        "device_delete_path": "delete_path", "device_clipboard_get": "clipboard_get",
+        "device_clipboard_set": "clipboard_set", "device_ui_find_text": "ui_find_text",
+        "device_ui_click_text": "ui_click_text", "device_ui_type_text": "ui_type_text",
+        "device_ui_wait_text": "ui_wait_text", "device_ui_scroll_until_text": "ui_scroll_until_text",
+        "device_verify_state": "verify_state", "device_power_action": "power_action",
+        "device_run_command": "run_command",
+    }
+
+    for tool in tools:
+        action = action_by_tool.get(tool.name)
+        if action:
+            def _resolver(args, _action=action):
+                forwarded = {k: v for k, v in dict(args or {}).items() if k != "device_id"}
+                return action_permission(_action, forwarded)
+            tool.permission_resolver = _resolver
+
+    return tools

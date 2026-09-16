@@ -208,6 +208,6 @@ TOOLS = [
         PermissionLevel.SAFE_ACTION,
         classify_launch,
     ),
-    Tool('kill_process', 'Terminate a process by PID.', {'type': 'object', 'properties': {'pid': {'type': 'integer'}}, 'required': ['pid']}, kill_process, PermissionLevel.SYSTEM_ACTION),
+    Tool('kill_process', 'Terminate a process by PID. Critical because arbitrary process termination can disrupt security/system software.', {'type': 'object', 'properties': {'pid': {'type': 'integer', 'minimum': 1}}, 'required': ['pid']}, kill_process, PermissionLevel.CRITICAL),
     Tool('capture_screen', 'Capture the current desktop screenshot to a file.', {'type': 'object', 'properties': {'path': {'type': 'string'}}}, screenshot, PermissionLevel.READ),
 ]

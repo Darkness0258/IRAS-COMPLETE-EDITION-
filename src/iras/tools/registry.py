@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from iras.models import (
     ApprovalRequest,
     ToolResult,
@@ -86,6 +88,15 @@ class ToolRegistry:
                 ),
             )
 
+        try:
+            args = tool.validate_arguments(args)
+        except Exception as exc:
+            self.audit.record(
+                "tool_invalid_arguments",
+                {"tool": name, "error": f"{type(exc).__name__}: {exc}"},
+            )
+            return ToolResult(False, error=f"Invalid arguments: {exc}")
+
         level = (
             tool
             .required_permission(args)
@@ -115,15 +126,18 @@ class ToolRegistry:
                 },
             )
 
+            started = time.perf_counter()
             out = tool.handler(
                 **args
             )
+            duration_ms = int((time.perf_counter() - started) * 1000)
 
             self.audit.record(
                 "tool_result",
                 {
                     "tool": name,
                     "ok": True,
+                    "duration_ms": duration_ms,
                 },
             )
 

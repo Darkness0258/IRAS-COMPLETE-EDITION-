@@ -8,6 +8,9 @@ import os
 import platform
 from pathlib import Path
 import shutil
+import tempfile
+import fnmatch
+import re
 import subprocess
 import sys
 import time
@@ -32,6 +35,7 @@ from iras.device_bridge.whatsapp_workflow import (
 )
 from iras.device_bridge.primitives import VerifiedUIPrimitives
 from iras.device_bridge.verifiers import SemanticVerifier
+from iras.remote_access import is_sensitive_path
 from iras.safety_runtime import EmergencyStop
 
 
@@ -44,7 +48,12 @@ DEFAULT_CAPABILITIES = [
     "open_project",
     "list_directory",
     "read_text",
+    "read_text_range",
+    "search_text",
+    "file_info",
     "git_status",
+    "git_diff",
+    "git_log",
     "run_tests",
     "capture_screen",
     "interact_app",
@@ -231,7 +240,12 @@ class DeviceExecutor:
             "open_project": self.open_project,
             "list_directory": self.list_directory,
             "read_text": self.read_text,
+            "read_text_range": self.read_text_range,
+            "search_text": self.search_text,
+            "file_info": self.file_info,
             "git_status": self.git_status,
+            "git_diff": self.git_diff,
+            "git_log": self.git_log,
             "run_tests": self.run_tests,
             "capture_screen": self.capture_screen,
             "interact_app": self.interact_app,
@@ -449,19 +463,19 @@ class DeviceExecutor:
             ):
                 continue
 
+            is_link = item.is_symlink()
+            item_type = "symlink" if is_link else ("dir" if item.is_dir() else "file")
+            size = None
+            if not is_link and item.is_file():
+                try:
+                    size = item.stat().st_size
+                except OSError:
+                    size = None
             output.append(
                 {
                     "name": item.name,
-                    "type": (
-                        "dir"
-                        if item.is_dir()
-                        else "file"
-                    ),
-                    "size": (
-                        item.stat().st_size
-                        if item.is_file()
-                        else None
-                    ),
+                    "type": item_type,
+                    "size": size,
                 }
             )
 
@@ -505,6 +519,118 @@ class DeviceExecutor:
             ),
         }
 
+    def read_text_range(
+        self,
+        path: str,
+        start_line: int = 1,
+        end_line: int = 200,
+    ):
+        file_path = self._path(path)
+        if not file_path.is_file():
+            raise FileNotFoundError(file_path)
+        if file_path.stat().st_size > 5_000_000:
+            raise ValueError("read_text_range refuses files larger than 5 MB.")
+        start_line = max(1, int(start_line))
+        end_line = max(start_line, min(int(end_line), start_line + 999))
+        lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        selected = lines[start_line - 1:end_line]
+        return {
+            "path": str(file_path),
+            "start_line": start_line,
+            "end_line": min(end_line, len(lines)),
+            "total_lines": len(lines),
+            "content": "\n".join(selected),
+        }
+
+    def search_text(
+        self,
+        root: str,
+        query: str,
+        pattern: str = "*",
+        regex: bool = False,
+        case_sensitive: bool = False,
+        max_matches: int = 120,
+        max_files: int = 600,
+    ):
+        directory = self._path(root)
+        if not directory.is_dir():
+            raise NotADirectoryError(directory)
+        query = str(query or "")
+        if not query:
+            raise ValueError("query is required.")
+        if len(query) > 1000:
+            raise ValueError("query is too long.")
+        pattern = str(pattern or "*")[:200]
+        max_matches = max(1, min(int(max_matches), 500))
+        max_files = max(1, min(int(max_files), 3000))
+        flags = 0 if case_sensitive else re.IGNORECASE
+        compiled = re.compile(query, flags) if regex else None
+        needle = query if case_sensitive else query.lower()
+        matches = []
+        scanned = 0
+        skipped_symlinks = 0
+        for candidate in directory.rglob("*"):
+            if scanned >= max_files or len(matches) >= max_matches:
+                break
+            try:
+                if candidate.is_symlink():
+                    skipped_symlinks += 1
+                    continue
+                if is_sensitive_path(candidate):
+                    continue
+                if not candidate.is_file() or not fnmatch.fnmatch(candidate.name, pattern):
+                    continue
+                if candidate.stat().st_size > 2_000_000:
+                    continue
+            except OSError:
+                continue
+            scanned += 1
+            try:
+                text = candidate.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for line_no, line in enumerate(text.splitlines(), start=1):
+                found = bool(compiled.search(line)) if compiled else (needle in (line if case_sensitive else line.lower()))
+                if found:
+                    matches.append({
+                        "path": str(candidate),
+                        "relative_path": str(candidate.relative_to(directory)),
+                        "line": line_no,
+                        "text": line[:1200],
+                    })
+                    if len(matches) >= max_matches:
+                        break
+        return {
+            "root": str(directory),
+            "query": query,
+            "pattern": pattern,
+            "matches": matches,
+            "match_count": len(matches),
+            "files_scanned": scanned,
+            "symlinks_skipped": skipped_symlinks,
+            "truncated": scanned >= max_files or len(matches) >= max_matches,
+        }
+
+    def file_info(self, path: str, sha256: bool = True):
+        target = self._path(path)
+        stat = target.stat()
+        result = {
+            "path": str(target),
+            "type": "dir" if target.is_dir() else "file",
+            "size": stat.st_size if target.is_file() else None,
+            "modified": stat.st_mtime,
+            "is_symlink": target.is_symlink(),
+        }
+        if sha256 and target.is_file():
+            if stat.st_size > 100_000_000:
+                raise ValueError("file_info hashing is limited to files <= 100 MB.")
+            digest = hashlib.sha256()
+            with target.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            result["sha256"] = digest.hexdigest()
+        return result
+
     def git_status(
         self,
         repo: str,
@@ -546,9 +672,51 @@ class DeviceExecutor:
             ),
         }
 
+    def git_diff(self, repo: str, path: str = "", staged: bool = False, max_chars: int = 30000):
+        repository = self._path(repo)
+        if not repository.is_dir():
+            raise NotADirectoryError(repository)
+        command = ["git", "diff", "--no-ext-diff"]
+        if staged:
+            command.append("--cached")
+        if path:
+            candidate = (repository / str(path)).resolve()
+            try:
+                relative = candidate.relative_to(repository)
+            except ValueError as exc:
+                raise PermissionError("git_diff path must stay inside the repository.") from exc
+            command.extend(["--", str(relative)])
+        result = subprocess.run(command, cwd=repository, capture_output=True, text=True, errors="replace", timeout=45, shell=False)
+        max_chars = max(1000, min(int(max_chars), 100000))
+        return {
+            "repo": str(repository),
+            "returncode": result.returncode,
+            "stdout": result.stdout[:max_chars],
+            "stderr": result.stderr[-8000:],
+            "truncated": len(result.stdout) > max_chars,
+        }
+
+    def git_log(self, repo: str, limit: int = 20):
+        repository = self._path(repo)
+        if not repository.is_dir():
+            raise NotADirectoryError(repository)
+        limit = max(1, min(int(limit), 100))
+        result = subprocess.run(
+            ["git", "log", f"-{limit}", "--oneline", "--decorate", "--no-color"],
+            cwd=repository,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=45,
+            shell=False,
+        )
+        return {"repo": str(repository), "returncode": result.returncode, "stdout": result.stdout[-30000:], "stderr": result.stderr[-8000:]}
+
     def run_tests(
         self,
         project: str,
+        target: str = "",
+        timeout: float = 180.0,
     ):
         project_path = self._path(
             project
@@ -583,11 +751,26 @@ class DeviceExecutor:
                 "-q",
             ]
             runner = "pytest"
+            target = str(target or "").strip()
+            if target:
+                if target.startswith("-") or "\x00" in target or "\n" in target or "\r" in target:
+                    raise ValueError("Invalid pytest target.")
+                file_part, sep, node_part = target.partition("::")
+                candidate = (project_path / file_part).resolve()
+                try:
+                    relative = candidate.relative_to(project_path)
+                except ValueError as exc:
+                    raise PermissionError("Test target must stay inside the project.") from exc
+                if not candidate.exists():
+                    raise FileNotFoundError(candidate)
+                command.append(str(relative) + (("::" + node_part) if sep else ""))
 
         elif (
             project_path
             / "package.json"
         ).exists():
+            if str(target or "").strip():
+                raise ValueError("Targeted test selection is currently supported only for pytest projects.")
             package = json.loads(
                 (
                     project_path
@@ -657,7 +840,7 @@ class DeviceExecutor:
             capture_output=True,
             text=True,
             errors="replace",
-            timeout=180,
+            timeout=max(10.0, min(float(timeout), 180.0)),
             shell=False,
         )
 
@@ -969,13 +1152,51 @@ class DeviceExecutor:
             )
         return {"pid": pid, "returncode": result.returncode, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]}
 
+    @staticmethod
+    def _atomic_write_text(target: Path, content: str) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        old_mode = None
+        if target.exists():
+            try:
+                old_mode = target.stat().st_mode
+            except OSError:
+                old_mode = None
+        fd, temp_name = tempfile.mkstemp(prefix=target.name + ".", suffix=".iras-tmp", dir=str(target.parent))
+        temp_path = Path(temp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if old_mode is not None:
+                try:
+                    os.chmod(temp_path, old_mode)
+                except OSError:
+                    pass
+            os.replace(temp_path, target)
+        finally:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
     def write_text(self, path: str, content: str, append: bool = False):
         target = self._path(path, must_exist=False)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        mode = "a" if append else "w"
-        with target.open(mode, encoding="utf-8") as handle:
-            handle.write(str(content))
-        return {"path": str(target), "bytes": target.stat().st_size, "append": bool(append)}
+        text = str(content)
+        if len(text.encode("utf-8")) > 2_000_000:
+            raise ValueError("write_text payload is limited to 2 MB.")
+        if append:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("a", encoding="utf-8") as handle:
+                handle.write(text)
+                handle.flush()
+                try:
+                    os.fsync(handle.fileno())
+                except OSError:
+                    pass
+        else:
+            self._atomic_write_text(target, text)
+        return {"path": str(target), "bytes": target.stat().st_size, "append": bool(append), "atomic": not bool(append)}
 
     def replace_text(
         self,
@@ -1011,7 +1232,7 @@ class DeviceExecutor:
         updated = original.replace(old_text, new_text, count)
         if updated == original:
             raise RuntimeError("replace_text made no change.")
-        target.write_text(updated, encoding="utf-8")
+        self._atomic_write_text(target, updated)
         return {
             "path": str(target),
             "replacements": count,
@@ -1027,8 +1248,13 @@ class DeviceExecutor:
         src = self._path(source)
         dst = self._path(destination, must_exist=False)
         if src.is_dir():
-            shutil.copytree(src, dst, dirs_exist_ok=True)
+            for child in src.rglob("*"):
+                if child.is_symlink():
+                    raise PermissionError("copy_path refuses directory trees containing symlinks.")
+            shutil.copytree(src, dst, dirs_exist_ok=True, symlinks=False)
         else:
+            if src.is_symlink():
+                raise PermissionError("copy_path refuses symbolic links.")
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
         return {"source": str(src), "destination": str(dst)}

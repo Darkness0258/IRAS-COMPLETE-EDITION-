@@ -33,7 +33,12 @@ READ_ACTIONS = {
     "detect_apps",
     "list_directory",
     "read_text",
+    "read_text_range",
+    "search_text",
+    "file_info",
     "git_status",
+    "git_diff",
+    "git_log",
     "capture_screen",
     "screen_preview",
     "observe_ui",
@@ -68,13 +73,13 @@ SYSTEM_ACTIONS = {
     "copy_path",
     "move_path",
     "clipboard_set",
-    "kill_process",
     "ui_click_text",
     "ui_type_text",
     "ui_scroll_until_text",
 }
 
 CRITICAL_ACTIONS = {
+    "kill_process",
     "delete_path",
     "power_action",
     "run_command",
@@ -87,9 +92,45 @@ def _truthy(value: Any, *, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
+SENSITIVE_PATH_PARTS = {
+    ".ssh", ".aws", ".azure", ".gnupg", ".kube", ".docker",
+}
+SENSITIVE_FILENAMES = {
+    ".env", ".env.local", ".npmrc", ".pypirc", "credentials", "credentials.json",
+    "id_rsa", "id_ed25519", "known_hosts", "login data", "cookies",
+}
+
+
+def is_sensitive_path(value: Any) -> bool:
+    raw = str(value or "").strip().replace("/", "\\").lower()
+    if not raw:
+        return False
+    parts = [part for part in raw.split("\\") if part]
+    if any(part in SENSITIVE_PATH_PARTS for part in parts):
+        return True
+    name = parts[-1] if parts else raw
+    if name in SENSITIVE_FILENAMES or name.startswith(".env."):
+        return True
+    if name.endswith((".pem", ".key", ".p12", ".pfx")):
+        return True
+    return False
+
+
+def _file_action_sensitive(action: str, arguments: dict) -> bool:
+    if action in {"read_text", "read_text_range", "file_info", "write_text", "replace_text", "delete_path"}:
+        return is_sensitive_path(arguments.get("path"))
+    if action in {"copy_path", "move_path"}:
+        return is_sensitive_path(arguments.get("source")) or is_sensitive_path(arguments.get("destination"))
+    return False
+
+
 def action_permission(action: str, arguments: dict | None = None) -> PermissionLevel:
     name = str(action or "").strip()
     arguments = dict(arguments or {})
+    if _file_action_sensitive(name, arguments):
+        return PermissionLevel.CRITICAL
+    if name == "kill_process":
+        return PermissionLevel.CRITICAL
     if name == "computer_action":
         sub = str(arguments.get("action") or "").strip().lower()
         return PermissionLevel.READ if sub in {"wait", "move"} else PermissionLevel.SYSTEM_ACTION

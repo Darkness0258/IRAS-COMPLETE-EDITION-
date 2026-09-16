@@ -1,4 +1,4 @@
-name: IRAS v4.2 RC3 multi-agent validation
+name: IRAS v4.3 RC1 deep audit validation
 
 on:
   push:
@@ -21,4 +21,4 @@ jobs:
           pip install -e ".[dev]"
       - name: Validate release
         shell: pwsh
-        run: .\run-v420-validation.ps1
+        run: .\run-v430-validation.ps1

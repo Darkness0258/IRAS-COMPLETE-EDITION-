@@ -443,17 +443,23 @@ def _direct_deterministic_response(
 
 
 _ORCHESTRATION_ROLE_TOOLS = {
-    "researcher": {"web_search", "http_get", "api_request", "device_read_text", "device_git_status"},
+    "researcher": {
+        "web_search", "http_get", "api_request", "device_read_text", "device_read_text_range",
+        "device_search_text", "device_file_info", "device_git_status", "device_git_diff", "device_git_log",
+    },
     "coder": {
-        "device_computer_status", "device_list_files", "device_read_text", "device_git_status",
+        "device_computer_status", "device_list_files", "device_read_text", "device_read_text_range",
+        "device_search_text", "device_file_info", "device_git_status", "device_git_diff", "device_git_log",
         "device_write_text", "device_replace_text", "device_run_tests",
     },
     "tester": {
         "device_computer_status", "device_system_info", "device_list_files", "device_read_text",
-        "device_git_status", "device_run_tests", "http_get",
+        "device_read_text_range", "device_search_text", "device_file_info", "device_git_status",
+        "device_git_diff", "device_git_log", "device_run_tests", "http_get",
     },
     "reviewer": {
-        "device_computer_status", "device_list_files", "device_read_text", "device_git_status",
+        "device_computer_status", "device_list_files", "device_read_text", "device_read_text_range",
+        "device_search_text", "device_file_info", "device_git_status", "device_git_diff", "device_git_log",
         "device_run_tests", "web_search", "http_get",
     },
     "coordinator": set(),

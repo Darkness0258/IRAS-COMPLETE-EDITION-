@@ -248,6 +248,9 @@ class OrchestrationManager:
             "IRAS_ORCHESTRATION_MAX_TASKS", 12, 2, 20
         )
         self.retained_runs = max(5, min(int(retained_runs), 200))
+        self.max_active_runs_per_requester = _env_int(
+            "IRAS_ORCHESTRATION_MAX_ACTIVE_RUNS", 4, 1, 20
+        )
         self.journal_path = Path(journal_path).expanduser() if journal_path else None
         if provider_wait_budget_seconds is None:
             provider_wait_budget_seconds = _env_int(
@@ -271,6 +274,7 @@ class OrchestrationManager:
         self._lock = threading.RLock()
         self._condition = threading.Condition(self._lock)
         self._runs: dict[str, OrchestrationRun] = {}
+        self._load_journal_history()
         self._stopping = False
         self._scheduler = threading.Thread(
             target=self._scheduler_loop,
@@ -353,6 +357,83 @@ class OrchestrationManager:
                 )
         return specs
 
+    def _ensure_capacity_locked(self, requester_device: str) -> None:
+        requester = str(requester_device or "cloud-agent")[:128]
+        active = sum(
+            1
+            for run in self._runs.values()
+            if run.requester_device == requester and run.state not in RUN_TERMINAL_STATES
+        )
+        if active >= self.max_active_runs_per_requester:
+            raise RuntimeError(
+                f"Too many active multi-agent runs for {requester!r}; "
+                f"limit is {self.max_active_runs_per_requester}. Finish/cancel a run first."
+            )
+
+    def _load_journal_history(self) -> None:
+        """Recover observable run history after a server restart without replaying actions.
+
+        Execution context (including remote-session authorization) is deliberately
+        never persisted. Any formerly active run is marked failed/interrupted so
+        the UI cannot imply it is still executing after Render restarts.
+        """
+        if not self.journal_path or not self.journal_path.exists():
+            return
+        try:
+            raw = json.loads(self.journal_path.read_text(encoding="utf-8"))
+            rows = raw.get("runs") if isinstance(raw, dict) else []
+            if not isinstance(rows, list):
+                return
+            for item in rows[-self.retained_runs:]:
+                if not isinstance(item, dict) or not item.get("run_id"):
+                    continue
+                records: dict[str, GraphTaskRecord] = {}
+                for index, task in enumerate(item.get("tasks") or [], start=1):
+                    try:
+                        spec = GraphTaskSpec.from_mapping(task, index)
+                    except Exception:
+                        continue
+                    state = str(task.get("state") or "failed")
+                    error = str(task.get("error") or "")
+                    if state not in TERMINAL_TASK_STATES:
+                        state = "failed"
+                        error = error or "Interrupted by server restart; action was not replayed."
+                    record = GraphTaskRecord(
+                        spec=spec,
+                        state=state,
+                        attempts=int(task.get("attempts") or 0),
+                        created_at=str(task.get("created_at") or _now_iso()),
+                        started_at=task.get("started_at"),
+                        finished_at=task.get("finished_at") or (_now_iso() if state in TERMINAL_TASK_STATES else None),
+                        result=str(task.get("result") or ""),
+                        error=error,
+                        metrics=dict(task.get("metrics") or {}),
+                    )
+                    records[spec.task_id] = record
+                state = str(item.get("state") or "failed")
+                plan_error = str(item.get("plan_error") or "")
+                if state not in RUN_TERMINAL_STATES:
+                    state = "failed"
+                    plan_error = plan_error or "Run interrupted by server restart; IRAS did not replay pending actions."
+                run = OrchestrationRun(
+                    run_id=str(item["run_id"])[:64],
+                    objective=str(item.get("objective") or "")[:12000],
+                    requester_device=str(item.get("requester_device") or "cloud-agent")[:128],
+                    state=state,
+                    created_at=str(item.get("created_at") or _now_iso()),
+                    started_at=item.get("started_at"),
+                    finished_at=item.get("finished_at") or _now_iso(),
+                    paused=False,
+                    cancelled=bool(item.get("cancelled", False)),
+                    plan_error=plan_error,
+                    final_result=str(item.get("final_result") or ""),
+                    tasks=records,
+                )
+                self._runs[run.run_id] = run
+        except Exception:
+            # A corrupt observability journal must never prevent IRAS startup.
+            self._runs.clear()
+
     def submit_objective(
         self,
         objective: str,
@@ -373,6 +454,7 @@ class OrchestrationManager:
             state="planning",
         )
         with self._condition:
+            self._ensure_capacity_locked(run.requester_device)
             self._runs[run.run_id] = run
             self._prune_locked()
             run.planner_future = self._planner_executor.submit(
@@ -407,6 +489,7 @@ class OrchestrationManager:
             tasks={spec.task_id: GraphTaskRecord(spec=spec) for spec in specs},
         )
         with self._condition:
+            self._ensure_capacity_locked(run.requester_device)
             self._runs[run.run_id] = run
             self._prune_locked()
             self._persist_locked()
