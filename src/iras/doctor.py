@@ -96,6 +96,20 @@ def run(settings):
         f"workers={multitask_workers} max_tasks={multitask_max_tasks}",
     )
 
+    try:
+        orchestration_workers = max(1, min(int(os.getenv("IRAS_ORCHESTRATION_WORKERS", "4")), 8))
+    except ValueError:
+        orchestration_workers = 4
+    try:
+        orchestration_max_tasks = max(2, min(int(os.getenv("IRAS_ORCHESTRATION_MAX_TASKS", "12")), 20))
+    except ValueError:
+        orchestration_max_tasks = 12
+    add(
+        "Multi-agent execution",
+        orchestration_workers >= 1 and orchestration_max_tasks >= 2,
+        f"workers={orchestration_workers} max_tasks={orchestration_max_tasks} planner=enabled",
+    )
+
     mic = Listener.microphone_status()
     add("Microphone input", mic.get("available"), f"{mic.get('count', 0)} input device(s)")
 

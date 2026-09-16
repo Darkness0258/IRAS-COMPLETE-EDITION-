@@ -1,20 +1,29 @@
-# IRAS 4.1.0 RC1 — Parallel Personal Windows Agent
+# IRAS 4.2.0 RC1 — Multi-Agent Personal Windows Agent
 
-IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, and a secure outbound bridge for controlling an authorized laptop from IRAS Cloud anywhere in the world.
+IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, secure worldwide Windows control, parallel multitasking, and dependency-aware multi-agent execution.
 
-**Release status:** `4.1.0-rc1` adds bounded multitasking on top of the proven `4.0.0` production baseline. v4.0.0 remains the rollback-safe stable release while parallel execution is validated on hosted Render and the real Windows bridge.
+**Release status:** `4.2.0-rc1` adds goal planning and multi-agent task graphs on top of the validated v4.1 worker isolation model. The v4 remote protocol remains `1`.
 
-## v4.1 multitasking
+## v4.2 multi-agent execution
 
-IRAS can now run independent jobs concurrently instead of forcing every request through one global agent turn. The hosted runtime uses isolated worker agents with request-local permission state and conversation snapshots, while durable facts, audit logs, paired devices, and learned app skills remain shared.
+Give IRAS one objective and it can plan and supervise the work instead of requiring you to manually split every step. The Planner creates a bounded DAG for specialized Researcher, Coder, Tester, Reviewer, General, and final Coordinator workers. Independent nodes run concurrently; dependent nodes wait for verified upstream completion.
 
-- Open **Tasks** in the web client and enter 2–8 jobs, one per line.
-- Or use chat syntax: `/parallel task one || task two || task three`.
-- `IRAS_MULTITASK_WORKERS` controls concurrent workers (default `4`, bounded to `1..8`).
-- `IRAS_MULTITASK_MAX_TASKS` controls the per-run task cap (default `8`, bounded to `2..12`).
-- `IRAS_MULTITASK_WAIT_TIMEOUT` controls how long a chat `/parallel` turn waits for the group (default `300` seconds).
+- Web: **Tasks → Multi-agent objective → Start Goal**.
+- Chat: `/goal your objective here` (aliases: `/orchestrate`, `/agents`).
+- Pause/resume/cancel are available from the Tasks panel and API.
+- Priorities, dependencies, attempts, retries, states, errors, and the final Coordinator result are observable.
+- `IRAS_ORCHESTRATION_WORKERS` controls graph workers (default `4`, bounded `1..8`).
+- `IRAS_ORCHESTRATION_MAX_TASKS` controls planned graph size (default `12`, bounded `2..20`; the final Coordinator is added automatically).
 
-Parallel workers do **not** bypass the existing safety model. Every worker gets its own permission engine; remote session identity and device targeting are carried in request-local context; emergency stop/local policy still gate the Windows executor. Windows GUI commands are naturally serialized by the device command queue, so independent cloud/network/research jobs can overlap without letting two workers fight over the same desktop action at the same instant.
+IRAS v4.1 `/parallel` mode remains available for independent jobs. Multi-agent workers do **not** bypass the existing safety model: each worker has isolated permission state and conversation context; remote session/device targeting remains request-local; upstream outputs are treated as untrusted data; Windows commands still pass through the authenticated queue, local policy, and emergency stop.
+
+## v4.1 parallel multitasking
+
+- Open **Tasks** and enter independent jobs, one per line, then choose **Run Parallel**.
+- Or use `/parallel task one || task two || task three`.
+- `IRAS_MULTITASK_WORKERS` defaults to `4` (bounded `1..8`).
+- `IRAS_MULTITASK_MAX_TASKS` defaults to `8` (bounded `2..12`).
+- `IRAS_MULTITASK_WAIT_TIMEOUT` defaults to `300` seconds.
 
 ## What v4 adds
 
@@ -54,7 +63,8 @@ tests/                   regression suite
 scripts/                 validators, maintenance, Windows setup
 scripts/windows/         remote-access/install/update lifecycle
 docs/                    current architecture/deployment guides
-run-v400-validation.ps1  complete v4 production validation
+run-v420-validation.ps1  complete v4.2 multi-agent validation
+run-v400-validation.ps1  v4.0 production baseline validator
 run-v400-real-device-smoke.ps1
 setup-remote-windows.ps1 worldwide Windows bridge setup
 ```

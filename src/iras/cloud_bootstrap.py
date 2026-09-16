@@ -99,6 +99,7 @@ def _build_cloud_agent(
     personality,
     device_bridge,
     app_skills,
+    system_prompt_suffix: str = "",
 ):
     permissions = PermissionEngine(
         auto_level=PermissionLevel.SAFE_ACTION,
@@ -125,7 +126,10 @@ def _build_cloud_agent(
         memory,
         audit,
         s.max_agent_steps,
-        system_prompt=build_system_prompt(s.voice_profile),
+        system_prompt=(
+            build_system_prompt(s.voice_profile)
+            + ("\n\n" + system_prompt_suffix.strip() if system_prompt_suffix.strip() else "")
+        ),
         personality=personality,
         voice_profile=s.voice_profile,
         context_fact_limit=_env_int("IRAS_CONTEXT_FACTS", 10, 0),
@@ -138,7 +142,12 @@ def _build_cloud_agent(
     return agent, registry, provider
 
 
-def build_cloud_worker(runtime: CloudRuntime, memory) -> CloudWorker:
+def build_cloud_worker(
+    runtime: CloudRuntime,
+    memory,
+    *,
+    system_prompt_suffix: str = "",
+) -> CloudWorker:
     # Parallel task workers get a frozen snapshot of the learned communication
     # style. They may read durable facts and intentionally remember facts, but
     # sibling tasks do not race to adapt personality state mid-run.
@@ -154,6 +163,7 @@ def build_cloud_worker(runtime: CloudRuntime, memory) -> CloudWorker:
         personality=personality,
         device_bridge=runtime.device_bridge,
         app_skills=runtime.app_skills,
+        system_prompt_suffix=system_prompt_suffix,
     )
     return CloudWorker(agent, registry, provider, personality)
 

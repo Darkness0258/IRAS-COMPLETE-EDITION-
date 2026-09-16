@@ -128,12 +128,22 @@ class IRASAgent:
         ):
             return self.system_prompt
 
-        return build_system_prompt(
-            self.voice_profile,
-            adaptive_fragment=(
-                self.personality
-                .prompt_fragment()
-            ),
+        base_profile_prompt = build_system_prompt(
+            self.voice_profile
+        )
+        suffix = ""
+        if self.system_prompt.startswith(base_profile_prompt):
+            suffix = self.system_prompt[len(base_profile_prompt):]
+
+        return (
+            build_system_prompt(
+                self.voice_profile,
+                adaptive_fragment=(
+                    self.personality
+                    .prompt_fragment()
+                ),
+            )
+            + suffix
         )
 
     def _base_messages(

@@ -68,14 +68,19 @@
   <div class="row" style="margin-top:10px"><button id="refreshScreen">Refresh</button><button id="closeScreen">Close</button></div>
 </dialog>
 
-<dialog id="tasksDlg" style="max-width:720px">
-  <h3>Parallel tasks</h3>
-  <div class="sub" style="margin-bottom:10px">One task per line. IRAS runs independent tasks concurrently with isolated agent state; Windows device commands remain permissioned and safely queued.</div>
+<dialog id="tasksDlg" style="max-width:820px">
+  <h3>Tasks & multi-agent execution</h3>
+  <div class="sub" style="margin-bottom:10px">Give IRAS one objective and the Planner will build a dependency graph for Researcher, Coder, Tester, Reviewer, and Coordinator agents. Independent nodes run in parallel; Windows actions remain permissioned and queued.</div>
+  <label>Multi-agent objective</label>
+  <textarea id="goalInput" placeholder="Example: Improve IRAS voice latency, inspect the current implementation, make the safest useful changes, run tests, review regressions, and report the final result."></textarea>
+  <div class="row" style="margin:8px 0 14px"><button class="primary" id="runGoal">Start Goal</button><button id="latestGoal">Latest Run</button><button id="pauseGoal">Pause</button><button id="resumeGoal">Resume</button><button id="cancelGoal">Cancel</button></div>
+  <div class="sub" style="margin:8px 0">Or run independent tasks directly (one per line):</div>
   <textarea id="taskInput" placeholder="Research the latest framework changes
 Check the status of my Windows PC
 Summarize the current project state"></textarea>
-  <pre id="taskOut">Ready for 2–8 parallel tasks.</pre>
-  <div class="row"><button id="closeTasks">Close</button><button class="primary" id="runTasks">Run Parallel</button></div>
+  <div class="row" style="margin:8px 0"><button id="runTasks">Run Parallel</button></div>
+  <pre id="taskOut">Ready. Multi-agent goals are planned in the background; parallel mode accepts 2–8 independent tasks.</pre>
+  <div class="row"><button id="closeTasks">Close</button></div>
 </dialog>
 
 <dialog id="directDlg">
@@ -97,7 +102,8 @@ const handsButton=$("#handsfree");
 const remoteButton=$("#remote"),screenButton=$("#screen"),directButton=$("#direct"),tasksButton=$("#tasks");
 const screenDlg=$("#screenDlg"),screenImg=$("#screenImg");
 const directDlg=$("#directDlg"),directAction=$("#directAction"),directArgs=$("#directArgs"),directOut=$("#directOut");
-const tasksDlg=$("#tasksDlg"),taskInput=$("#taskInput"),taskOut=$("#taskOut");
+const tasksDlg=$("#tasksDlg"),taskInput=$("#taskInput"),taskOut=$("#taskOut"),goalInput=$("#goalInput");
+let activeGoalRunId="",goalPollGeneration=0;
 
 let currentAudio=null,currentAudioUrl=null,currentChatAbort=null;
 let voiceQueue=[],voicePumping=false,voiceSession=0,voiceBuffer="",lastSpokenText="";
@@ -226,6 +232,86 @@ async function runDirectAction(){
   const result=await invokeRemoteAction(action,args,60);
   directOut.textContent=JSON.stringify(result,null,2);
   status.textContent="Direct remote action completed";
+}
+
+function renderAgentRun(run){
+  const lines=[`Multi-agent run ${run.run_id||""} · ${run.state||""} · ${run.completed_count||0}/${run.task_count||0} complete`, `Objective: ${run.objective||""}`];
+  if(run.plan_error)lines.push(`Planner error: ${run.plan_error}`);
+  for(const task of run.tasks||[]){
+    const mark=task.state==="succeeded"?"✓":task.state==="failed"?"✗":task.state==="blocked"?"⊘":task.state==="running"?"▶":task.state==="cancelled"?"■":"·";
+    const deps=(task.depends_on||[]).length?` deps=[${task.depends_on.join(", ")}]`:"";
+    lines.push(`\n${mark} ${task.role||"general"} · ${task.title||task.task_id} · priority ${task.priority??50} · attempt ${task.attempts||0}${deps}`);
+    if(task.result)lines.push(task.result);
+    if(task.error)lines.push(`Error: ${task.error}`);
+  }
+  if(run.final_result)lines.push(`\nFINAL COORDINATOR RESULT\n${run.final_result}`);
+  return lines.join("\n");
+}
+
+async function fetchAgentRun(runId){
+  const c=config(),base=c.server||location.origin;
+  const r=await fetch(base+"/v1/orchestration/runs/"+encodeURIComponent(runId),{headers:{"Authorization":"Bearer "+c.token}});
+  if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
+  return await r.json();
+}
+
+async function pollAgentRun(runId){
+  const generation=++goalPollGeneration;
+  activeGoalRunId=runId;
+  const deadline=Date.now()+30*60*1000;
+  while(Date.now()<deadline&&generation===goalPollGeneration){
+    const run=await fetchAgentRun(runId);
+    taskOut.textContent=renderAgentRun(run);
+    status.textContent=`Multi-agent run · ${run.state} · ${run.completed_count||0}/${run.task_count||0}`;
+    if(["succeeded","partial_failure","failed","cancelled"].includes(run.state))return run;
+    await new Promise(resolve=>setTimeout(resolve,800));
+  }
+}
+
+async function startAgentGoal(){
+  const c=config();
+  if(!c.token){cfg.showModal();return}
+  const objective=goalInput.value.trim();
+  if(!objective)throw new Error("Enter a multi-agent objective first.");
+  const base=c.server||location.origin;
+  taskOut.textContent="Planner is building the task graph...";
+  status.textContent="Starting multi-agent run...";
+  const r=await fetch(base+"/v1/orchestration/runs",{
+    method:"POST",
+    headers:{"Content-Type":"application/json","Authorization":"Bearer "+c.token,"X-Device-ID":"web",...remoteHeaders()},
+    body:JSON.stringify({objective})
+  });
+  if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
+  const run=await r.json();
+  activeGoalRunId=run.run_id;
+  taskOut.textContent=renderAgentRun(run);
+  add("You","Multi-agent goal: "+objective);
+  pollAgentRun(run.run_id).then(final=>{if(final)add("IRAS",renderAgentRun(final))}).catch(e=>{taskOut.textContent="Error: "+e.message});
+}
+
+async function loadLatestGoal(){
+  const c=config();
+  if(!c.token){cfg.showModal();return}
+  const base=c.server||location.origin;
+  const r=await fetch(base+"/v1/orchestration/runs?limit=1",{headers:{"Authorization":"Bearer "+c.token}});
+  if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
+  const runs=(await r.json()).runs||[];
+  if(!runs.length){taskOut.textContent="No multi-agent runs yet.";return}
+  activeGoalRunId=runs[0].run_id;
+  taskOut.textContent=renderAgentRun(runs[0]);
+  if(!["succeeded","partial_failure","failed","cancelled"].includes(runs[0].state))pollAgentRun(activeGoalRunId).catch(e=>{taskOut.textContent="Error: "+e.message});
+}
+
+async function controlGoal(action){
+  if(!activeGoalRunId)throw new Error("No active multi-agent run. Start one or load the latest run.");
+  const c=config(),base=c.server||location.origin;
+  const url=base+"/v1/orchestration/runs/"+encodeURIComponent(activeGoalRunId)+(action==="cancel"?"":"/"+action);
+  const r=await fetch(url,{method:action==="cancel"?"DELETE":"POST",headers:{"Authorization":"Bearer "+c.token}});
+  if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
+  const run=await r.json();
+  taskOut.textContent=renderAgentRun(run);
+  status.textContent=`Multi-agent run ${action}: ${run.state}`;
+  if(action==="resume")pollAgentRun(activeGoalRunId).catch(e=>{taskOut.textContent="Error: "+e.message});
 }
 
 function renderMultitaskRun(run){
@@ -967,8 +1053,13 @@ $("#settings").onclick=()=>cfg.showModal();
 remoteButton.onclick=toggleRemote;
 screenButton.onclick=()=>refreshRemoteScreen().catch(e=>status.textContent="Screen error: "+e.message);
 directButton.onclick=()=>directDlg.showModal();
-tasksButton.onclick=()=>tasksDlg.showModal();
+tasksButton.onclick=()=>{tasksDlg.showModal();loadLatestGoal().catch(()=>{});};
 $("#runTasks").onclick=()=>runParallelTasks().catch(e=>{taskOut.textContent="Error: "+e.message;status.textContent="Parallel task error"});
+$("#runGoal").onclick=()=>startAgentGoal().catch(e=>{taskOut.textContent="Error: "+e.message;status.textContent="Multi-agent start error"});
+$("#latestGoal").onclick=()=>loadLatestGoal().catch(e=>{taskOut.textContent="Error: "+e.message});
+$("#pauseGoal").onclick=()=>controlGoal("pause").catch(e=>{taskOut.textContent="Error: "+e.message});
+$("#resumeGoal").onclick=()=>controlGoal("resume").catch(e=>{taskOut.textContent="Error: "+e.message});
+$("#cancelGoal").onclick=()=>controlGoal("cancel").catch(e=>{taskOut.textContent="Error: "+e.message});
 $("#closeTasks").onclick=()=>tasksDlg.close();
 $("#runDirect").onclick=()=>runDirectAction().catch(e=>{directOut.textContent="Error: "+e.message;status.textContent="Direct remote error"});
 $("#closeDirect").onclick=()=>directDlg.close();

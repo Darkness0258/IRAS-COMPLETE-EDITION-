@@ -282,3 +282,12 @@ v4.1 keeps the v4.0 remote protocol and safety boundary unchanged while adding a
 Remote provenance is concurrency-safe. The active remote session ID, requester, and exact target device are carried with `ContextVar` state instead of mutating a global preferred-device field. This prevents two concurrent sessions from leaking target-device or permission state into one another.
 
 The web client exposes a **Tasks** panel backed by `/v1/multitask/runs`; explicit chat syntax `/parallel ... || ...` uses the same supervisor. Worker and per-run limits are bounded by environment configuration. Existing emergency stop, local remote policy, remote-session permission caps, DPAPI pairing, command TTLs, and audit traces remain authoritative. Device-side commands continue through the single authenticated command queue, which serializes Windows UI mutation even when several cloud workers are active.
+
+
+## v4.2 RC1 — Multi-Agent Execution Graph
+
+The v4.2 cloud runtime adds `OrchestrationManager`, a bounded dependency-DAG supervisor above the isolated v4.1 worker model. An objective is planned by a tool-less Planner provider call. The graph is validated for unique IDs, known dependencies, and acyclicity before execution. Ready nodes are ordered by priority and dispatched to isolated workers.
+
+Each graph worker receives a role-specific system directive plus request-local remote-session context. Dependency outputs are included only as explicitly labelled untrusted data. Normal downstream nodes require successful dependencies; failed branches are marked blocked. The automatically added Coordinator uses `continue_on_failure` so it can synthesize a truthful result after partial failure.
+
+Pause is cooperative: running bounded turns complete, but no new nodes start. Cancel marks queued nodes cancelled and discards late results from already-running workers. The Windows device queue, permission engine, local policy, fresh-state verification, and emergency-stop controller remain below this orchestration layer and therefore remain authoritative.
