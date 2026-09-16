@@ -57,7 +57,9 @@ from iras.orchestration import (
 )
 from iras.deterministic_orchestration import (
     deterministic_exact_file_task,
+    deterministic_exact_file_direct,
     exact_file_plan,
+    parse_exact_file_objective,
 )
 from iras.config import Settings
 from iras.voice.humanize import (
@@ -374,6 +376,64 @@ def _deterministic_device_request(
         permission_level=required if session_id else None,
         requester_device=str(context.get("requester_device") or "cloud-agent")[:128],
     )
+
+
+def _direct_deterministic_response(
+    message: str,
+    *,
+    remote_session: dict | None,
+    requester_device: str,
+) -> dict[str, Any] | None:
+    if parse_exact_file_objective(message) is None:
+        return None
+    if not remote_session:
+        return {
+            "response": (
+                "This exact file operation is supported without an AI provider, "
+                "but writing to Windows requires a live IRAS Remote session. "
+                "Open Remote, enable a FULL session, then send the same request again."
+            ),
+            "metrics": {
+                "model": "deterministic-direct-safety-gate",
+                "total_ms": 0,
+                "model_ms": 0,
+                "tool_schema_count": 0,
+            },
+        }
+    context = {
+        "remote_session": remote_session,
+        "requester_device": requester_device,
+    }
+    started = time.perf_counter()
+    result = deterministic_exact_file_direct(
+        message,
+        request=lambda action, arguments, timeout: _deterministic_device_request(
+            context, action, arguments, timeout
+        ),
+    )
+    if result is None:
+        return None
+    total_ms = int((time.perf_counter() - started) * 1000)
+    runtime.audit.record(
+        "direct_deterministic_complete",
+        {
+            "requester_device": requester_device,
+            "remote_session_id": remote_session.get("session_id"),
+            "stages": len(result.get("stages") or []),
+            "total_ms": total_ms,
+        },
+    )
+    return {
+        "response": str(result.get("result") or ""),
+        "metrics": {
+            "model": "deterministic-direct-router",
+            "total_ms": total_ms,
+            "model_ms": 0,
+            "first_token_ms": 0,
+            "tool_schema_count": 3,
+            "streamed": False,
+        },
+    }
 
 
 def _multitask_worker(prompt: str, context: dict[str, Any]) -> dict[str, Any]:
@@ -971,10 +1031,19 @@ def chat(
                 "tool_schema_count": 0,
             }
         else:
-            with agent_lock:
-                with _remote_permission_scope(remote_session):
-                    response = runtime.agent.handle(body.message)
-            metrics = runtime.agent.last_metrics or {}
+            direct = _direct_deterministic_response(
+                body.message,
+                remote_session=remote_session,
+                requester_device=device_id,
+            )
+            if direct is not None:
+                response = direct["response"]
+                metrics = direct["metrics"]
+            else:
+                with agent_lock:
+                    with _remote_permission_scope(remote_session):
+                        response = runtime.agent.handle(body.message)
+                metrics = runtime.agent.last_metrics or {}
 
     except Exception as exc:
         print(
@@ -1081,9 +1150,10 @@ def chat_stream(
 
     goal_objective = parse_goal_command(body.message)
     parallel_tasks = parse_parallel_command(body.message)
+    direct_deterministic_candidate = parse_exact_file_objective(body.message) is not None
     direct_stream = (
         False
-        if (parallel_tasks or goal_objective)
+        if (parallel_tasks or goal_objective or direct_deterministic_candidate)
         else runtime.agent.can_stream(body.message)
     )
 
@@ -1218,6 +1288,30 @@ def chat_stream(
                         "streamed": False,
                         "queue_wait_ms": 0,
                         "parallel_run_id": run.get("run_id"),
+                    },
+                )
+                return
+            direct = _direct_deterministic_response(
+                body.message,
+                remote_session=remote_session,
+                requester_device=device_id,
+            )
+            if direct is not None:
+                text = direct["response"]
+                metrics = direct["metrics"]
+                if text:
+                    yield _sse("token", {"text": text})
+                yield _sse(
+                    "done",
+                    {
+                        "request_id": request_id,
+                        "model": metrics.get("model") or "deterministic-direct-router",
+                        "timing_ms": int(metrics.get("total_ms") or 0),
+                        "model_ms": 0,
+                        "first_token_ms": int(metrics.get("first_token_ms") or 0),
+                        "tool_schema_count": int(metrics.get("tool_schema_count") or 0),
+                        "streamed": False,
+                        "queue_wait_ms": 0,
                     },
                 )
                 return

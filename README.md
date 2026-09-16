@@ -1,8 +1,8 @@
-# IRAS 4.2.0 RC3 — Resilient Multi-Agent Personal Windows Agent
+# IRAS 4.2.0 RC4 — Direct + Multi-Agent Resilient Windows Agent
 
 IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, secure worldwide Windows control, parallel multitasking, and dependency-aware multi-agent execution.
 
-**Release status:** `4.2.0-rc3` hardens multi-agent execution so narrow, explicitly bounded file-write/verify/review goals can complete through the normal permissioned Windows bridge even while cloud LLM providers are cooling down. General reasoning tasks still use the configured provider pool. The v4 remote protocol remains `1`.
+**Release status:** `4.2.0-rc4` adds Direct/Cloud deterministic parity: narrow exact-file write/verify/review requests now use the same provider-independent Windows execution path as multi-agent Tasks. General reasoning still uses the configured provider pool. The v4 remote protocol remains `1`.
 
 ## v4.2 multi-agent execution
 
@@ -16,7 +16,7 @@ Give IRAS one objective and it can plan and supervise the work instead of requir
 - `IRAS_ORCHESTRATION_MAX_TASKS` controls planned graph size (default `12`, bounded `2..20`; the final Coordinator is added automatically).
 - `IRAS_ORCHESTRATION_PROVIDER_WAIT_SECONDS` controls how long graph tasks automatically wait through temporary all-provider cooldowns before consuming their normal task retry budget (default `900`, bounded `0..1800`).
 
-For exact text-file goals of the form `Create C:\path\file.txt containing exactly "..."`, RC3 uses a deterministic planner/executor fallback: only `write_text`, `read_text`, and `git_status` are allowed, state-changing writes still require an active Remote session, and Windows allowed-root/local-policy/emergency-stop checks remain authoritative. This path does not execute shell commands.
+For exact text-file goals of the form `Create C:\path\file.txt containing exactly "..."`, RC4 uses the same deterministic executor in both Direct chat and multi-agent Tasks: only `write_text`, `read_text`, and `git_status` are allowed, state-changing writes still require an active Remote session, and Windows allowed-root/local-policy/emergency-stop checks remain authoritative. This path does not execute shell commands.
 
 IRAS v4.1 `/parallel` mode remains available for independent jobs. Multi-agent workers do **not** bypass the existing safety model: each worker has isolated permission state and conversation context; remote session/device targeting remains request-local; upstream outputs are treated as untrusted data; Windows commands still pass through the authenticated queue, local policy, and emergency stop.
 

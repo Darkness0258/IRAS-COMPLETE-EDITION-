@@ -175,3 +175,61 @@ def deterministic_exact_file_task(
         }
 
     return None
+
+
+def deterministic_exact_file_direct(
+    objective: str,
+    *,
+    request: Callable[[str, dict[str, Any], int], Any],
+) -> dict[str, Any] | None:
+    """Run the narrow exact-file workflow synchronously without an LLM.
+
+    Direct chat uses this to obtain parity with the multi-agent deterministic
+    fallback. The provided request callback remains responsible for all remote
+    session, permission, allowed-root, queue, and emergency-stop enforcement.
+    """
+    parsed = parse_exact_file_objective(objective)
+    if not parsed:
+        return None
+
+    dependency_results: list[dict[str, Any]] = []
+    stages = (
+        ("create-file", "Create exact text file", "coder"),
+        ("verify-file", "Verify exact file content", "tester"),
+        ("review-operation", "Review operation safety", "reviewer"),
+    )
+    for task_id, title, role in stages:
+        result = deterministic_exact_file_task(
+            role=role,
+            objective=objective,
+            dependency_results=dependency_results,
+            request=request,
+        )
+        if result is None:
+            return None
+        dependency_results.append({
+            "task_id": task_id,
+            "title": title,
+            "state": "succeeded",
+            "result": str(result.get("result") or ""),
+            "error": "",
+            "metrics": dict(result.get("metrics") or {}),
+        })
+
+    final = deterministic_exact_file_task(
+        role="coordinator",
+        objective=objective,
+        dependency_results=dependency_results,
+        request=request,
+    )
+    if final is None:
+        return None
+    return {
+        "result": str(final.get("result") or ""),
+        "metrics": {
+            "deterministic_direct": True,
+            "stages": len(stages),
+            "model": "deterministic-direct-router",
+        },
+        "stages": dependency_results,
+    }

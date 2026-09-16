@@ -18,6 +18,7 @@ from iras.multitasking import MultitaskManager, TaskMemoryView, parse_parallel_c
 from iras.orchestration import OrchestrationManager, parse_goal_command
 from iras.deterministic_orchestration import (
     deterministic_exact_file_task,
+    deterministic_exact_file_direct,
     exact_file_plan,
     parse_exact_file_objective,
 )
@@ -57,8 +58,8 @@ class _Memory:
 
 
 def main() -> None:
-    print("=== IRAS v4.2 RC3 MULTI-AGENT INTEGRATED VALIDATION ===")
-    assert __version__ == "4.2.0-rc3"
+    print("=== IRAS v4.2 RC4 MULTI-AGENT INTEGRATED VALIDATION ===")
+    assert __version__ == "4.2.0-rc4"
     assert SCENE_GRAPH_VERSION == "3.7.0"
     assert REMOTE_PROTOCOL_VERSION == 1
     cloud_contract = validate_cloud_health({
@@ -260,7 +261,26 @@ def main() -> None:
     print("MULTI-AGENT DEPENDENCIES: True")
     print("MULTI-AGENT RETRIES: True")
     print("PROVIDER-AWARE COOLDOWN WAIT: True")
+    direct_calls = []
+
+    def direct_request(action, arguments, timeout):
+        direct_calls.append(action)
+        if action == "write_text":
+            return {"bytes": len(arguments["content"].encode())}
+        if action == "read_text":
+            return {"content": "IRAS v4.2 multi-agent test"}
+        if action == "git_status":
+            return {"stdout": "## main\n?? multi-agent-test.txt\n"}
+        raise AssertionError(action)
+
+    direct_result = deterministic_exact_file_direct(
+        exact_objective, request=direct_request
+    )
+    assert direct_result is not None
+    assert direct_calls == ["write_text", "read_text", "git_status"]
+    assert "completed and verified" in direct_result["result"].lower()
     print("DETERMINISTIC EXACT-FILE FALLBACK: True")
+    print("DIRECT DETERMINISTIC PARITY: True")
     print("MULTI-AGENT PAUSE/RESUME/CANCEL: True")
     print("SPECIALIZED AGENT ROLES: planner/researcher/coder/tester/reviewer/coordinator")
     print("REMOTE CONTEXT DEVICE BINDING: True")

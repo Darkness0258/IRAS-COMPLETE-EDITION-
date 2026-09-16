@@ -1,5 +1,6 @@
 from iras.deterministic_orchestration import (
     deterministic_exact_file_task,
+    deterministic_exact_file_direct,
     exact_file_plan,
     parse_exact_file_objective,
 )
