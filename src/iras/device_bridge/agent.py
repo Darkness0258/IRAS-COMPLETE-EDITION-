@@ -4,7 +4,6 @@ import json
 import os
 import platform
 from pathlib import Path
-import secrets
 import socket
 import threading
 import time
@@ -17,6 +16,10 @@ from iras.device_bridge.executor import (
     DEFAULT_CAPABILITIES,
     DeviceExecutor,
 )
+from iras.observability import TraceLogger
+from iras.remote_access import RemoteAccessPolicy, action_permission
+from iras.security.secret_store import protect_secret, unprotect_secret, protection_backend
+from iras.safety_runtime import EmergencyStop
 
 
 CONFIG_PATH = (
@@ -67,23 +70,28 @@ class DeviceBridgeAgent:
 
     def __init__(
         self,
-        server_url: str,
-        api_token: str,
+        server_url: str = "",
+        api_token: str = "",
         *,
         status_callback=None,
     ):
+        config = _load_config()
         self.server_url = (
-            str(server_url)
+            str(server_url or config.get("server_url") or os.getenv("IRAS_SERVER_URL", ""))
             .strip()
             .rstrip("/")
         )
-        self.api_token = (
-            str(api_token)
-            .strip()
-        )
-        self.status_callback = (
-            status_callback
-        )
+        raw_api_token = str(api_token or os.getenv("IRAS_API_TOKEN", "")).strip()
+        if not raw_api_token:
+            try:
+                raw_api_token = unprotect_secret(str(config.get("api_token_protected") or ""))
+            except Exception:
+                raw_api_token = ""
+        self.api_token = raw_api_token
+        self.status_callback = status_callback
+        self.policy = RemoteAccessPolicy()
+        self.emergency_stop = EmergencyStop()
+        self.trace = TraceLogger()
 
         self.stop_event = (
             threading.Event()
@@ -99,20 +107,18 @@ class DeviceBridgeAgent:
             follow_redirects=True,
         )
 
-        config = _load_config()
-
         self.device_id = (
             config.get(
                 "device_id"
             )
             or uuid.uuid4().hex
         )
-        self.device_token = (
-            config.get(
-                "device_token"
-            )
-            or ""
-        )
+        protected_device_token = str(config.get("device_token_protected") or "")
+        legacy_device_token = str(config.get("device_token") or "")
+        try:
+            self.device_token = unprotect_secret(protected_device_token or legacy_device_token)
+        except Exception:
+            self.device_token = legacy_device_token
 
         self.display_name = (
             config.get(
@@ -145,9 +151,10 @@ class DeviceBridgeAgent:
                 "device_id": (
                     self.device_id
                 ),
-                "device_token": (
-                    self.device_token
-                ),
+                "device_token_protected": protect_secret(self.device_token),
+                "api_token_protected": protect_secret(self.api_token),
+                "secret_backend": protection_backend(),
+                "server_url": self.server_url,
                 "display_name": (
                     self.display_name
                 ),
@@ -202,6 +209,10 @@ class DeviceBridgeAgent:
             pass
 
     def _pair(self):
+        if not self.server_url:
+            raise RuntimeError("IRAS_SERVER_URL is not configured for remote access.")
+        if not self.api_token:
+            raise RuntimeError("IRAS_API_TOKEN is required once to pair this laptop with IRAS Cloud.")
         response = self.client.post(
             (
                 self.server_url
@@ -227,7 +238,10 @@ class DeviceBridgeAgent:
                     platform.platform()
                 ),
                 "capabilities": (
-                    DEFAULT_CAPABILITIES
+                    list(DEFAULT_CAPABILITIES) + [
+                        "remote_policy:" + str(self.policy.status().get("mode") or "off"),
+                        "outbound_only_bridge",
+                    ]
                 ),
                 "app_version": (
                     __version__
@@ -347,13 +361,25 @@ class DeviceBridgeAgent:
             f"executing {action}"
         )
 
+        permission_level = command.get("permission_level")
+        session_id = str(command.get("remote_session_id") or "")
         try:
-            result = (
-                self.executor.execute(
-                    action,
-                    arguments,
-                )
+            self.emergency_stop.assert_clear()
+            required = self.policy.authorize(
+                action,
+                arguments,
+                declared_permission=permission_level,
             )
+            with self.trace.operation(
+                "remote_device_command",
+                command_id=command_id,
+                action=action,
+                permission=required.name,
+                remote_session_id=session_id or None,
+            ) as trace:
+                trace.stage("authorized", mode=self.policy.status().get("mode"))
+                result = self.executor.execute(action, arguments)
+                trace.stage("executed")
 
             self._complete(
                 command_id,
@@ -382,8 +408,22 @@ class DeviceBridgeAgent:
     def _run(self):
         retry_seconds = 2.0
 
+        last_disarmed_notice = 0.0
         while not self.stop_event.is_set():
             try:
+                if self.emergency_stop.tripped():
+                    if time.monotonic() - last_disarmed_notice > 30:
+                        self._status("emergency stop is active; no remote commands will run")
+                        last_disarmed_notice = time.monotonic()
+                    self.stop_event.wait(2.0)
+                    continue
+                policy_status = self.policy.status()
+                if not policy_status.get("enabled"):
+                    if time.monotonic() - last_disarmed_notice > 30:
+                        self._status("remote access is locally disarmed")
+                        last_disarmed_notice = time.monotonic()
+                    self.stop_event.wait(2.0)
+                    continue
                 if not self.device_token:
                     self._pair()
 
@@ -417,3 +457,120 @@ class DeviceBridgeAgent:
                     retry_seconds * 1.6,
                     20.0,
                 )
+
+
+
+def _migrate_legacy_bridge_secrets(config: dict) -> dict:
+    """Rewrite legacy plaintext bridge secrets through the active OS backend."""
+    config = dict(config or {})
+
+    legacy_device_token = str(config.get("device_token") or "").strip()
+    if legacy_device_token and not str(config.get("device_token_protected") or "").strip():
+        config["device_token_protected"] = protect_secret(legacy_device_token)
+    config.pop("device_token", None)
+
+    legacy_api_token = str(config.get("api_token") or "").strip()
+    if legacy_api_token and not str(config.get("api_token_protected") or "").strip():
+        config["api_token_protected"] = protect_secret(legacy_api_token)
+    config.pop("api_token", None)
+
+    config["secret_backend"] = protection_backend()
+    return config
+
+
+def configure_remote_bridge(
+    *,
+    server_url: str,
+    api_token: str,
+    display_name: str = "",
+    allowed_roots: list[str] | None = None,
+) -> dict:
+    config = _migrate_legacy_bridge_secrets(_load_config())
+    server_url = str(server_url or "").strip().rstrip("/")
+    api_token = str(api_token or "").strip()
+    if not server_url.startswith(("https://", "http://127.0.0.1", "http://localhost")):
+        raise ValueError("Remote IRAS server must use HTTPS (localhost is allowed for testing).")
+    if len(api_token) < 24:
+        raise ValueError("IRAS_API_TOKEN is too short for remote use; use a strong random token.")
+    config["server_url"] = server_url
+    config["api_token_protected"] = protect_secret(api_token)
+    config.pop("api_token", None)
+    config.pop("device_token", None)
+    config["secret_backend"] = protection_backend()
+    if display_name:
+        config["display_name"] = str(display_name)[:128]
+    if allowed_roots is not None:
+        roots = []
+        for raw in allowed_roots:
+            try:
+                path = Path(raw).expanduser().resolve()
+            except Exception:
+                continue
+            if path.exists() and str(path) not in roots:
+                roots.append(str(path))
+        if not roots:
+            raise ValueError("At least one valid allowed root is required.")
+        config["allowed_roots"] = roots
+    _save_config(config)
+    return {
+        "configured": True,
+        "server_url": server_url,
+        "display_name": config.get("display_name") or socket.gethostname(),
+        "secret_backend": config["secret_backend"],
+        "allowed_roots": config.get("allowed_roots") or DeviceExecutor.default_roots(),
+        "config_path": str(CONFIG_PATH),
+    }
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="iras-device", description="IRAS outbound-only remote Windows bridge")
+    parser.add_argument("--server-url", default="")
+    parser.add_argument("--api-token", default="")
+    parser.add_argument("--display-name", default="")
+    parser.add_argument("--allowed-root", action="append", default=[], help="filesystem root that remote file tools may access; repeatable")
+    parser.add_argument("--configure", action="store_true")
+    parser.add_argument("--status", action="store_true")
+    args = parser.parse_args()
+
+    policy = RemoteAccessPolicy()
+    if args.status:
+        cfg = _load_config()
+        safe_cfg = {
+            "configured": bool(cfg.get("server_url") and cfg.get("device_id")),
+            "server_url": cfg.get("server_url"),
+            "device_id": cfg.get("device_id"),
+            "display_name": cfg.get("display_name"),
+            "allowed_roots": cfg.get("allowed_roots") or [],
+            "secret_backend": cfg.get("secret_backend"),
+            "device_token_protected": bool(cfg.get("device_token_protected")),
+            "api_token_protected": bool(cfg.get("api_token_protected")),
+        }
+        print(json.dumps({"remote_policy": policy.status(), "bridge_config": safe_cfg}, indent=2, default=str))
+        return
+    if args.configure:
+        print(json.dumps(configure_remote_bridge(
+            server_url=args.server_url or os.getenv("IRAS_SERVER_URL", ""),
+            api_token=args.api_token or os.getenv("IRAS_API_TOKEN", ""),
+            display_name=args.display_name,
+            allowed_roots=args.allowed_root or None,
+        ), indent=2))
+        return
+
+    agent = DeviceBridgeAgent(args.server_url, args.api_token)
+    if not agent.server_url:
+        raise SystemExit("IRAS remote bridge is not configured. Run iras-device --configure first.")
+    agent._status("outbound-only bridge starting; " + json.dumps(agent.policy.status(), separators=(",", ":")))
+    agent.start()
+    try:
+        while agent.thread is not None and agent.thread.is_alive():
+            agent.thread.join(timeout=1.0)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        agent.stop()
+
+
+if __name__ == "__main__":
+    main()

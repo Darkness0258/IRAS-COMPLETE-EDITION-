@@ -16,6 +16,9 @@ from iras.voice.stt import Listener
 from iras.voice.tts import Speaker
 from iras.voice.profiles import PROFILES, normalize_profile
 from iras.persona import build_system_prompt
+from iras.vision.omniparser_runtime import OmniParserRuntimeManager
+from iras.remote_access import RemoteAccessPolicy
+from iras.safety_runtime import EmergencyStop
 
 
 def _voice_intent(text: str):
@@ -59,8 +62,18 @@ def _listen_intent(text: str) -> bool:
     return q in {'listen', '/listen', 'mic', '/mic', 'microphone'}
 
 
+def _vision_intent(text: str):
+    q = ' '.join(text.lower().strip().split())
+    if q in {'vision status', '/vision status', 'omniparser status', '/omniparser status'}:
+        return 'status'
+    if q in {'vision start', '/vision start', 'start omniparser', 'omniparser start', '/omniparser start'}:
+        return 'start'
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(prog='iras')
+    ap.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
     ap.add_argument('--doctor', action='store_true')
     ap.add_argument('--tools', action='store_true')
     ap.add_argument('--speak', action='store_true', help='force spoken replies on')
@@ -69,11 +82,51 @@ def main():
         '--voice-test', nargs='?', const='auto', choices=['auto', 'edge', 'windows'],
         help='play a TTS test using auto, edge, or native Windows speech'
     )
+    ap.add_argument('--remote-status', action='store_true', help='show the laptop-side remote-access safety policy')
+    ap.add_argument('--remote-arm', choices=['read_only', 'control', 'full'], help='arm outbound remote Windows access locally')
+    ap.add_argument('--remote-minutes', type=int, default=60, help='remote arm duration when not persistent')
+    ap.add_argument('--remote-persistent', action='store_true', help='keep local remote access armed until explicitly disarmed')
+    ap.add_argument('--remote-allow-power', action='store_true', help='allow restart/shutdown in full mode')
+    ap.add_argument('--remote-allow-shell', action='store_true', help='reserve full-mode remote command execution (disabled unless explicitly enabled)')
+    ap.add_argument('--remote-disarm', action='store_true', help='disarm laptop-side remote access')
+    ap.add_argument('--emergency-stop', action='store_true', help='trip the controller-level emergency stop')
+    ap.add_argument('--emergency-clear', action='store_true', help='clear the emergency stop locally')
     args = ap.parse_args()
     c = Console()
     s = Settings.load()
 
     speaker = Speaker(s.tts_provider, s.voice, s.voice_profile)
+    vision_runtime = OmniParserRuntimeManager()
+    remote_policy = RemoteAccessPolicy()
+    emergency_stop = EmergencyStop()
+
+    if args.emergency_stop:
+        remote_policy.disarm(kill_switch=True)
+        c.print_json(data=emergency_stop.trip("cli"))
+        return
+    if args.emergency_clear:
+        c.print_json(data=emergency_stop.clear())
+        return
+    if args.remote_status:
+        c.print_json(data=remote_policy.status())
+        return
+    if args.remote_disarm:
+        c.print_json(data=remote_policy.disarm(kill_switch=True))
+        return
+    if args.remote_arm:
+        try:
+            state = remote_policy.arm(
+                args.remote_arm,
+                minutes=args.remote_minutes,
+                persistent=args.remote_persistent,
+                allow_power=args.remote_allow_power,
+                allow_shell=args.remote_allow_shell,
+            )
+        except Exception as exc:
+            c.print(f'[bold red]Remote access configuration failed:[/bold red] {exc}')
+            return
+        c.print_json(data=state)
+        return
 
     if args.voice_test is not None:
         try:
@@ -113,7 +166,10 @@ def main():
             f'[bold]IRAS {__version__}[/bold]\n'
             f'Brain: {s.provider} / {s.model}\n'
             f'Voice profile: {speaker.profile.label} / {speaker.voice}\n'
-            'Commands: voice, voice test, voice styles, listen, personality status, /exit.'
+            f'Vision: UIA + OmniParser ({"auto-start on demand" if vision_runtime.autostart_enabled() else "manual/external"})\n'
+            f'Remote Windows: {remote_policy.status().get("mode")} ({"armed" if remote_policy.status().get("enabled") else "disarmed"})\n'
+            f'Emergency stop: {"ACTIVE" if emergency_stop.tripped() else "clear"}\n'
+            'Commands: voice, listen, vision status, remote status, remote arm full, remote disarm, emergency stop, personality status, /exit.'
         )
     )
     voice = s.voice_replies
@@ -133,6 +189,48 @@ def main():
             break
 
         pq = ' '.join(q.lower().strip().split())
+
+        if pq in {'emergency stop', '/emergency stop', 'stop everything'}:
+            remote_policy.disarm(kill_switch=True)
+            c.print_json(data=emergency_stop.trip('interactive_cli'))
+            continue
+        if pq in {'emergency clear', '/emergency clear'}:
+            c.print_json(data=emergency_stop.clear())
+            continue
+        if pq in {'remote status', '/remote status'}:
+            c.print_json(data=remote_policy.status())
+            continue
+        if pq in {'remote disarm', '/remote disarm', 'remote stop', '/remote stop'}:
+            c.print_json(data=remote_policy.disarm(kill_switch=True))
+            continue
+        if pq.startswith('remote arm') or pq.startswith('/remote arm'):
+            parts = pq.replace('/', '').split()
+            mode = parts[2] if len(parts) >= 3 else 'control'
+            persistent = 'persistent' in parts or 'always' in parts
+            allow_power = 'power' in parts
+            allow_shell = 'shell' in parts
+            try:
+                c.print_json(data=remote_policy.arm(mode, persistent=persistent, allow_power=allow_power, allow_shell=allow_shell))
+            except Exception as exc:
+                c.print(f'[bold red]Remote access configuration failed:[/bold red] {exc}')
+            continue
+
+        vision_intent = _vision_intent(q)
+        if vision_intent:
+            if vision_intent == 'status':
+                status = vision_runtime.status()
+                c.print('[bold]OmniParser vision runtime[/bold]')
+                for key in ('status', 'ready', 'autostart_enabled', 'local_endpoint', 'base_url', 'pid', 'started_by_iras', 'bridge_enabled', 'bridge_runtime', 'text_parse_url', 'text_prewarm_enabled', 'text_model_state', 'text_model_loaded', 'text_model_warmup_ms', 'full_model_loaded', 'log_path', 'reason', 'text_model_error', 'last_start_error'):
+                    if key in status and status.get(key) is not None:
+                        c.print(f'  {key}: {status.get(key)}')
+            else:
+                result = vision_runtime.ensure_ready(start=True)
+                if result.ready:
+                    c.print(f'[bold green]OmniParser ready[/bold green] — {result.status} at {result.base_url}')
+                else:
+                    c.print(f'[bold red]OmniParser unavailable[/bold red] — {result.status}: {result.reason}')
+            continue
+
         if pq in {'personality', 'personality status', '/personality'}:
             state = rt.personality.status()
             c.print('[bold]Adaptive personality[/bold]')

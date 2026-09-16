@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import ctypes
 from ctypes import wintypes
 import hashlib
@@ -16,13 +17,16 @@ from iras.device_bridge.outcome_policy import (
     ESCALATE_VISION,
     decide_outcome,
 )
+from iras.vision.omniparser_runtime import OmniParserRuntimeManager
+from iras.vision.scene_graph import build_scene_graph, visual_element_confidence
 
 
 class UniversalComputerController:
     """Hybrid Windows computer-use controller.
 
-    Observation uses Windows UI Automation first. When IRAS_OMNIPARSER_URL is
-    configured, OmniParser can ground visual-only controls from a screenshot.
+    Observation uses Windows UI Automation first, then a v3.7 multimodal scene
+    graph. OmniParser is lazily auto-started on local Windows when visual-only
+    grounding is required and a configured/discovered installation is available.
     Actions never accept free-form model coordinates: clicks/drags must refer
     to an element_id from a fresh observation.
     """
@@ -128,6 +132,10 @@ class UniversalComputerController:
         self._observations: dict[str, dict] = {}
         self._observation_order: list[str] = []
         self._verification_failures: dict[str, int] = {}
+        self._consumed_observations: set[str] = set()
+        self._vision_cache: dict[str, tuple[float, dict]] = {}
+        self._vision_cache_order: list[str] = []
+        self.omniparser = OmniParserRuntimeManager()
 
     @staticmethod
     def _normalize(value: str) -> str:
@@ -372,6 +380,76 @@ class UniversalComputerController:
             "desktop_rect": region_rect,
             "capture_scope": "foreground",
         }
+
+    def _capture_region(
+        self,
+        region_rect: dict,
+        *,
+        label: str = "roi",
+        max_width: int | None = None,
+        max_height: int | None = None,
+    ) -> dict:
+        """Capture a bounded desktop ROI while preserving absolute geometry."""
+        from PIL import ImageGrab
+
+        started = time.perf_counter()
+        desktop = self._desktop_rect()
+        left = max(int(desktop["left"]), int(region_rect.get("left", desktop["left"]) or desktop["left"]))
+        top = max(int(desktop["top"]), int(region_rect.get("top", desktop["top"]) or desktop["top"]))
+        right = min(
+            int(desktop["right"]),
+            left + max(1, int(region_rect.get("width", 1) or 1)),
+        )
+        bottom = min(
+            int(desktop["bottom"]),
+            top + max(1, int(region_rect.get("height", 1) or 1)),
+        )
+        if right <= left or bottom <= top:
+            raise RuntimeError("Requested vision ROI is outside the virtual desktop.")
+
+        try:
+            image = ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True)
+        except TypeError:
+            # Older Pillow versions do not combine bbox + all_screens.
+            full = ImageGrab.grab(all_screens=True)
+            dl, dt = int(desktop["left"]), int(desktop["top"])
+            image = full.crop((left - dl, top - dt, right - dl, bottom - dt))
+
+        source_width, source_height = image.size
+        if max_width is None:
+            max_width = int(os.getenv("IRAS_OMNIPARSER_ROI_MAX_WIDTH", "960"))
+        if max_height is None:
+            max_height = int(os.getenv("IRAS_OMNIPARSER_ROI_MAX_HEIGHT", "720"))
+        max_width = max(320, min(int(max_width), 1600))
+        max_height = max(160, min(int(max_height), 1200))
+        vision_image = image.copy()
+        vision_image.thumbnail((max_width, max_height))
+
+        safe_label = "".join(ch for ch in str(label or "roi") if ch.isalnum() or ch in "-_")[:32] or "roi"
+        root = self._capture_root()
+        target = root / f"foreground-roi-{safe_label}-{int(time.time() * 1000)}.png"
+        # Low PNG compression keeps OCR lossless while avoiding needless CPU work.
+        vision_image.convert("RGB").save(target, "PNG", compress_level=2)
+        raw = target.read_bytes()
+        return {
+            "path": str(target),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+            "image_width": int(vision_image.width),
+            "image_height": int(vision_image.height),
+            "source_width": int(source_width),
+            "source_height": int(source_height),
+            "desktop_rect": {
+                "left": left,
+                "top": top,
+                "width": right - left,
+                "height": bottom - top,
+            },
+            "capture_scope": "roi",
+            "roi_label": safe_label,
+            "capture_ms": int((time.perf_counter() - started) * 1000),
+        }
+
     @staticmethod
     def _rect_center(rect: dict) -> tuple[int, int]:
         return (
@@ -551,60 +629,116 @@ class UniversalComputerController:
                     "rect": rect,
                     "center": {"x": center_x, "y": center_y},
                     "vision_source": str(raw.get("source") or ""),
+                    "confidence": visual_element_confidence(raw),
                 }
             )
 
         return output
 
-    @staticmethod
-    def _omniparser_endpoint() -> str:
-        raw = os.getenv("IRAS_OMNIPARSER_URL", "").strip()
-        if not raw:
-            return ""
-        raw = raw.rstrip("/")
-        if raw.endswith("/parse"):
-            return raw + "/"
-        return raw + "/parse/"
+    def _omniparser_endpoint(self) -> str:
+        return self.omniparser.parse_url()
+
+    def _omniparser_text_endpoint(self) -> str:
+        return self.omniparser.text_parse_url()
+
+    def _omniparser_probe_url(self) -> str:
+        return self.omniparser.probe_url()
+
+    def _omniparser_headers(self) -> dict[str, str]:
+        return self.omniparser.headers()
 
     @staticmethod
-    def _omniparser_probe_url() -> str:
-        raw = os.getenv("IRAS_OMNIPARSER_URL", "").strip().rstrip("/")
-        if not raw:
-            return ""
-        if raw.endswith("/parse"):
-            raw = raw[:-6].rstrip("/")
-        return raw + "/probe/"
+    def _vision_cache_ttl() -> float:
+        try:
+            value = float(os.getenv("IRAS_OMNIPARSER_CACHE_TTL", "180"))
+        except ValueError:
+            value = 180.0
+        return max(0.0, min(value, 1800.0))
 
-    @staticmethod
-    def _omniparser_headers() -> dict[str, str]:
-        headers = {"Content-Type": "application/json"}
-        key = os.getenv("IRAS_OMNIPARSER_API_KEY", "").strip()
-        if key:
-            headers["Authorization"] = "Bearer " + key
-        return headers
+    def _vision_cache_get(self, screenshot_sha256: str) -> dict | None:
+        key = str(screenshot_sha256 or "").strip()
+        if not key:
+            return None
+        item = self._vision_cache.get(key)
+        if item is None:
+            return None
+        cached_at, result = item
+        age = max(0.0, time.monotonic() - float(cached_at))
+        if age > self._vision_cache_ttl():
+            self._vision_cache.pop(key, None)
+            try:
+                self._vision_cache_order.remove(key)
+            except ValueError:
+                pass
+            return None
+        output = copy.deepcopy(result)
+        output["cache_hit"] = True
+        output["cache_age_ms"] = int(age * 1000)
+        output["status"] = "available_cached"
+        return output
 
-    def _run_omniparser(self, screenshot: dict) -> dict:
-        endpoint = self._omniparser_endpoint()
+    def _vision_cache_put(self, screenshot_sha256: str, result: dict) -> None:
+        key = str(screenshot_sha256 or "").strip()
+        if not key or not bool(result.get("available")):
+            return
+        cached = copy.deepcopy(result)
+        cached["cache_hit"] = False
+        cached.pop("cache_age_ms", None)
+        self._vision_cache[key] = (time.monotonic(), cached)
+        try:
+            self._vision_cache_order.remove(key)
+        except ValueError:
+            pass
+        self._vision_cache_order.append(key)
+        while len(self._vision_cache_order) > 8:
+            expired = self._vision_cache_order.pop(0)
+            self._vision_cache.pop(expired, None)
+
+    def _run_omniparser(self, screenshot: dict, *, mode: str = "full") -> dict:
+        mode = str(mode or "full").strip().lower()
+        if mode not in {"full", "text"}:
+            raise ValueError("OmniParser mode must be full or text.")
+
+        endpoint = (
+            self._omniparser_text_endpoint() if mode == "text" else self._omniparser_endpoint()
+        )
         if not endpoint:
             return {
                 "status": "disabled",
                 "available": False,
                 "elements": [],
-                "reason": "IRAS_OMNIPARSER_URL is not configured.",
+                "reason": "OmniParser visual grounding is disabled.",
+                "runtime": self.omniparser.status(),
+                "parse_mode": mode,
             }
 
-        payload = base64.b64encode(
-            Path(screenshot["path"]).read_bytes()
-        ).decode("ascii")
+        cache_key = f"{mode}:{str(screenshot.get('sha256') or '')}"
+        cached = self._vision_cache_get(cache_key)
+        if cached is not None:
+            cached["runtime"] = self.omniparser.status()
+            cached["parse_mode"] = mode
+            return cached
 
+        runtime = self.omniparser.ensure_ready(start=True)
+        if not runtime.ready:
+            return {
+                "status": runtime.status,
+                "available": False,
+                "elements": [],
+                "reason": runtime.reason,
+                "runtime": runtime.as_dict(),
+                "parse_mode": mode,
+            }
+
+        payload = base64.b64encode(Path(screenshot["path"]).read_bytes()).decode("ascii")
         timeout = max(
             10.0,
-            min(
-                float(os.getenv("IRAS_OMNIPARSER_TIMEOUT", "120")),
-                300.0,
-            ),
+            min(float(os.getenv("IRAS_OMNIPARSER_TIMEOUT", "120")), 300.0),
         )
 
+        request_started = time.perf_counter()
+        used_endpoint = endpoint
+        fallback_to_full = False
         try:
             with httpx.Client(timeout=timeout) as client:
                 response = client.post(
@@ -612,6 +746,17 @@ class UniversalComputerController:
                     json={"base64_image": payload},
                     headers=self._omniparser_headers(),
                 )
+                # Existing manually-started upstream OmniParser does not expose
+                # /parse_text/. Fall back once to the full endpoint rather than
+                # making ROI performance support a compatibility requirement.
+                if mode == "text" and response.status_code in {404, 405}:
+                    fallback_to_full = True
+                    used_endpoint = self._omniparser_endpoint()
+                    response = client.post(
+                        used_endpoint,
+                        json={"base64_image": payload},
+                        headers=self._omniparser_headers(),
+                    )
                 response.raise_for_status()
                 data = response.json()
         except Exception as exc:
@@ -620,8 +765,13 @@ class UniversalComputerController:
                 "available": False,
                 "elements": [],
                 "reason": f"{type(exc).__name__}: {exc}",
+                "runtime": runtime.as_dict(),
+                "parse_mode": "full" if fallback_to_full else mode,
+                "requested_parse_mode": mode,
+                "http_ms": int((time.perf_counter() - request_started) * 1000),
             }
 
+        http_ms = int((time.perf_counter() - request_started) * 1000)
         parsed = data.get("parsed_content_list")
         if not isinstance(parsed, list):
             parsed = data.get("elements")
@@ -640,10 +790,7 @@ class UniversalComputerController:
         if isinstance(som, str) and som.strip():
             try:
                 raw = base64.b64decode(som)
-                target = (
-                    self._capture_root()
-                    / f"omniparser-{int(time.time() * 1000)}.png"
-                )
+                target = self._capture_root() / f"omniparser-{int(time.time() * 1000)}.png"
                 target.write_bytes(raw)
                 annotated = {
                     "path": str(target),
@@ -653,14 +800,154 @@ class UniversalComputerController:
             except Exception:
                 annotated = None
 
-        return {
+        effective_mode = str(data.get("mode") or ("full" if fallback_to_full else mode))
+        result = {
             "status": "available",
             "available": True,
             "elements": elements,
             "element_count": len(elements),
             "latency": data.get("latency"),
+            "http_ms": http_ms,
             "annotated_screenshot": annotated,
+            "runtime": runtime.as_dict(),
+            "cache_hit": False,
+            "cache_age_ms": 0,
+            "parse_mode": effective_mode,
+            "requested_parse_mode": mode,
+            "fallback_to_full": fallback_to_full,
+            "endpoint": used_endpoint,
         }
+        self._vision_cache_put(cache_key, result)
+        return result
+
+    def observe_region(
+        self,
+        *,
+        region: dict,
+        label: str = "roi",
+        mode: str = "text",
+        max_elements: int = 120,
+    ) -> dict:
+        """Create a fresh action-bindable observation from a narrow visual ROI.
+
+        This is controller-internal and intentionally not exposed as a model tool.
+        It is used by bounded workflows that already know which portion of the
+        foreground app can contain the semantic target.  Absolute screen geometry
+        is preserved, action authorization is still one-use, and failed actions
+        are never replayed.
+        """
+        self._require_windows()
+        started = time.perf_counter()
+        foreground = self._foreground()
+        foreground_rect = foreground.get("rect") or {}
+        if not foreground.get("hwnd") or not foreground_rect:
+            raise RuntimeError("A foreground window is required for ROI grounding.")
+
+        # Clamp the caller-provided ROI to the current foreground window so a
+        # stale/malformed internal region cannot escape the intended app.
+        fl = int(foreground_rect.get("left", 0) or 0)
+        ft = int(foreground_rect.get("top", 0) or 0)
+        fr = fl + max(1, int(foreground_rect.get("width", 1) or 1))
+        fb = ft + max(1, int(foreground_rect.get("height", 1) or 1))
+        rl = max(fl, int(region.get("left", fl) or fl))
+        rt = max(ft, int(region.get("top", ft) or ft))
+        rr = min(fr, rl + max(1, int(region.get("width", fr - rl) or (fr - rl))))
+        rb = min(fb, rt + max(1, int(region.get("height", fb - rt) or (fb - rt))))
+        if rr <= rl or rb <= rt:
+            raise RuntimeError("Vision ROI does not intersect the foreground window.")
+        roi = {"left": rl, "top": rt, "width": rr - rl, "height": rb - rt}
+
+        capture = self._capture_region(roi, label=label)
+        vision_result = self._run_omniparser(capture, mode=mode)
+        scene_graph = build_scene_graph(
+            [],
+            vision_result.get("elements", []) or [],
+            region=capture["desktop_rect"],
+            capture_sha256=str(capture.get("sha256") or ""),
+        )
+        elements = list(scene_graph.get("elements") or [])[: max(1, min(int(max_elements), 300))]
+        captured_at = time.time()
+        identity = {
+            "foreground_hwnd": foreground.get("hwnd"),
+            "visual_sha256": capture.get("sha256"),
+            "roi": capture.get("desktop_rect"),
+            "label": label,
+            "captured_at_ns": time.time_ns(),
+        }
+        observation_id = hashlib.sha256(
+            json.dumps(identity, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:24]
+        output = {
+            "observation_id": observation_id,
+            "captured_at": captured_at,
+            "foreground": foreground,
+            "cursor": self._cursor(),
+            "screenshot": capture,
+            "uia_available": False,
+            "uia_actionable": False,
+            "uia_status": "not_requested",
+            "uia_error": None,
+            "uia_element_count": 0,
+            "vision_requested": "always",
+            "observation_scope": "foreground",
+            "vision_scope": f"roi:{label}",
+            "vision_capture": capture,
+            "visual_sha256": capture.get("sha256"),
+            "vision_available": bool(vision_result.get("available")),
+            "vision_status": vision_result.get("status"),
+            "vision_reason": vision_result.get("reason"),
+            "vision_element_count": len(vision_result.get("elements", []) or []),
+            "vision_cache_hit": bool(vision_result.get("cache_hit")),
+            "vision_cache_age_ms": vision_result.get("cache_age_ms"),
+            "vision_latency": vision_result.get("latency"),
+            "vision_http_ms": vision_result.get("http_ms"),
+            "vision_parse_mode": vision_result.get("parse_mode"),
+            "vision_requested_parse_mode": vision_result.get("requested_parse_mode"),
+            "vision_fallback_to_full": bool(vision_result.get("fallback_to_full")),
+            "vision_attempts": [
+                {
+                    "scope": f"roi:{label}",
+                    "status": vision_result.get("status"),
+                    "available": bool(vision_result.get("available")),
+                    "element_count": len(vision_result.get("elements", []) or []),
+                    "cache_hit": bool(vision_result.get("cache_hit")),
+                    "parse_mode": vision_result.get("parse_mode"),
+                    "http_ms": vision_result.get("http_ms"),
+                }
+            ],
+            "vision_fallback_chain": [f"roi:{label}"],
+            "annotated_screenshot": vision_result.get("annotated_screenshot"),
+            "omniparser_runtime": vision_result.get("runtime") or self.omniparser.status(),
+            "scene_graph": scene_graph,
+            "scene_graph_version": scene_graph.get("version"),
+            "scene_actionable_count": scene_graph.get("actionable_count"),
+            "scene_visual_only_count": scene_graph.get("visual_only_count"),
+            "element_count": len(elements),
+            "elements": elements,
+            "roi": capture.get("desktop_rect"),
+            "roi_label": label,
+            "performance": {
+                "capture_ms": capture.get("capture_ms"),
+                "vision_http_ms": vision_result.get("http_ms"),
+                "server_latency_ms": (
+                    int(float(vision_result.get("latency")) * 1000)
+                    if vision_result.get("latency") not in (None, "")
+                    else None
+                ),
+                "total_ms": int((time.perf_counter() - started) * 1000),
+                "cache_hit": bool(vision_result.get("cache_hit")),
+                "parse_mode": vision_result.get("parse_mode"),
+                "source_pixels": int(capture.get("source_width", 0)) * int(capture.get("source_height", 0)),
+                "input_pixels": int(capture.get("image_width", 0)) * int(capture.get("image_height", 0)),
+            },
+            "action_policy": (
+                "Controller-internal ROI observation. Use only element_id values "
+                "from this fresh observation; one state-changing input consumes it."
+            ),
+        }
+        self._save_observation(output)
+        self._prune_capture_files()
+        return output
 
     def _save_observation(self, observation: dict) -> None:
         observation_id = str(observation["observation_id"])
@@ -672,39 +959,31 @@ class UniversalComputerController:
 
     def status(self) -> dict:
         endpoint = self._omniparser_endpoint()
+        runtime = self.omniparser.status()
         result = {
             "windows": os.name == "nt",
             "uia": os.name == "nt",
             "omniparser_configured": bool(endpoint),
             "omniparser_endpoint": endpoint or None,
-            "omniparser_available": False,
+            "omniparser_available": bool(runtime.get("ready")),
+            "omniparser_status": runtime.get("status"),
+            "omniparser_autostart": bool(runtime.get("autostart_enabled")),
+            "omniparser_runtime": runtime,
             "hybrid_mode": True,
+            "multimodal_scene_graph": True,
+            "scene_graph_version": "3.7.0",
             "coordinate_policy": "fresh_observation_element_ids_only",
             "foreground_freshness_guard": True,
+            "visual_action_confidence_guard": True,
+            "roi_grounding": True,
+            "text_roi_grounding": bool(self.omniparser.bridge_enabled()),
+            "vision_cache": "exact_sha256",
             "actions": sorted(self.ACTIONS),
             "verification_conditions": sorted(self.VERIFY_CONDITIONS),
             "vision_scopes": ["auto", "foreground", "desktop"],
         }
-
-        if not endpoint:
-            result["omniparser_status"] = "disabled"
-            return result
-
-        probe = self._omniparser_probe_url()
-        timeout = max(
-            2.0,
-            min(float(os.getenv("IRAS_OMNIPARSER_PROBE_TIMEOUT", "4")), 15.0),
-        )
-        try:
-            with httpx.Client(timeout=timeout) as client:
-                response = client.get(probe, headers=self._omniparser_headers())
-                response.raise_for_status()
-            result["omniparser_available"] = True
-            result["omniparser_status"] = "ready"
-        except Exception as exc:
-            result["omniparser_status"] = "unreachable"
-            result["omniparser_error"] = f"{type(exc).__name__}: {exc}"
-
+        if runtime.get("reason"):
+            result["omniparser_error"] = runtime.get("reason")
         return result
 
     def observe(
@@ -758,6 +1037,7 @@ class UniversalComputerController:
         }
         vision_capture = None
         vision_scope = None
+        vision_attempts: list[dict] = []
         if should_run_vision:
             foreground_rect = foreground.get("rect") or {}
             if scope == "desktop":
@@ -780,6 +1060,41 @@ class UniversalComputerController:
                     vision_capture = screenshot
                     vision_scope = "desktop"
             vision_result = self._run_omniparser(vision_capture)
+            vision_attempts.append(
+                {
+                    "scope": vision_scope,
+                    "status": vision_result.get("status"),
+                    "available": bool(vision_result.get("available")),
+                    "element_count": len(vision_result.get("elements", []) or []),
+                    "cache_hit": bool(vision_result.get("cache_hit")),
+                }
+            )
+
+            # v3.7 auto scope is a bounded cascade: UIA -> foreground vision ->
+            # desktop vision. Broaden only when the foreground visual pass gave
+            # no usable grounding; explicit foreground scope stays foreground.
+            if (
+                scope == "auto"
+                and vision_scope == "foreground"
+                and (
+                    not bool(vision_result.get("available"))
+                    or not (vision_result.get("elements") or [])
+                )
+            ):
+                desktop_result = self._run_omniparser(screenshot)
+                vision_attempts.append(
+                    {
+                        "scope": "desktop",
+                        "status": desktop_result.get("status"),
+                        "available": bool(desktop_result.get("available")),
+                        "element_count": len(desktop_result.get("elements", []) or []),
+                        "cache_hit": bool(desktop_result.get("cache_hit")),
+                    }
+                )
+                if bool(desktop_result.get("available")):
+                    vision_capture = screenshot
+                    vision_scope = "desktop"
+                    vision_result = desktop_result
         elif vision != "off" and not self._omniparser_endpoint():
             vision_result = {
                 "status": "disabled",
@@ -788,10 +1103,20 @@ class UniversalComputerController:
                 "reason": "IRAS_OMNIPARSER_URL is not configured.",
             }
 
-        elements = list(uia_elements)
-        elements.extend(vision_result.get("elements", []) or [])
-
         visual_capture = vision_capture or screenshot
+        scene_region = (
+            (vision_capture or {}).get("desktop_rect")
+            or screenshot.get("desktop_rect")
+            or self._desktop_rect()
+        )
+        scene_graph = build_scene_graph(
+            uia_elements,
+            vision_result.get("elements", []) or [],
+            region=scene_region,
+            capture_sha256=str(visual_capture.get("sha256") or ""),
+        )
+        elements = list(scene_graph.get("elements") or [])
+
         compact = {
             "screen_sha256": screenshot["sha256"],
             "visual_sha256": visual_capture.get("sha256"),
@@ -808,9 +1133,17 @@ class UniversalComputerController:
                 for element in elements
             ],
         }
+        captured_at = time.time()
+        observation_identity = {
+            "state": compact,
+            # Fresh observations intentionally get distinct IDs even when the
+            # exact same screenshot/scene is observed twice. Stable element IDs
+            # remain unchanged, while action authorization stays single-use.
+            "captured_at_ns": time.time_ns(),
+        }
         observation_id = hashlib.sha256(
             json.dumps(
-                compact,
+                observation_identity,
                 ensure_ascii=False,
                 sort_keys=True,
                 default=str,
@@ -819,7 +1152,7 @@ class UniversalComputerController:
 
         output = {
             "observation_id": observation_id,
-            "captured_at": time.time(),
+            "captured_at": captured_at,
             "foreground": foreground,
             "cursor": self._cursor(),
             "screenshot": screenshot,
@@ -837,7 +1170,23 @@ class UniversalComputerController:
             "vision_status": vision_result.get("status"),
             "vision_reason": vision_result.get("reason"),
             "vision_element_count": len(vision_result.get("elements", []) or []),
+            "vision_cache_hit": bool(vision_result.get("cache_hit")),
+            "vision_cache_age_ms": vision_result.get("cache_age_ms"),
+            "vision_latency": vision_result.get("latency"),
+            "vision_http_ms": vision_result.get("http_ms"),
+            "vision_parse_mode": vision_result.get("parse_mode"),
+            "vision_requested_parse_mode": vision_result.get("requested_parse_mode"),
+            "vision_fallback_to_full": bool(vision_result.get("fallback_to_full")),
+            "vision_attempts": vision_attempts,
+            "vision_fallback_chain": [
+                str(item.get("scope") or "") for item in vision_attempts
+            ],
             "annotated_screenshot": vision_result.get("annotated_screenshot"),
+            "omniparser_runtime": vision_result.get("runtime") or self.omniparser.status(),
+            "scene_graph": scene_graph,
+            "scene_graph_version": scene_graph.get("version"),
+            "scene_actionable_count": scene_graph.get("actionable_count"),
+            "scene_visual_only_count": scene_graph.get("visual_only_count"),
             "element_count": len(elements),
             "elements": elements,
             "action_policy": (
@@ -965,6 +1314,46 @@ class UniversalComputerController:
                 "before injecting mouse or keyboard input."
             )
 
+    @staticmethod
+    def _minimum_visual_action_confidence() -> float:
+        try:
+            value = float(os.getenv("IRAS_VISUAL_ACTION_MIN_CONFIDENCE", "0.72"))
+        except ValueError:
+            value = 0.72
+        return max(0.50, min(value, 0.98))
+
+    def _require_grounding_confidence(
+        self,
+        element: dict,
+        *,
+        action: str,
+        allow_controller_disambiguation: bool = False,
+    ) -> None:
+        source = str(element.get("source") or "").strip().lower()
+        if source not in {"vision", "omniparser"}:
+            return
+        raw_confidence = element.get("confidence")
+        try:
+            confidence = 0.78 if raw_confidence in (None, "") else float(raw_confidence)
+        except (TypeError, ValueError):
+            confidence = 0.78
+        threshold = self._minimum_visual_action_confidence()
+        if confidence < threshold:
+            raise RuntimeError(
+                "Visual grounding confidence is too low for a state-changing "
+                f"{action} action ({confidence:.2f} < {threshold:.2f}). "
+                "Re-observe/re-ground instead of guessing."
+            )
+        if (
+            bool(element.get("ambiguous_label"))
+            and not allow_controller_disambiguation
+            and confidence < max(0.84, threshold)
+        ):
+            raise RuntimeError(
+                "The visual target label is ambiguous at the current confidence. "
+                "Re-observe at higher visual quality or disambiguate by context."
+            )
+
     def action(
         self,
         *,
@@ -979,11 +1368,20 @@ class UniversalComputerController:
         replace: bool = False,
         seconds: float = 0.5,
         verify: bool = True,
+        allow_controller_disambiguation: bool = False,
     ) -> dict:
         observation = self._observation(observation_id)
         action = str(action or "").strip().lower()
         if action not in self.ACTIONS:
             raise PermissionError(f"Computer action '{action}' is not allowed.")
+
+        mutating_input = action not in {"wait", "move"}
+        if mutating_input and str(observation_id) in self._consumed_observations:
+            raise RuntimeError(
+                "That observation has already authorized one state-changing input. "
+                "Re-observe and bind the next action to fresh live state; automatic "
+                "action replay is not allowed."
+            )
 
         selected = None
         target = None
@@ -998,6 +1396,11 @@ class UniversalComputerController:
                 raise PermissionError(
                     "That visual target is a blocked administrative/security control."
                 )
+            self._require_grounding_confidence(
+                selected,
+                action=action,
+                allow_controller_disambiguation=allow_controller_disambiguation,
+            )
             point = self._rect_center(selected["rect"])
 
         if action == "drag":
@@ -1006,10 +1409,20 @@ class UniversalComputerController:
                 raise PermissionError(
                     "That visual drag target is a blocked administrative/security control."
                 )
+            self._require_grounding_confidence(
+                target,
+                action="drag",
+                allow_controller_disambiguation=allow_controller_disambiguation,
+            )
             target_point = self._rect_center(target["rect"])
 
         if action != "wait":
             self._require_fresh_foreground(observation)
+
+        # Consume the binding before injection. If the OS reports an error after
+        # partial delivery, the same click/type/keypress still cannot be replayed.
+        if mutating_input:
+            self._consumed_observations.add(str(observation_id))
 
         if action == "move":
             self._set_cursor(*point)
@@ -1085,6 +1498,12 @@ class UniversalComputerController:
             "observation_id": observation_id,
             "selected_element": selected,
             "target_element": target,
+            "grounding_confidence": (
+                float(selected.get("confidence", 0.0)) if isinstance(selected, dict) else None
+            ),
+            "grounding_provenance": (
+                dict(selected.get("provenance") or {}) if isinstance(selected, dict) else None
+            ),
             "derived_point": (
                 {"x": point[0], "y": point[1]} if point else None
             ),
@@ -1093,6 +1512,10 @@ class UniversalComputerController:
                 if target_point else None
             ),
             "input_injected": action != "wait",
+            "observation_consumed": bool(mutating_input),
+            "reobserve_required": bool(mutating_input),
+            "action_replay_allowed": False,
+            "controller_disambiguation": bool(allow_controller_disambiguation),
             "action_verified": bool(after),
             "closed_loop_observed": bool(after),
             "goal_verified": False,
@@ -1249,6 +1672,22 @@ class UniversalComputerController:
             or ""
         )
 
+    @staticmethod
+    def _image_change_score(before_path: str, after_path: str) -> float | None:
+        if not before_path or not after_path:
+            return None
+        try:
+            from PIL import Image, ImageChops, ImageStat
+
+            with Image.open(before_path) as before_raw, Image.open(after_path) as after_raw:
+                before = before_raw.convert("RGB").resize((160, 90))
+                after = after_raw.convert("RGB").resize((160, 90))
+                diff = ImageChops.difference(before, after)
+                mean = ImageStat.Stat(diff).mean
+            return round(sum(float(value) for value in mean) / (len(mean) * 255.0), 4)
+        except Exception:
+            return None
+
     @classmethod
     def _state_delta(cls, observation: dict, prior: dict | None) -> dict:
         """Return low-level state-change evidence without claiming goal success."""
@@ -1257,8 +1696,16 @@ class UniversalComputerController:
                 "available": False,
                 "screen_changed": None,
                 "visual_changed": None,
+                "visual_change_score": None,
                 "foreground_changed": None,
             }
+
+        before_path = str((prior.get("vision_capture") or prior.get("screenshot") or {}).get("path") or "")
+        after_path = str((observation.get("vision_capture") or observation.get("screenshot") or {}).get("path") or "")
+        image_change_score = cls._image_change_score(before_path, after_path)
+        visual_changed = cls._visual_hash(observation) != cls._visual_hash(prior)
+        if image_change_score is not None and image_change_score >= 0.012:
+            visual_changed = True
 
         return {
             "available": True,
@@ -1266,9 +1713,8 @@ class UniversalComputerController:
                 observation.get("screenshot", {}).get("sha256")
                 != prior.get("screenshot", {}).get("sha256")
             ),
-            "visual_changed": (
-                cls._visual_hash(observation) != cls._visual_hash(prior)
-            ),
+            "visual_changed": visual_changed,
+            "visual_change_score": image_change_score,
             "foreground_changed": (
                 observation.get("foreground", {}).get("hwnd")
                 != prior.get("foreground", {}).get("hwnd")

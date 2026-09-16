@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from scripts import validate_v360_clean_tree as clean_tree
-from scripts import validate_v360_real_device as real_device
+from scripts import validate_v370_real_device as real_device
 
 
 ROOT = Path(__file__).resolve().parents[1]

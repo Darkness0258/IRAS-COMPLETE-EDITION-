@@ -97,4 +97,3 @@ def test_stream_queue_has_heartbeat_and_long_workflow_backpressure():
     assert "queue_wait_ms" in text
     assert 'event==="queued"' in web
     assert "IRAS queued" in web
-

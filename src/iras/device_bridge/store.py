@@ -10,6 +10,8 @@ import threading
 import time
 import uuid
 
+from iras.remote_access import action_permission, level_for_mode
+
 
 class DeviceBridgeStore:
     """Persistent device registry + command queue.
@@ -52,6 +54,7 @@ class DeviceBridgeStore:
                 exist_ok=True,
             )
 
+        self.preferred_device_id: str | None = None
         self._init()
 
     @staticmethod
@@ -207,7 +210,9 @@ class DeviceBridgeStore:
                 claimed_at DOUBLE PRECISION,
                 completed_at DOUBLE PRECISION,
                 result TEXT,
-                error TEXT
+                error TEXT,
+                remote_session_id TEXT,
+                permission_level INTEGER NOT NULL DEFAULT 0
             )
             """
         )
@@ -221,6 +226,42 @@ class DeviceBridgeStore:
                 status,
                 created_at
             )
+            """
+        )
+
+        # Migrations for stores created before v4. SQLite/PostgreSQL both reject
+        # duplicate-column ALTERs; those errors are intentionally ignored.
+        for migration in (
+            "ALTER TABLE iras_device_commands ADD COLUMN remote_session_id TEXT",
+            "ALTER TABLE iras_device_commands ADD COLUMN permission_level INTEGER NOT NULL DEFAULT 0",
+        ):
+            try:
+                self._run(migration)
+            except Exception:
+                pass
+
+        self._run(
+            """
+            CREATE TABLE IF NOT EXISTS iras_remote_sessions(
+                session_id TEXT PRIMARY KEY,
+                device_id TEXT NOT NULL,
+                token_hash TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                max_permission INTEGER NOT NULL,
+                scopes TEXT NOT NULL,
+                requester_device TEXT NOT NULL,
+                created_at DOUBLE PRECISION NOT NULL,
+                expires_at DOUBLE PRECISION NOT NULL,
+                last_seen DOUBLE PRECISION NOT NULL,
+                revoked_at DOUBLE PRECISION
+            )
+            """
+        )
+
+        self._run(
+            """
+            CREATE INDEX IF NOT EXISTS idx_iras_remote_sessions_device
+            ON iras_remote_sessions(device_id, expires_at)
             """
         )
 
@@ -389,6 +430,8 @@ class DeviceBridgeStore:
         self,
         device_id: str | None = None,
     ) -> dict:
+        if not device_id and self.preferred_device_id:
+            device_id = self.preferred_device_id
         if device_id:
             device = self.get_device(device_id)
 
@@ -437,10 +480,15 @@ class DeviceBridgeStore:
         device_id: str | None = None,
         requester_device: str = "cloud-agent",
         ttl_seconds: int = 120,
+        remote_session_id: str | None = None,
+        permission_level: int | None = None,
     ) -> dict:
         device = self.choose_device(device_id)
         now = self._now()
         command_id = uuid.uuid4().hex
+        if permission_level is None:
+            permission_level = int(action_permission(action, arguments))
+        permission_level = max(0, min(int(permission_level), 3))
 
         self._run(
             """
@@ -452,9 +500,11 @@ class DeviceBridgeStore:
                 status,
                 requester_device,
                 created_at,
-                expires_at
+                expires_at,
+                remote_session_id,
+                permission_level
             )
-            VALUES(?,?,?,?,?,?,?,?)
+            VALUES(?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 command_id,
@@ -471,6 +521,8 @@ class DeviceBridgeStore:
                         600,
                     ),
                 ),
+                str(remote_session_id or "") or None,
+                permission_level,
             ),
         )
 
@@ -480,6 +532,8 @@ class DeviceBridgeStore:
             "device_name": device["display_name"],
             "action": action,
             "status": "queued",
+            "remote_session_id": remote_session_id,
+            "permission_level": permission_level,
         }
 
     def claim_next(
@@ -515,7 +569,9 @@ class DeviceBridgeStore:
                     arguments,
                     status,
                     created_at,
-                    expires_at
+                    expires_at,
+                    remote_session_id,
+                    permission_level
                 FROM iras_device_commands
                 WHERE
                     device_id=?
@@ -677,6 +733,17 @@ class DeviceBridgeStore:
             }
         )
 
+    def _scrub_remote_command_payload(self, command_id: str) -> None:
+        """Minimize retention of remote command arguments/results after delivery."""
+        self._run(
+            """
+            UPDATE iras_device_commands
+            SET arguments='{}', result=NULL
+            WHERE command_id=? AND remote_session_id IS NOT NULL
+            """,
+            (str(command_id),),
+        )
+
     def request_and_wait(
         self,
         *,
@@ -684,11 +751,17 @@ class DeviceBridgeStore:
         arguments: dict,
         device_id: str | None = None,
         timeout: float = 30.0,
+        remote_session_id: str | None = None,
+        permission_level: int | None = None,
+        requester_device: str = "cloud-agent",
     ):
         queued = self.enqueue(
             action=action,
             arguments=arguments,
             device_id=device_id,
+            requester_device=requester_device,
+            remote_session_id=remote_session_id,
+            permission_level=permission_level,
         )
 
         completed = self.wait(
@@ -701,9 +774,10 @@ class DeviceBridgeStore:
         )
 
         if status == "succeeded":
-            return completed.get(
-                "result"
-            )
+            result = completed.get("result")
+            if remote_session_id:
+                self._scrub_remote_command_payload(queued["command_id"])
+            return result
 
         if status in {
             "queued",
@@ -714,10 +788,10 @@ class DeviceBridgeStore:
                 "The computer did not finish the command in time."
             )
 
-        raise RuntimeError(
-            completed.get("error")
-            or f"Device command ended with status {status}."
-        )
+        error = completed.get("error") or f"Device command ended with status {status}."
+        if remote_session_id:
+            self._scrub_remote_command_payload(queued["command_id"])
+        raise RuntimeError(error)
 
     def recent_commands(
         self,
@@ -762,3 +836,139 @@ class DeviceBridgeStore:
     def close(self):
         with self._lock:
             self._drop_connection()
+
+
+    def create_remote_session(
+        self,
+        *,
+        device_id: str | None = None,
+        mode: str = "control",
+        ttl_seconds: int = 1800,
+        scopes: list[str] | None = None,
+        requester_device: str = "web",
+    ) -> dict:
+        device = self.choose_device(device_id)
+        mode = str(mode or "control").strip().lower()
+        level = level_for_mode(mode)
+        if level is None or mode == "off":
+            raise ValueError("Remote session mode must be read_only, control, or full.")
+        ttl_seconds = max(60, min(int(ttl_seconds), 12 * 60 * 60))
+        token = uuid.uuid4().hex + uuid.uuid4().hex
+        session_id = uuid.uuid4().hex
+        now = self._now()
+        scopes = [str(item)[:80] for item in (scopes or ["windows"])[:64]]
+        self._run(
+            """
+            INSERT INTO iras_remote_sessions(
+                session_id, device_id, token_hash, mode, max_permission,
+                scopes, requester_device, created_at, expires_at, last_seen, revoked_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,NULL)
+            """,
+            (
+                session_id,
+                device["device_id"],
+                self.token_hash(token),
+                mode,
+                int(level),
+                self._json(scopes),
+                str(requester_device or "web")[:128],
+                now,
+                now + ttl_seconds,
+                now,
+            ),
+        )
+        return {
+            "session_id": session_id,
+            "session_token": token,
+            "device_id": device["device_id"],
+            "device_name": device["display_name"],
+            "mode": mode,
+            "max_permission": level.name,
+            "scopes": scopes,
+            "expires_at": now + ttl_seconds,
+            "ttl_seconds": ttl_seconds,
+        }
+
+    def authorize_remote_session(self, session_id: str, token: str) -> dict | None:
+        now = self._now()
+        row = self._run(
+            """
+            SELECT * FROM iras_remote_sessions
+            WHERE session_id=? AND revoked_at IS NULL AND expires_at>?
+            """,
+            (str(session_id), now),
+            fetch="one",
+        )
+        if not row:
+            return None
+        if not hmac.compare_digest(str(row.get("token_hash") or ""), self.token_hash(token)):
+            return None
+        self._run(
+            "UPDATE iras_remote_sessions SET last_seen=? WHERE session_id=?",
+            (now, str(session_id)),
+        )
+        row.pop("token_hash", None)
+        row["scopes"] = self._loads(row.get("scopes"), [])
+        row["online_device"] = bool((self.get_device(str(row.get("device_id") or "")) or {}).get("online"))
+        return row
+
+    def revoke_remote_session(self, session_id: str) -> bool:
+        changed = self._run(
+            "UPDATE iras_remote_sessions SET revoked_at=? WHERE session_id=? AND revoked_at IS NULL",
+            (self._now(), str(session_id)),
+        )
+        return bool(changed)
+
+    def list_remote_sessions(self, *, include_expired: bool = False) -> list[dict]:
+        now = self._now()
+        if include_expired:
+            rows = self._run(
+                "SELECT * FROM iras_remote_sessions ORDER BY created_at DESC LIMIT 100",
+                fetch="all",
+            ) or []
+        else:
+            rows = self._run(
+                "SELECT * FROM iras_remote_sessions WHERE revoked_at IS NULL AND expires_at>? ORDER BY created_at DESC LIMIT 100",
+                (now,),
+                fetch="all",
+            ) or []
+        for row in rows:
+            row.pop("token_hash", None)
+            row["scopes"] = self._loads(row.get("scopes"), [])
+            row["expired"] = float(row.get("expires_at") or 0) <= now
+        return rows
+
+    def remote_request_and_wait(
+        self,
+        *,
+        session: dict,
+        action: str,
+        arguments: dict,
+        timeout: float = 45.0,
+        requester_device: str = "remote-client",
+    ):
+        required = action_permission(action, arguments)
+        maximum = int(session.get("max_permission") or 0)
+        if int(required) > maximum:
+            raise PermissionError(
+                f"Remote session mode {session.get('mode')} does not authorize {required.name} action {action!r}."
+            )
+        queued = self.enqueue(
+            action=action,
+            arguments=arguments,
+            device_id=str(session.get("device_id") or ""),
+            requester_device=requester_device,
+            ttl_seconds=max(30, min(int(timeout) + 30, 600)),
+            remote_session_id=str(session.get("session_id") or ""),
+            permission_level=int(required),
+        )
+        completed = self.wait(queued["command_id"], timeout=timeout)
+        if completed.get("status") == "succeeded":
+            result = completed.get("result")
+            self._scrub_remote_command_payload(queued["command_id"])
+            return result
+        if completed.get("status") in {"queued", "claimed", "timeout"}:
+            raise RuntimeError("The remote laptop did not finish the command in time.")
+        error = completed.get("error") or f"Remote command ended with status {completed.get('status')}."
+        self._scrub_remote_command_payload(queued["command_id"])
+        raise RuntimeError(error)

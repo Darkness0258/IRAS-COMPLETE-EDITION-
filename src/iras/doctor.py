@@ -1,16 +1,173 @@
 from __future__ import annotations
-import os,shutil,sys,importlib.util
+
+import importlib.util
+import json
+import os
 from pathlib import Path
+import shutil
+import socket
+import subprocess
+import sys
+
+import httpx
+
+from iras.remote_access import RemoteAccessPolicy
+from iras.safety_runtime import EmergencyStop
+from iras.security.secret_store import protection_backend
+from iras.voice.stt import Listener
+from iras.vision.omniparser_runtime import OmniParserRuntimeManager
+
+
+def _free_gb(path: Path) -> float:
+    try:
+        return shutil.disk_usage(path).free / (1024 ** 3)
+    except Exception:
+        return 0.0
+
+
+def _device_bridge_config() -> dict:
+    path = Path.home() / ".iras-device-bridge.json"
+    if not path.exists():
+        return {"present": False, "path": str(path)}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"present": True, "path": str(path), "error": f"{type(exc).__name__}: {exc}"}
+    return {
+        "present": True,
+        "path": str(path),
+        "server_url": data.get("server_url"),
+        "device_id": data.get("device_id"),
+        "protected_device_token": bool(data.get("device_token_protected")),
+        "protected_api_token": bool(data.get("api_token_protected")),
+        "legacy_plain_device_token": bool(data.get("device_token")),
+        "secret_backend": data.get("secret_backend"),
+    }
+
 
 def run(settings):
-    checks=[]
-    def add(name,ok,detail): checks.append((name,ok,detail))
-    add('Python >= 3.11',sys.version_info>=(3,11),sys.version.split()[0])
-    add('Git',bool(shutil.which('git')),shutil.which('git') or 'not found')
-    mpv=shutil.which('mpv') or (r'C:\Program Files\MPV Player\mpv.exe' if os.name=='nt' and Path(r'C:\Program Files\MPV Player\mpv.exe').exists() else None)
-    add('MPV voice playback',bool(mpv),mpv or 'not found')
-    add('Edge TTS',importlib.util.find_spec('edge_tts') is not None,'installed' if importlib.util.find_spec('edge_tts') else 'missing')
-    add('Playwright (optional)',importlib.util.find_spec('playwright') is not None,'installed' if importlib.util.find_spec('playwright') else 'optional extra not installed')
-    add('Local Whisper (optional)',importlib.util.find_spec('faster_whisper') is not None,'installed' if importlib.util.find_spec('faster_whisper') else 'optional extra not installed')
-    add('Brain configured',settings.provider=='demo' or settings.provider=='ollama' or bool(settings.api_key),settings.provider)
+    checks = []
+
+    def add(name, ok, detail):
+        checks.append((name, bool(ok), detail))
+
+    add("Python >= 3.11", sys.version_info >= (3, 11), sys.version.split()[0])
+    add("Windows target", os.name == "nt", sys.platform)
+    add("Git", bool(shutil.which("git")), shutil.which("git") or "not found")
+    mpv = shutil.which("mpv") or (
+        r"C:\Program Files\MPV Player\mpv.exe"
+        if os.name == "nt" and Path(r"C:\Program Files\MPV Player\mpv.exe").exists()
+        else None
+    )
+    add("MPV voice playback", bool(mpv), mpv or "not found")
+    add(
+        "Edge TTS",
+        importlib.util.find_spec("edge_tts") is not None,
+        "installed" if importlib.util.find_spec("edge_tts") else "missing",
+    )
+    add(
+        "Playwright browser",
+        importlib.util.find_spec("playwright") is not None,
+        "installed" if importlib.util.find_spec("playwright") else "optional extra not installed",
+    )
+    add(
+        "Local Whisper",
+        importlib.util.find_spec("faster_whisper") is not None,
+        "installed" if importlib.util.find_spec("faster_whisper") else "optional extra not installed",
+    )
+    add(
+        "Brain configured",
+        settings.provider in {"demo", "ollama"} or bool(settings.api_key) or settings.provider == "multi",
+        settings.provider,
+    )
+
+    mic = Listener.microphone_status()
+    add("Microphone input", mic.get("available"), f"{mic.get('count', 0)} input device(s)")
+
+    vision = OmniParserRuntimeManager().status()
+    add(
+        "OmniParser configuration",
+        bool(vision.get("base_url")),
+        f"{vision.get('status')} @ {vision.get('base_url') or 'not configured'}",
+    )
+    add(
+        "OmniParser ready",
+        bool(vision.get("ready")),
+        vision.get("reason") or ("ready" if vision.get("ready") else "will auto-start on first visual need"),
+    )
+
+    remote = RemoteAccessPolicy().status()
+    add(
+        "Remote Windows local policy",
+        bool(remote.get("enabled")),
+        f"mode={remote.get('mode')} persistent={remote.get('persistent')} kill_switch={remote.get('kill_switch')}",
+    )
+    bridge = _device_bridge_config()
+    add(
+        "Remote device bridge configured",
+        bool(bridge.get("present") and bridge.get("server_url") and bridge.get("device_id")),
+        bridge,
+    )
+    secrets_ok = bool(
+        os.name != "nt"
+        or (
+            bridge.get("protected_device_token")
+            and not bridge.get("legacy_plain_device_token")
+            and bridge.get("secret_backend") == "windows-dpapi"
+        )
+    )
+    if bridge.get("legacy_plain_device_token"):
+        secret_detail = "legacy plaintext device token detected; rerun setup-remote-windows.ps1 to migrate it to Windows DPAPI"
+    elif os.name == "nt" and bridge.get("present") and not bridge.get("protected_device_token"):
+        secret_detail = "device has not completed protected cloud pairing yet; run/restart the configured iras-device bridge"
+    else:
+        secret_detail = bridge.get("secret_backend") or protection_backend()
+    add("Remote secrets protected", secrets_ok, secret_detail)
+
+    free_gb = _free_gb(Path.home())
+    add("Free disk space", free_gb >= 2.0, f"{free_gb:.1f} GB free")
+
+    token = str(getattr(settings, "api_token", "") or "")
+    add(
+        "Cloud API token strength",
+        bool(token and token != "change-me-before-remote-use" and len(token) >= 32),
+        "strong/non-default" if token and token != "change-me-before-remote-use" and len(token) >= 32 else "configure a random 32+ byte token",
+    )
+
+    server = str(os.getenv("IRAS_SERVER_URL", "") or bridge.get("server_url") or "")
+    secure_transport = bool(server.startswith("https://") or server.startswith("http://127.0.0.1") or server.startswith("http://localhost"))
+    add(
+        "Remote server transport",
+        secure_transport,
+        server or "not configured",
+    )
+    reachable = False
+    reach_detail = "not configured"
+    if secure_transport and server:
+        try:
+            response = httpx.get(server.rstrip("/") + "/health", timeout=4.0, follow_redirects=True)
+            reachable = response.status_code == 200
+            reach_detail = f"HTTP {response.status_code}"
+        except Exception as exc:
+            reach_detail = f"{type(exc).__name__}: {exc}"[:220]
+    add("Remote server reachable", reachable, reach_detail)
+
+    stop = EmergencyStop().status()
+    add("Emergency stop clear", not stop.get("tripped"), stop)
+
+    if os.name == "nt":
+        try:
+            task = subprocess.run(
+                ["schtasks", "/Query", "/TN", "IRAS Remote Windows Agent"],
+                capture_output=True, text=True, errors="replace", timeout=6, shell=False,
+            )
+            add("Remote startup task", task.returncode == 0, "registered" if task.returncode == 0 else "not registered")
+        except Exception as exc:
+            add("Remote startup task", False, f"{type(exc).__name__}: {exc}")
+
+    try:
+        hostname = socket.gethostname()
+    except Exception:
+        hostname = "unknown"
+    add("Hostname", bool(hostname), hostname)
     return checks

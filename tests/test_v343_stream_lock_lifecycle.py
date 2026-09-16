@@ -92,11 +92,11 @@ def test_v343_or_newer_version_contract():
     )
 
     init_match = re.search(
-        r'__version__\s*=\s*"(\d+)\.(\d+)\.(\d+)"',
+        r'__version__\s*=\s*"(\d+)\.(\d+)\.(\d+)',
         init,
     )
     pyproject_match = re.search(
-        r'(?m)^version\s*=\s*"(\d+)\.(\d+)\.(\d+)"',
+        r'(?m)^version\s*=\s*"(\d+)\.(\d+)\.(\d+)',
         pyproject,
     )
 

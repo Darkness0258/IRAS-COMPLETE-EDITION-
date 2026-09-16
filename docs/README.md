@@ -1,22 +1,21 @@
 # IRAS documentation
 
-This directory contains documentation for the **current v3.6.0 codebase** only.
-Superseded per-version implementation notes and one-off validation reports were
-removed from the active tree; Git history remains the source for historical
-release details.
+This directory describes the current **v4.0 RC1** codebase. Git history is the archive for superseded implementation notes.
 
 Current documents:
 
-- `BUILD_APPS.md` — Android/Windows client build notes.
-- `CLOUD_ARCHITECTURE.md` — paired-device/cloud architecture.
-- `CLOUD_DEPLOY.md` — cloud deployment guide.
-- `CROSS_APP_WORKFLOW_MEMORY_V3.6.0.md` — current cross-app workflow memory design.
+- `REMOTE_WINDOWS_ACCESS_V4.md` — outbound-only worldwide Windows access, sessions, DPAPI, local policy, emergency stop, setup/uninstall.
+- `PRODUCTION_READINESS_V4.md` — v4 reliability, perception, verification, provider, voice, observability and acceptance contract.
+- `REMOTE_ACCEPTANCE_CHECKLIST_V4.md` — final real-device/cloud acceptance run.
+- `AUTONOMOUS_DECISION_LAYER_V3.6.0.md` — bounded autonomous decision policy inherited by v4.
+- `CROSS_APP_WORKFLOW_MEMORY_V3.6.0.md` — verified cross-app ephemeral context.
+- `MULTIMODAL_GROUNDING_V3.7.0.md` — scene graph, confidence, WebView grounding and ROI perception foundation.
+- `OMNIPARSER_IRAS_SETUP.md` — local OmniParser setup and on-demand lifecycle.
+- `CLOUD_ARCHITECTURE.md` — cloud/paired-device architecture.
+- `CLOUD_DEPLOY.md` — cloud deployment.
+- `RENDER_SUPABASE_DEPLOY.md` — Render + persistent database deployment.
+- `BUILD_APPS.md` — client build notes.
 - `HUMAN_SPEECH.md` — spoken-output preprocessing.
-- `OMNIPARSER_IRAS_SETUP.md` — optional visual grounding service setup.
-- `RENDER_SUPABASE_DEPLOY.md` — Render + Supabase deployment notes.
-- `ROLEPLAY_GUIDE.md` — personality/roleplay behavior contract.
-- `SELF_ADAPTING_PERSONALITY.md` — bounded personality adaptation.
+- `ROLEPLAY_GUIDE.md` / `SELF_ADAPTING_PERSONALITY.md` — bounded persona behavior.
 
-Top-level `ARCHITECTURE.md` describes the current system architecture.
-
-- `AUTONOMOUS_DECISION_LAYER_V3.6.0.md` — bounded self-directed decision policy, session context, and safety invariants.
+Top-level `ARCHITECTURE.md` describes the integrated system architecture.

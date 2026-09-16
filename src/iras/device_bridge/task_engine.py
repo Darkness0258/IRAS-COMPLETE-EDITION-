@@ -18,6 +18,7 @@ STATE_CHANGING_DEVICE_TOOLS = {
     "device_interact_app",
     "device_semantic_action",
     "device_computer_action",
+    "device_whatsapp_open_chat",
     "device_spotify_play",
     "device_media_control",
     "device_open_url",
@@ -573,7 +574,7 @@ class TaskTracker:
             self.learning_blocked = True
             self.learning_block_reason = (
                 "workflow used universal visual/keyboard computer control; "
-                "v3.4.6 does not persist raw visual action traces as learned skills"
+                "v3.7 does not persist raw visual action traces as learned skills"
             )
             return
 
@@ -784,8 +785,9 @@ class TaskTracker:
             return (
                 "WORKFLOW ACCESSIBILITY LIMIT: Windows UI Automation returned "
                 "no usable semantic controls. This does NOT mean the visual "
-                "interface is blank. In v3.4.6, call device_computer_observe; if "
-                "OmniParser is configured it can ground visual-only controls. "
+                "interface is blank. In v3.7, call device_computer_observe; local "
+                "OmniParser will auto-start on demand when configured/discoverable and "
+                "can ground visual-only controls into the fresh scene graph. "
                 "Never invent coordinates."
             )
 

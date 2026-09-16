@@ -12,6 +12,13 @@ def _env(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip()
 
 
+def _truthy(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    return raw.strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
 def _max_tokens() -> int:
     try:
         return max(64, int(_env("IRAS_MAX_OUTPUT_TOKENS", "360")))
@@ -77,6 +84,14 @@ def build_multi_provider(settings) -> MultiProvider:
             max_tokens=_max_tokens(),
         )
 
+    if _truthy("IRAS_OLLAMA_FALLBACK", False):
+        providers["ollama"] = _openai_provider(
+            api_key=_env("IRAS_OLLAMA_API_KEY", "ollama"),
+            base_url=_env("IRAS_OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1"),
+            model=_env("IRAS_OLLAMA_MODEL", "qwen2.5-coder:7b"),
+            timeout=float(_env("IRAS_OLLAMA_TIMEOUT", "45") or "45"),
+        )
+
     openrouter_key = _env("OPENROUTER_API_KEY") or (
         settings.api_key if settings.provider in {"openrouter", "multi"} else ""
     )
@@ -94,7 +109,7 @@ def build_multi_provider(settings) -> MultiProvider:
 
     raw_order = _env(
         "IRAS_PROVIDER_ORDER",
-        "groq,cerebras,cloudflare,gemini,openrouter",
+        "groq,cerebras,cloudflare,gemini,openrouter,ollama",
     )
     order = [item.strip().lower() for item in raw_order.split(",") if item.strip()]
 
@@ -110,9 +125,8 @@ def build_multi_provider(settings) -> MultiProvider:
 
     if not slots:
         raise ValueError(
-            "IRAS_PROVIDER=multi but no provider keys are configured. Set at least "
-            "one of GROQ_API_KEY, CEREBRAS_API_KEY, CLOUDFLARE_API_TOKEN + "
-            "CLOUDFLARE_ACCOUNT_ID, GEMINI_API_KEY, or OPENROUTER_API_KEY."
+            "IRAS_PROVIDER=multi but no providers are configured. Set at least "
+            "one cloud provider key, or enable IRAS_OLLAMA_FALLBACK=true for a local model."
         )
 
     print(

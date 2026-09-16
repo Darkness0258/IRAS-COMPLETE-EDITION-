@@ -9,8 +9,10 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, simpledialog
 
+from iras import __version__
 from iras.config import Settings
 from iras.remote_client import IRASRemoteClient
+from iras.security.secret_store import protect_secret, unprotect_secret, protection_backend
 from iras.device_bridge.agent import (
     DeviceBridgeAgent,
 )
@@ -47,13 +49,16 @@ def load_client_config():
             DEFAULT_SERVER,
         ),
     )
-    data.setdefault(
-        "token",
-        os.getenv(
-            "IRAS_REMOTE_TOKEN",
-            "",
-        ),
-    )
+    env_token = os.getenv("IRAS_REMOTE_TOKEN", "").strip()
+    if env_token:
+        data["token"] = env_token
+    else:
+        protected = str(data.get("token_protected") or "")
+        legacy = str(data.get("token") or "")
+        try:
+            data["token"] = unprotect_secret(protected or legacy)
+        except Exception:
+            data["token"] = legacy
     data.setdefault(
         "hands_free",
         True,
@@ -66,13 +71,22 @@ def load_client_config():
 
 
 def save_client_config(data):
+    payload = dict(data or {})
+    token = str(payload.pop("token", "") or "")
+    payload["token_protected"] = protect_secret(token) if token else ""
+    payload["secret_backend"] = protection_backend()
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(
         json.dumps(
-            data,
+            payload,
             indent=2,
         ),
         encoding="utf-8",
     )
+    try:
+        os.chmod(CONFIG_PATH, 0o600)
+    except OSError:
+        pass
 
 
 class IRASRemoteDesktop:
@@ -1023,6 +1037,10 @@ class IRASRemoteDesktop:
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(prog="iras-remote", description="IRAS remote desktop client")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.parse_args()
     IRASRemoteDesktop().run()
 
 

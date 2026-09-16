@@ -23,6 +23,9 @@ class IRASRemoteClient:
             f"{platform.system().lower()}-"
             f"{uuid.getnode():x}"
         )
+        self.remote_session_id = ""
+        self.remote_session_token = ""
+        self.remote_session_mode = ""
         self._client = httpx.Client(
             timeout=timeout,
             limits=httpx.Limits(
@@ -33,17 +36,15 @@ class IRASRemoteClient:
         )
 
     def _headers(self):
-        return {
-            "Authorization": (
-                f"Bearer {self.token}"
-            ),
-            "X-Device-ID": (
-                self.device_id
-            ),
-            "Content-Type": (
-                "application/json"
-            ),
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "X-Device-ID": self.device_id,
+            "Content-Type": "application/json",
         }
+        if self.remote_session_id and self.remote_session_token:
+            headers["X-IRAS-Remote-Session-ID"] = self.remote_session_id
+            headers["X-IRAS-Remote-Token"] = self.remote_session_token
+        return headers
 
     def _validate(self):
         if not self.server_url.startswith(
@@ -223,6 +224,71 @@ class IRASRemoteClient:
                     "event": event_name,
                     "data": data,
                 }
+
+    def devices(self):
+        self._validate()
+        response = self._client.get(
+            f"{self.server_url}/v1/devices",
+            headers=self._headers(),
+            timeout=20,
+        )
+        response.raise_for_status()
+        return response.json().get("devices", [])
+
+    def create_remote_session(self, *, device_id: str = "", mode: str = "control", ttl_seconds: int = 1800):
+        self._validate()
+        response = self._client.post(
+            f"{self.server_url}/v1/remote/sessions",
+            headers=self._headers(),
+            json={
+                "device_id": device_id or None,
+                "mode": mode,
+                "ttl_seconds": int(ttl_seconds),
+                "scopes": ["windows"],
+            },
+        )
+        response.raise_for_status()
+        session = response.json()
+        self.remote_session_id = str(session.get("session_id") or "")
+        self.remote_session_token = str(session.get("session_token") or "")
+        self.remote_session_mode = str(session.get("mode") or "")
+        return session
+
+    def revoke_remote_session(self):
+        if not self.remote_session_id:
+            return {"revoked": False}
+        response = self._client.delete(
+            f"{self.server_url}/v1/remote/sessions/{self.remote_session_id}",
+            headers=self._headers(),
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        self.remote_session_id = ""
+        self.remote_session_token = ""
+        self.remote_session_mode = ""
+        return payload
+
+    def remote_invoke(self, action: str, arguments=None, *, timeout: float = 45.0):
+        if not self.remote_session_id or not self.remote_session_token:
+            raise RuntimeError("Create a remote session first.")
+        response = self._client.post(
+            f"{self.server_url}/v1/remote/invoke",
+            headers={
+                "Content-Type": "application/json",
+                "X-Device-ID": self.device_id,
+                "X-IRAS-Remote-Token": self.remote_session_token,
+            },
+            json={
+                "session_id": self.remote_session_id,
+                "action": action,
+                "arguments": arguments or {},
+                "timeout": float(timeout),
+            },
+            timeout=max(self.timeout, float(timeout) + 10),
+        )
+        response.raise_for_status()
+        return response.json().get("result")
 
     def close(self):
         if not self._client.is_closed:

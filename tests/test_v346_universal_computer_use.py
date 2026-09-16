@@ -10,9 +10,16 @@ def source(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_v346_version_contract():
-    assert '3.6.0' in source('src/iras/__init__.py')
-    assert 'version = "3.6.0"' in source('pyproject.toml')
+def test_v346_or_newer_version_contract():
+    import re
+    init = source('src/iras/__init__.py')
+    project = source('pyproject.toml')
+    im = re.search(r'__version__\s*=\s*"(\d+)\.(\d+)\.(\d+)', init)
+    pm = re.search(r'(?m)^version\s*=\s*"(\d+)\.(\d+)\.(\d+)', project)
+    assert im is not None and pm is not None
+    version = tuple(int(x) for x in im.groups())
+    assert version >= (3, 4, 6)
+    assert tuple(int(x) for x in pm.groups()) == version
 
 
 def test_executor_registers_universal_computer_actions():
@@ -62,13 +69,16 @@ def test_planner_contains_closed_loop_computer_use_contract():
 
 
 def test_omniparser_adapter_uses_official_server_contract():
-    text = source('src/iras/device_bridge/computer_use.py')
+    controller = source('src/iras/device_bridge/computer_use.py')
+    runtime = source('src/iras/vision/omniparser_runtime.py')
+    text = controller + runtime
     assert 'IRAS_OMNIPARSER_URL' in text
     assert 'IRAS_OMNIPARSER_API_KEY' in text
     assert '/parse/' in text
-    assert 'base64_image' in text
-    assert 'parsed_content_list' in text
-    assert 'som_image_base64' in text
+    assert 'base64_image' in controller
+    assert 'parsed_content_list' in controller
+    assert 'som_image_base64' in controller
+    assert 'IRAS_OMNIPARSER_AUTOSTART' in runtime
 
 
 def test_vision_ratio_boxes_map_to_desktop_coordinates():

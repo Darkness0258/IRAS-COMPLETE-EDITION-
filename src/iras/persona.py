@@ -170,4 +170,3 @@ def build_system_prompt(
 SYSTEM_PROMPT = build_system_prompt(
     "anime_soft"
 )
-

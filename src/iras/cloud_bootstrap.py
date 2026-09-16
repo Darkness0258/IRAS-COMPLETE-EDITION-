@@ -108,11 +108,15 @@ def build_cloud_runtime(settings: Settings | None = None) -> CloudRuntime:
     else:
         os.environ.pop("IRAS_SKILL_DATABASE_URL", None)
 
+    # Cloud requests are safe-action only by default. A short-lived, strongly
+    # authenticated remote session may temporarily elevate this same engine
+    # inside the serialized agent lock; outside that context SYSTEM/CRITICAL
+    # requests still fail closed because there is no approval callback.
     permissions = PermissionEngine(
         auto_level=PermissionLevel.SAFE_ACTION,
         approval_callback=None,
         always_confirm_critical=True,
-        hard_cap=PermissionLevel.SAFE_ACTION,
+        hard_cap=PermissionLevel.CRITICAL,
     )
 
     registry = ToolRegistry(permissions, audit)

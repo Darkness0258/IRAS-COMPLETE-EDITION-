@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
+import os
 import queue
 import tempfile
 import threading
@@ -26,6 +27,50 @@ class Listener:
                 "Install microphone support with: pip install -e '.[voice]'"
             ) from exc
         return np, sd, sf, WhisperModel
+
+    @staticmethod
+    def list_input_devices() -> list[dict]:
+        try:
+            import sounddevice as sd
+        except ImportError:
+            return []
+        devices = []
+        try:
+            for index, item in enumerate(sd.query_devices()):
+                if int(item.get("max_input_channels", 0) or 0) <= 0:
+                    continue
+                devices.append(
+                    {
+                        "index": index,
+                        "name": str(item.get("name") or ""),
+                        "channels": int(item.get("max_input_channels", 0) or 0),
+                        "default_samplerate": float(item.get("default_samplerate", 0) or 0),
+                    }
+                )
+        except Exception:
+            return []
+        return devices
+
+    @classmethod
+    def microphone_status(cls) -> dict:
+        devices = cls.list_input_devices()
+        selected = os.getenv("IRAS_MIC_DEVICE", "").strip()
+        return {
+            "available": bool(devices),
+            "count": len(devices),
+            "selected": selected or "system-default",
+            "devices": devices[:24],
+        }
+
+    @staticmethod
+    def _input_device():
+        raw = os.getenv("IRAS_MIC_DEVICE", "").strip()
+        if not raw:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return raw
 
     def _ensure_model(self, WhisperModel):
         if self._model is None:
@@ -91,6 +136,7 @@ class Listener:
             hard_deadline = started_at + start_timeout + max_seconds
 
             with sd.InputStream(
+                device=self._input_device(),
                 samplerate=sample_rate,
                 channels=1,
                 dtype="float32",

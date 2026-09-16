@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+from contextlib import contextmanager
 import threading
 import time
 import uuid
@@ -34,6 +35,9 @@ from pydantic import (
 import uvicorn
 
 from iras import __version__
+from iras.models import PermissionLevel
+from iras.remote_access import action_permission, level_for_mode
+from iras.device_bridge.remote_context import remote_command_context
 from iras.cloud_bootstrap import (
     build_cloud_runtime,
 )
@@ -98,6 +102,8 @@ app.add_middleware(
         "Authorization",
         "Content-Type",
         "X-Device-ID",
+        "X-IRAS-Remote-Session-ID",
+        "X-IRAS-Remote-Token",
         "Accept",
     ],
 )
@@ -159,6 +165,20 @@ class DeviceCompleteIn(BaseModel):
         default="",
         max_length=8000,
     )
+
+
+class RemoteSessionIn(BaseModel):
+    device_id: str | None = Field(default=None, max_length=128)
+    mode: str = Field(default="control", pattern="^(read_only|control|full)$")
+    ttl_seconds: int = Field(default=1800, ge=60, le=43200)
+    scopes: list[str] = Field(default_factory=lambda: ["windows"], max_length=64)
+
+
+class RemoteInvokeIn(BaseModel):
+    session_id: str = Field(min_length=16, max_length=128)
+    action: str = Field(min_length=1, max_length=128)
+    arguments: dict = Field(default_factory=dict)
+    timeout: float = Field(default=45.0, ge=1.0, le=180.0)
 
 
 def _authorized(
@@ -225,6 +245,53 @@ def _device_authorized(
         )
 
     return device_id
+
+
+
+def _remote_session_cap() -> int:
+    try:
+        return max(0, min(int(os.getenv("IRAS_REMOTE_SESSION_MAX_PERMISSION_LEVEL", "2")), 3))
+    except ValueError:
+        return 2
+
+
+def _authorize_remote_session(session_id: str | None, token: str | None) -> dict | None:
+    if not session_id and not token:
+        return None
+    if not session_id or not token:
+        raise HTTPException(status_code=401, detail="Both IRAS remote session ID and token are required.")
+    session = runtime.device_bridge.authorize_remote_session(session_id, token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Remote session is invalid, expired, or revoked.")
+    if int(session.get("max_permission") or 0) > _remote_session_cap():
+        raise HTTPException(status_code=403, detail="Remote session exceeds this server's configured permission cap.")
+    scopes = {str(item).strip().lower() for item in (session.get("scopes") or [])}
+    if "windows" not in scopes:
+        raise HTTPException(status_code=403, detail="Remote session does not include the windows scope.")
+    return session
+
+
+@contextmanager
+def _remote_permission_scope(session: dict | None):
+    permissions = runtime.registry.permissions
+    old_auto = permissions.auto_level
+    old_cap = permissions.hard_cap
+    old_confirm = permissions.always_confirm_critical
+    old_device = runtime.device_bridge.preferred_device_id
+    try:
+        if session:
+            level = PermissionLevel(max(0, min(int(session.get("max_permission") or 0), _remote_session_cap())))
+            permissions.auto_level = level
+            permissions.hard_cap = level
+            permissions.always_confirm_critical = False
+            runtime.device_bridge.preferred_device_id = str(session.get("device_id") or "") or None
+        with remote_command_context(session):
+            yield
+    finally:
+        permissions.auto_level = old_auto
+        permissions.hard_cap = old_cap
+        permissions.always_confirm_critical = old_confirm
+        runtime.device_bridge.preferred_device_id = old_device
 
 
 def _sse(
@@ -342,9 +409,13 @@ def chat(
     x_device_id: str | None = Header(
         default=None
     ),
+    x_iras_remote_session_id: str | None = Header(default=None, alias="X-IRAS-Remote-Session-ID"),
+    x_iras_remote_token: str | None = Header(default=None, alias="X-IRAS-Remote-Token"),
 ):
-    _authorized(
-        authorization
+    _authorized(authorization)
+    remote_session = _authorize_remote_session(
+        x_iras_remote_session_id,
+        x_iras_remote_token,
     )
 
     request_id = (
@@ -366,16 +437,14 @@ def chat(
             ),
             "device_id": device_id,
             "stream": False,
+            "remote_session_id": (remote_session or {}).get("session_id"),
         },
     )
 
     try:
         with agent_lock:
-            response = (
-                runtime.agent.handle(
-                    body.message
-                )
-            )
+            with _remote_permission_scope(remote_session):
+                response = runtime.agent.handle(body.message)
 
     except Exception as exc:
         print(
@@ -459,6 +528,8 @@ def chat_stream(
     x_device_id: str | None = Header(
         default=None
     ),
+    x_iras_remote_session_id: str | None = Header(default=None, alias="X-IRAS-Remote-Session-ID"),
+    x_iras_remote_token: str | None = Header(default=None, alias="X-IRAS-Remote-Token"),
 ):
     """
     SSE streaming endpoint.
@@ -467,8 +538,10 @@ def chat_stream(
     Tool-bearing turns preserve the existing agent/tool loop and deliver
     the completed tool result through the same SSE protocol.
     """
-    _authorized(
-        authorization
+    _authorized(authorization)
+    remote_session = _authorize_remote_session(
+        x_iras_remote_session_id,
+        x_iras_remote_token,
     )
 
     request_id = (
@@ -497,6 +570,7 @@ def chat_stream(
             "direct_stream": (
                 direct_stream
             ),
+            "remote_session_id": (remote_session or {}).get("session_id"),
         },
     )
 
@@ -609,9 +683,8 @@ def chat_stream(
                 # lock, copy metrics, then release the lock BEFORE yielding SSE
                 # data so a slow/aborted client cannot pin the agent.
                 try:
-                    tool_text = runtime.agent.handle(
-                        body.message
-                    )
+                    with _remote_permission_scope(remote_session):
+                        tool_text = runtime.agent.handle(body.message)
                     metrics = dict(
                         runtime.agent.last_metrics
                         or {}
@@ -632,18 +705,14 @@ def chat_stream(
             else:
                 # Ordinary no-tool conversation keeps true token streaming.
                 try:
-                    for text in (
-                        runtime.agent
-                        .handle_stream(
-                            body.message
-                        )
-                    ):
-                        yield _sse(
-                            "token",
-                            {
-                                "text": text,
-                            },
-                        )
+                    with _remote_permission_scope(remote_session):
+                        for text in runtime.agent.handle_stream(body.message):
+                            yield _sse(
+                                "token",
+                                {
+                                    "text": text,
+                                },
+                            )
                 finally:
                     if acquired:
                         agent_lock.release()
@@ -1048,6 +1117,93 @@ def device_complete_command(
         "ok": True,
         "command": result,
     }
+
+
+@app.post("/v1/remote/sessions")
+def create_remote_session(
+    body: RemoteSessionIn,
+    authorization: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
+):
+    _authorized(authorization)
+    requested_level = level_for_mode(body.mode)
+    if requested_level is None:
+        raise HTTPException(status_code=400, detail="Invalid remote session mode.")
+    if int(requested_level) > _remote_session_cap():
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Server remote-session cap is {PermissionLevel(_remote_session_cap()).name}; "
+                f"requested mode {body.mode} requires {requested_level.name}."
+            ),
+        )
+    session = runtime.device_bridge.create_remote_session(
+        device_id=body.device_id,
+        mode=body.mode,
+        ttl_seconds=body.ttl_seconds,
+        scopes=body.scopes,
+        requester_device=x_device_id or "web",
+    )
+    runtime.audit.record(
+        "remote_session_created",
+        {
+            "session_id": session["session_id"],
+            "device_id": session["device_id"],
+            "mode": session["mode"],
+            "ttl_seconds": session["ttl_seconds"],
+        },
+    )
+    return session
+
+
+@app.get("/v1/remote/sessions")
+def remote_sessions(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"sessions": runtime.device_bridge.list_remote_sessions()}
+
+
+@app.delete("/v1/remote/sessions/{session_id}")
+def revoke_remote_session(session_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    revoked = runtime.device_bridge.revoke_remote_session(session_id)
+    runtime.audit.record("remote_session_revoked", {"session_id": session_id, "revoked": revoked})
+    return {"ok": True, "revoked": revoked}
+
+
+@app.post("/v1/remote/invoke")
+def remote_invoke(
+    body: RemoteInvokeIn,
+    x_iras_remote_token: str | None = Header(default=None, alias="X-IRAS-Remote-Token"),
+    x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
+):
+    session = _authorize_remote_session(body.session_id, x_iras_remote_token)
+    assert session is not None
+    required = action_permission(body.action, body.arguments)
+    if int(required) > int(session.get("max_permission") or 0):
+        raise HTTPException(status_code=403, detail=f"Remote session does not authorize {required.name} actions.")
+    try:
+        result = runtime.device_bridge.remote_request_and_wait(
+            session=session,
+            action=body.action,
+            arguments=body.arguments,
+            timeout=body.timeout,
+            requester_device=x_device_id or "remote-client",
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    runtime.audit.record(
+        "remote_direct_invoke",
+        {
+            "session_id": session.get("session_id"),
+            "device_id": session.get("device_id"),
+            "action": body.action,
+            "permission": required.name,
+        },
+    )
+    return {"ok": True, "result": result}
+
 
 @app.get("/v1/personality")
 def personality(

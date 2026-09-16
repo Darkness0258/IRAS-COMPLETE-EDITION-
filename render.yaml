@@ -17,6 +17,8 @@ services:
         value: anime_soft
       - key: IRAS_CORS_ORIGINS
         value: "*"
+      - key: IRAS_REMOTE_SESSION_MAX_PERMISSION_LEVEL
+        value: "3"
       - key: OPENROUTER_API_KEY
         sync: false
       - key: IRAS_API_TOKEN
