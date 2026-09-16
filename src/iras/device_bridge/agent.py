@@ -18,6 +18,11 @@ from iras.device_bridge.executor import (
 )
 from iras.observability import TraceLogger
 from iras.remote_access import RemoteAccessPolicy, action_permission
+from iras.remote_protocol import (
+    REMOTE_PROTOCOL_VERSION,
+    RemoteCompatibilityError,
+    validate_cloud_health,
+)
 from iras.security.secret_store import protect_secret, unprotect_secret, protection_backend
 from iras.safety_runtime import EmergencyStop
 
@@ -63,6 +68,58 @@ def _save_config(data: dict) -> None:
         )
     except OSError:
         pass
+
+
+def probe_remote_cloud(
+    server_url: str,
+    *,
+    api_token: str = "",
+    client: httpx.Client | None = None,
+) -> dict:
+    """Verify that a URL is the compatible v4 cloud before storing/pairing it."""
+    base = str(server_url or "").strip().rstrip("/")
+    if not base:
+        raise RemoteCompatibilityError("IRAS remote server URL is missing.")
+
+    owns_client = client is None
+    http = client or httpx.Client(
+        timeout=httpx.Timeout(connect=10, read=10, write=10, pool=10),
+        follow_redirects=True,
+    )
+    try:
+        response = http.get(base + "/health")
+        response.raise_for_status()
+        try:
+            health = response.json()
+        except Exception as exc:
+            raise RemoteCompatibilityError(
+                "IRAS Cloud /health did not return JSON. Check the Render service URL."
+            ) from exc
+
+        result = validate_cloud_health(health)
+
+        token = str(api_token or "").strip()
+        if token:
+            auth = http.get(
+                base + "/v1/devices",
+                headers={"Authorization": "Bearer " + token},
+            )
+            if auth.status_code == 401:
+                raise RuntimeError(
+                    "IRAS Cloud rejected IRAS_API_TOKEN. Use the exact token configured on Render."
+                )
+            if auth.status_code == 404:
+                raise RemoteCompatibilityError(
+                    "IRAS Cloud is missing the v4 device API. Redeploy this v4 project to Render."
+                )
+            auth.raise_for_status()
+            result["token_verified"] = True
+        else:
+            result["token_verified"] = False
+        return result
+    finally:
+        if owns_client:
+            http.close()
 
 
 class DeviceBridgeAgent:
@@ -127,6 +184,12 @@ class DeviceBridgeAgent:
             or socket.gethostname()
             or "Windows PC"
         )
+        self.cloud_version = str(config.get("cloud_version") or "")
+        try:
+            self.remote_protocol = int(config.get("remote_protocol") or 0)
+        except (TypeError, ValueError):
+            self.remote_protocol = 0
+        self._cloud_checked = False
 
         roots = config.get(
             "allowed_roots"
@@ -155,6 +218,8 @@ class DeviceBridgeAgent:
                 "api_token_protected": protect_secret(self.api_token),
                 "secret_backend": protection_backend(),
                 "server_url": self.server_url,
+                "cloud_version": self.cloud_version,
+                "remote_protocol": self.remote_protocol,
                 "display_name": (
                     self.display_name
                 ),
@@ -208,11 +273,30 @@ class DeviceBridgeAgent:
         except Exception:
             pass
 
+    def _ensure_cloud_compatible(self, *, verify_token: bool = False) -> dict:
+        if self._cloud_checked and not verify_token:
+            return {
+                "version": self.cloud_version,
+                "remote_protocol": self.remote_protocol,
+                "compatible": True,
+            }
+        result = probe_remote_cloud(
+            self.server_url,
+            api_token=self.api_token if verify_token else "",
+            client=self.client,
+        )
+        self.cloud_version = str(result.get("version") or "")
+        self.remote_protocol = int(result.get("remote_protocol") or 0)
+        self._cloud_checked = True
+        self._persist()
+        return result
+
     def _pair(self):
         if not self.server_url:
             raise RuntimeError("IRAS_SERVER_URL is not configured for remote access.")
         if not self.api_token:
             raise RuntimeError("IRAS_API_TOKEN is required once to pair this laptop with IRAS Cloud.")
+        self._ensure_cloud_compatible(verify_token=True)
         response = self.client.post(
             (
                 self.server_url
@@ -246,6 +330,7 @@ class DeviceBridgeAgent:
                 "app_version": (
                     __version__
                 ),
+                "remote_protocol": REMOTE_PROTOCOL_VERSION,
             },
         )
 
@@ -424,6 +509,7 @@ class DeviceBridgeAgent:
                         last_disarmed_notice = time.monotonic()
                     self.stop_event.wait(2.0)
                     continue
+                self._ensure_cloud_compatible()
                 if not self.device_token:
                     self._pair()
 
@@ -444,6 +530,7 @@ class DeviceBridgeAgent:
                     self.device_token = ""
                     self._persist()
 
+                self._cloud_checked = False
                 self._status(
                     "bridge reconnecting: "
                     + str(exc)[:180]
@@ -472,9 +559,12 @@ def configure_remote_bridge(
     api_token = str(api_token or "").strip()
     if not server_url.startswith(("https://", "http://127.0.0.1", "http://localhost")):
         raise ValueError("Remote IRAS server must use HTTPS (localhost is allowed for testing).")
-    if len(api_token) < 24:
-        raise ValueError("IRAS_API_TOKEN is too short for remote use; use a strong random token.")
+    if len(api_token) < 32:
+        raise ValueError("IRAS_API_TOKEN is too short for remote use; use a strong random 32+ character token.")
+    cloud = probe_remote_cloud(server_url, api_token=api_token)
     config["server_url"] = server_url
+    config["cloud_version"] = cloud["version"]
+    config["remote_protocol"] = cloud["remote_protocol"]
     config["api_token_protected"] = protect_secret(api_token)
     config.pop("api_token", None)
     config["secret_backend"] = protection_backend()
@@ -496,6 +586,9 @@ def configure_remote_bridge(
     return {
         "configured": True,
         "server_url": server_url,
+        "cloud_version": cloud["version"],
+        "remote_protocol": cloud["remote_protocol"],
+        "token_verified": bool(cloud.get("token_verified")),
         "display_name": config.get("display_name") or socket.gethostname(),
         "secret_backend": config["secret_backend"],
         "allowed_roots": config.get("allowed_roots") or DeviceExecutor.default_roots(),
@@ -521,6 +614,8 @@ def main():
         safe_cfg = {
             "configured": bool(cfg.get("server_url") and cfg.get("device_id")),
             "server_url": cfg.get("server_url"),
+            "cloud_version": cfg.get("cloud_version"),
+            "remote_protocol": cfg.get("remote_protocol"),
             "device_id": cfg.get("device_id"),
             "display_name": cfg.get("display_name"),
             "allowed_roots": cfg.get("allowed_roots") or [],

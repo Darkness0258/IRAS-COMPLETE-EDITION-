@@ -6,6 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = [
     "src/iras/remote_access.py",
+    "src/iras/remote_protocol.py",
     "src/iras/safety_runtime.py",
     "src/iras/security/secret_store.py",
     "src/iras/observability.py",
@@ -55,7 +56,7 @@ def main() -> None:
                     break
 
     local_env = ROOT / ".env"
-    print("=== IRAS v4.0 RC1 CLEAN TREE VALIDATION ===")
+    print("=== IRAS v4.0 RC2 CLEAN TREE VALIDATION ===")
     print("LEGACY ROOT RELEASE DOCS PRESENT:", bool(legacy_docs))
     print("LOCAL .ENV PRESENT:", local_env.exists())
     print("REQUIRED V4 FILES PRESENT:", not missing)

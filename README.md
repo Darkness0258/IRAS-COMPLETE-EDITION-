@@ -1,12 +1,13 @@
-# IRAS 4.0.0 RC1 — Permissioned Personal Windows Agent
+# IRAS 4.0.0 RC2 — Permissioned Personal Windows Agent
 
 IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, and a secure outbound bridge for controlling an authorized laptop from IRAS Cloud anywhere in the world.
 
-**Release status:** `4.0.0-rc1` is the production-candidate development line. The frozen stable baseline remains v3.6.0; v3.7 multimodal work is incorporated into this RC.
+**Release status:** `4.0.0-rc2` is the production-candidate development line. The frozen stable baseline remains v3.6.0; v3.7 multimodal work is incorporated into this RC.
 
 ## What v4 adds
 
 - **Worldwide Windows access without opening an inbound laptop port.** `iras-device` long-polls IRAS Cloud over outbound HTTPS.
+- **Versioned remote handshake.** Windows setup refuses an old/wrong Render backend, verifies the v4 remote protocol and API token before saving the bridge configuration, and records the cloud version for diagnostics.
 - **Two-key remote security.** A short-lived cloud remote session is necessary but never sufficient; the laptop's locally armed `RemoteAccessPolicy` is the final permission boundary.
 - **Windows DPAPI secret protection.** Pairing and cloud API credentials stored by the bridge are encrypted to the current Windows user.
 - **Controller-level emergency stop.** It blocks local/remote `DeviceExecutor` actions below the model layer and can only be cleared locally.
@@ -91,7 +92,7 @@ iras --emergency-clear            # local-only recovery
 iras-device --status              # outbound bridge status (redacted)
 ```
 
-`IRAS_MIC_DEVICE` selects a microphone device by sounddevice index or name when Windows default input is unsuitable.
+`IRAS_MIC_DEVICE` selects a microphone device by sounddevice index or name when Windows default input is unsuitable. `iras --doctor` also checks that the configured cloud advertises the matching v4 remote protocol instead of treating a merely reachable old deployment as healthy.
 
 ## Worldwide Windows access
 
@@ -101,7 +102,7 @@ Deploy `iras-cloud` over HTTPS with a strong random `IRAS_API_TOKEN` and persist
 IRAS_REMOTE_SESSION_MAX_PERMISSION_LEVEL=3
 ```
 
-Then configure the laptop:
+Then configure the laptop. Setup performs a `/health` protocol preflight and an authenticated device-API probe first; it aborts instead of pairing if Render is still serving an older IRAS backend or the token is wrong:
 
 ```powershell
 .\setup-remote-windows.ps1 `

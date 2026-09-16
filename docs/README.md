@@ -1,6 +1,6 @@
 # IRAS documentation
 
-This directory describes the current **v4.0 RC1** codebase. Git history is the archive for superseded implementation notes.
+This directory describes the current **v4.0 RC2** codebase. Git history is the archive for superseded implementation notes.
 
 Current documents:
 
@@ -19,3 +19,5 @@ Current documents:
 - `ROLEPLAY_GUIDE.md` / `SELF_ADAPTING_PERSONALITY.md` — bounded persona behavior.
 
 Top-level `ARCHITECTURE.md` describes the integrated system architecture.
+
+- `V4_RC2_NOTES.md` — RC2 Render/Windows compatibility hardening and remaining final acceptance checks.

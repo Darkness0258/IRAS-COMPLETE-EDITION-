@@ -36,6 +36,7 @@ import uvicorn
 
 from iras import __version__
 from iras.models import PermissionLevel
+from iras.remote_protocol import IRAS_CLOUD_SERVICE_ID, REMOTE_PROTOCOL_VERSION
 from iras.remote_access import action_permission, level_for_mode
 from iras.device_bridge.remote_context import remote_command_context
 from iras.cloud_bootstrap import (
@@ -155,6 +156,11 @@ class DevicePairIn(BaseModel):
     app_version: str = Field(
         default="unknown",
         max_length=32,
+    )
+    remote_protocol: int = Field(
+        default=0,
+        ge=0,
+        le=999,
     )
 
 
@@ -321,7 +327,9 @@ def health():
     return {
         "ok": True,
         "service": "IRAS Cloud",
+        "service_id": IRAS_CLOUD_SERVICE_ID,
         "version": __version__,
+        "remote_protocol": REMOTE_PROTOCOL_VERSION,
         "uptime_seconds": int(time.time() - started_at),
     }
 
@@ -921,6 +929,15 @@ def pair_device(
 ):
     # Pairing requires the existing normal user API token.
     _authorized(authorization)
+    if body.remote_protocol != REMOTE_PROTOCOL_VERSION:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "IRAS Windows bridge remote protocol is incompatible "
+                f"(client={body.remote_protocol}, server={REMOTE_PROTOCOL_VERSION}). "
+                "Update the Windows IRAS package and redeploy the matching cloud release."
+            ),
+        )
 
     device_token = secrets.token_urlsafe(32)
 
@@ -951,6 +968,8 @@ def pair_device(
         "ok": True,
         "device": device,
         "device_token": device_token,
+        "cloud_version": __version__,
+        "remote_protocol": REMOTE_PROTOCOL_VERSION,
     }
 
 

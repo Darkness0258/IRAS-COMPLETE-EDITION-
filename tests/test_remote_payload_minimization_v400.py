@@ -9,7 +9,7 @@ def test_remote_command_payload_is_scrubbed_after_result_delivery(tmp_path):
     store = DeviceBridgeStore(sqlite_path=tmp_path / "bridge.db")
     store.pair_device(
         device_id="windows-scrub-1", display_name="PC", platform="Windows",
-        device_token="secret", capabilities=["clipboard_get"], app_version="4.0.0-rc1",
+        device_token="secret", capabilities=["clipboard_get"], app_version="4.0.0-rc2",
     )
     session = store.create_remote_session(device_id="windows-scrub-1", mode="read_only", ttl_seconds=120)
     auth = store.authorize_remote_session(session["session_id"], session["session_token"])

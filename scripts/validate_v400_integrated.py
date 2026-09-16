@@ -13,6 +13,7 @@ if str(SRC) not in sys.path:
 from iras import __version__
 from iras.models import PermissionLevel
 from iras.remote_access import RemoteAccessPolicy, action_permission
+from iras.remote_protocol import REMOTE_PROTOCOL_VERSION, validate_cloud_health
 from iras.safety_runtime import EmergencyStop
 from iras.security.secret_store import protect_secret, unprotect_secret, protection_backend
 from iras.device_bridge.store import DeviceBridgeStore
@@ -22,9 +23,16 @@ from iras.vision.scene_graph import SCENE_GRAPH_VERSION
 
 
 def main() -> None:
-    print("=== IRAS v4.0 RC1 INTEGRATED VALIDATION ===")
-    assert __version__ == "4.0.0-rc1"
+    print("=== IRAS v4.0 RC2 INTEGRATED VALIDATION ===")
+    assert __version__ == "4.0.0-rc2"
     assert SCENE_GRAPH_VERSION == "3.7.0"  # scene-graph schema version stays stable
+    assert REMOTE_PROTOCOL_VERSION == 1
+    cloud_contract = validate_cloud_health({
+        "service_id": "iras-cloud",
+        "version": __version__,
+        "remote_protocol": REMOTE_PROTOCOL_VERSION,
+    })
+    assert cloud_contract["compatible"] is True
 
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -80,6 +88,7 @@ def main() -> None:
     runtime = OmniParserRuntimeManager()
     print("RELEASE VERSION:", __version__)
     print("SCENE GRAPH SCHEMA:", SCENE_GRAPH_VERSION)
+    print("REMOTE PROTOCOL VERSION:", REMOTE_PROTOCOL_VERSION)
     print("REMOTE SESSION CRITICAL CLASSIFICATION:", action_permission("delete_path").name)
     print("REMOTE LOCAL POLICY TWO-KEY GATE: True")
     print("EMERGENCY STOP CONTROLLER GATE: True")

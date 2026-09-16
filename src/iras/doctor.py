@@ -12,6 +12,7 @@ import sys
 import httpx
 
 from iras.remote_access import RemoteAccessPolicy
+from iras.remote_protocol import validate_cloud_health
 from iras.safety_runtime import EmergencyStop
 from iras.security.secret_store import protection_backend
 from iras.voice.stt import Listener
@@ -139,15 +140,29 @@ def run(settings):
         server or "not configured",
     )
     reachable = False
+    compatible = False
     reach_detail = "not configured"
+    compatibility_detail = "not configured"
     if secure_transport and server:
         try:
             response = httpx.get(server.rstrip("/") + "/health", timeout=4.0, follow_redirects=True)
             reachable = response.status_code == 200
             reach_detail = f"HTTP {response.status_code}"
+            if reachable:
+                try:
+                    cloud = validate_cloud_health(response.json())
+                    compatible = True
+                    compatibility_detail = (
+                        f"version={cloud['version']} remote_protocol={cloud['remote_protocol']}"
+                    )
+                    reach_detail += " " + compatibility_detail
+                except Exception as exc:
+                    compatibility_detail = f"{type(exc).__name__}: {exc}"[:220]
         except Exception as exc:
             reach_detail = f"{type(exc).__name__}: {exc}"[:220]
+            compatibility_detail = reach_detail
     add("Remote server reachable", reachable, reach_detail)
+    add("Remote protocol compatible", compatible, compatibility_detail)
 
     stop = EmergencyStop().status()
     add("Emergency stop clear", not stop.get("tripped"), stop)

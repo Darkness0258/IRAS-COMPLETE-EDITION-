@@ -1,6 +1,6 @@
-# IRAS v4.0 RC1 — Production Readiness Contract
+# IRAS v4.0 RC2 — Production Readiness Contract
 
-v4.0 RC1 consolidates the v3.6 bounded-autonomy safety model and v3.7 multimodal work into a deployable Windows personal-agent architecture. “Production complete” here means bounded, observable, recoverable, permissioned, and testable—not a claim that arbitrary third-party UI can never change.
+v4.0 RC2 consolidates the v3.6 bounded-autonomy safety model and v3.7 multimodal work into a deployable Windows personal-agent architecture. “Production complete” here means bounded, observable, recoverable, permissioned, and testable—not a claim that arbitrary third-party UI can never change.
 
 ## Controller invariants
 
@@ -57,6 +57,8 @@ Learned app skills are admitted only from verified task outcomes, contain semant
 
 See `REMOTE_WINDOWS_ACCESS_V4.md`. Remote administration uses an outbound-only Windows bridge, DPAPI-protected secrets, exact-device short-lived sessions, a server permission cap, a final local permission policy, structured audit traces, and an emergency stop.
 
+RC2 adds a versioned cloud/Windows handshake. `/health` advertises `service_id=iras-cloud` and `remote_protocol=1`; bridge configuration validates that contract and the master API token before persisting configuration. Pairing also carries the protocol number and the cloud rejects mismatched clients with a clear conflict response. This prevents an old Render deployment from looking "connected" while the Windows bridge endlessly retries missing v4 routes.
+
 ## Diagnostics and observability
 
 `iras --doctor` checks provider configuration, microphone devices, TTS, browser support, OmniParser, remote policy, bridge pairing, DPAPI protection, disk space, API-token quality, and HTTPS transport.
@@ -65,7 +67,7 @@ Remote command execution writes structured JSONL operation traces under `~/.iras
 
 ## Acceptance definition for v4.0 final
 
-RC1 is code-complete only after:
+RC2 is code-complete only after:
 
 1. the complete regression and v4 validators pass;
 2. the Windows read-only smoke test passes;

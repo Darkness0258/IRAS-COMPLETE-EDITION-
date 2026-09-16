@@ -13,7 +13,7 @@ def _store(tmp_path):
         platform="Windows 10",
         device_token="device-secret",
         capabilities=["screen_preview", "ui_click_text", "delete_path"],
-        app_version="4.0.0-rc1",
+        app_version="4.0.0-rc2",
     )
     return store
 

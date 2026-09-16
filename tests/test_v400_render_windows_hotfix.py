@@ -44,6 +44,6 @@ def test_remote_setup_rejects_placeholder_cloud_url():
 
 def test_ci_runs_v400_validator():
     text = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "IRAS v4.0 RC1 production validation" in text
+    assert "IRAS v4.0 RC2 production validation" in text
     assert ".\\run-v400-validation.ps1" in text
     assert "run-v370-validation.ps1" not in text
