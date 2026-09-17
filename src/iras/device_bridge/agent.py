@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 import platform
 from pathlib import Path
 import socket
@@ -154,6 +155,16 @@ class DeviceBridgeAgent:
             threading.Event()
         )
         self.thread = None
+        # Long local-model inference must never monopolize the outbound control
+        # loop. Keep exactly one Ollama request active at a time while the main
+        # bridge thread continues polling/heartbeating and serving ordinary
+        # Windows commands.
+        self._local_ai_lock = threading.Lock()
+        self._local_ai_futures = set()
+        self._local_ai_pool = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="iras-device-local-ai",
+        )
         self.client = httpx.Client(
             timeout=httpx.Timeout(
                 connect=15,
@@ -269,6 +280,11 @@ class DeviceBridgeAgent:
         self.stop_event.set()
 
         try:
+            self._local_ai_pool.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
+
+        try:
             self.client.close()
         except Exception:
             pass
@@ -366,15 +382,19 @@ class DeviceBridgeAgent:
             ),
         }
 
-    def _poll(self):
+    def _poll(self, *, exclude_action: str = ""):
+        params = {
+            "timeout": 25,
+        }
+        if exclude_action:
+            params["exclude_action"] = str(exclude_action)[:128]
+
         response = self.client.get(
             (
                 self.server_url
                 + "/v1/device/commands/next"
             ),
-            params={
-                "timeout": 25,
-            },
+            params=params,
             headers=(
                 self._device_headers()
             ),
@@ -394,6 +414,27 @@ class DeviceBridgeAgent:
         return payload.get(
             "command"
         )
+
+    def _local_ai_busy(self) -> bool:
+        with self._local_ai_lock:
+            self._local_ai_futures = {
+                future
+                for future in self._local_ai_futures
+                if not future.done()
+            }
+            return bool(self._local_ai_futures)
+
+    def _dispatch_local_ai(self, command: dict) -> None:
+        """Run loopback Ollama outside the heartbeat/control polling loop."""
+        future = self._local_ai_pool.submit(self._execute, command)
+        with self._local_ai_lock:
+            self._local_ai_futures.add(future)
+
+        def _finished(done):
+            with self._local_ai_lock:
+                self._local_ai_futures.discard(done)
+
+        future.add_done_callback(_finished)
 
     def _complete(
         self,
@@ -518,14 +559,29 @@ class DeviceBridgeAgent:
                 if not self.device_token:
                     self._pair()
 
-                command = self._poll()
+                # While one local Ollama request is active, keep the bridge
+                # polling for every other action. The cloud skips additional
+                # local_llm_complete work until the dedicated lane is free, so
+                # local inference cannot make the PC look offline or block app
+                # control/Git/file commands.
+                exclude_action = (
+                    "local_llm_complete"
+                    if self._local_ai_busy()
+                    else ""
+                )
+                command = (
+                    self._poll(exclude_action=exclude_action)
+                    if exclude_action
+                    else self._poll()
+                )
 
                 retry_seconds = 2.0
 
                 if command:
-                    self._execute(
-                        command
-                    )
+                    if str(command.get("action") or "") == "local_llm_complete":
+                        self._dispatch_local_ai(command)
+                    else:
+                        self._execute(command)
 
             except Exception as exc:
                 if (

@@ -6,6 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = [
     "docs/V4_3_RC7_NOTES.md",
+    "docs/V4_3_RC8_NOTES.md",
     "docs/V4_3_RC6_NOTES.md",
     "docs/V4_3_RC5_NOTES.md",
     "src/iras/multitasking.py",
@@ -28,6 +29,7 @@ REQUIRED = [
     "tests/test_v430_rc3_result_delivery.py",
     "tests/test_v430_rc6_device_ollama_fallback.py",
     "tests/test_v430_rc7_project_identity_and_local_tools.py",
+    "tests/test_v430_rc8_bridge_responsiveness.py",
     "docs/V4_3_AUDIT_REPORT.md",
     "src/iras/security/tool_content.py",
     "tests/test_v430_deep_audit.py",
@@ -62,7 +64,7 @@ def main() -> None:
             if any(pattern.search(text) for pattern in SECRET_PATTERNS):
                 secret_hits.append(rel)
 
-    print("=== IRAS v4.3 RC7 CLEAN TREE VALIDATION ===")
+    print("=== IRAS v4.3 RC8 CLEAN TREE VALIDATION ===")
     print("LOCAL .ENV PRESENT:", (ROOT / ".env").exists())
     print("REQUIRED V4.3 FILES PRESENT:", not missing)
     print("CACHE/COMPILED DEBRIS PRESENT:", bool(bad_cache))

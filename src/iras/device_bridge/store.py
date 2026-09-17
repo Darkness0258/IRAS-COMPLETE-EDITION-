@@ -539,6 +539,8 @@ class DeviceBridgeStore:
     def claim_next(
         self,
         device_id: str,
+        *,
+        exclude_action: str = "",
     ) -> dict | None:
         now = self._now()
 
@@ -560,6 +562,9 @@ class DeviceBridgeStore:
         )
 
         for _ in range(4):
+            excluded = str(exclude_action or "").strip()[:128]
+            action_filter = " AND action<>?" if excluded else ""
+            params = (device_id, now, excluded) if excluded else (device_id, now)
             row = self._run(
                 """
                 SELECT
@@ -577,13 +582,13 @@ class DeviceBridgeStore:
                     device_id=?
                     AND status='queued'
                     AND expires_at>?
+                """
+                + action_filter
+                + """
                 ORDER BY created_at ASC
                 LIMIT 1
                 """,
-                (
-                    device_id,
-                    now,
-                ),
+                params,
                 fetch="one",
             )
 

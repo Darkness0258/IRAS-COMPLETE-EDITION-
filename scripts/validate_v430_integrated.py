@@ -65,8 +65,8 @@ class _Memory:
 
 
 def main() -> None:
-    print("=== IRAS v4.3 RC7 PROJECT IDENTITY + LOCAL TOOL EXECUTION INTEGRATED VALIDATION ===")
-    assert __version__ == "4.3.0-rc7"
+    print("=== IRAS v4.3 RC8 RESPONSIVE DEVICE BRIDGE INTEGRATED VALIDATION ===")
+    assert __version__ == "4.3.0-rc8"
     assert SCENE_GRAPH_VERSION == "3.7.0"
     assert REMOTE_PROTOCOL_VERSION == 1
 
@@ -80,6 +80,15 @@ def main() -> None:
     assert action_permission("kill_process", {"pid": 10}) == PermissionLevel.CRITICAL
     assert action_permission("local_llm_complete", {}) == PermissionLevel.READ
     assert DeviceOllamaProvider is not None
+
+    # RC8: local Ollama must not monopolize the bridge heartbeat/control loop.
+    agent_text = (PROJECT_ROOT / "src/iras/device_bridge/agent.py").read_text(encoding="utf-8")
+    store_text = (PROJECT_ROOT / "src/iras/device_bridge/store.py").read_text(encoding="utf-8")
+    cloud_text = (PROJECT_ROOT / "src/iras/cloud_api.py").read_text(encoding="utf-8")
+    assert "_dispatch_local_ai" in agent_text
+    assert 'local_llm_complete' in agent_text and '_dispatch_local_ai' in agent_text
+    assert "exclude_action: str = """ in store_text
+    assert "exclude_action: str = """ in cloud_text
 
     ranked_projects = rank_matching_project_candidates(
         "IRAS",
@@ -450,6 +459,7 @@ def main() -> None:
     print("STRICT PROJECT IDENTITY RESOLUTION: True")
     print("FAIR BRIDGE-ROOT PROJECT DISCOVERY: True")
     print("LOCAL OLLAMA TOOL-CALL NORMALIZATION: True")
+    print("RESPONSIVE DEVICE BRIDGE DURING LOCAL AI: True")
     print("RESULT: PASS")
 
 

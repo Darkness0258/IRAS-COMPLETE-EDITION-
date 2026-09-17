@@ -1,10 +1,14 @@
-# IRAS 4.3.0 RC7 — Project Identity & Local Tool Execution
+# IRAS 4.3.0 RC8 — Responsive Device Bridge
 
 IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, secure worldwide Windows control, parallel multitasking, and dependency-aware multi-agent execution.
 
-**Release status:** `4.3.0-rc7` keeps the v4.3 hardening and fixes the RC6 real-device failures where the project resolver could bind an IRAS engineering objective to an unrelated repository and where a local Ollama model could emit a JSON tool request as plain assistant text. The v4 remote protocol remains `1`.
+**Release status:** `4.3.0-rc8` keeps the v4.3 hardening and fixes a real-device concurrency failure where long paired-device Ollama inference monopolized the single outbound bridge loop, causing the cloud to mark Windows offline and blocking unrelated app/file/Git actions during multitasking. RC8 isolates local AI into a dedicated worker lane while the main bridge keeps polling and heartbeating. The v4 remote protocol remains `1`.
 
 RC7 makes project identity a fail-closed boundary: named project discovery scans every configured bridge root fairly and accepts only candidates that actually match the requested identity. It also normalizes complete JSON tool requests from local Ollama only when the requested tool was offered for that turn, so bounded IRAS tools execute instead of leaking raw tool-call JSON into task results.
+
+## v4.3 RC8 responsive device bridge
+
+RC8 separates paired-device Ollama inference from the main outbound polling loop. Long local-AI generation can no longer stop device heartbeats or make ordinary Windows actions appear offline. While local inference is active, the bridge keeps polling and temporarily asks the cloud to skip additional `local_llm_complete` commands, leaving app/file/Git/test work claimable. Safety and Remote authorization gates are unchanged.
 
 ## v4.3 RC7 project identity & local tool execution
 

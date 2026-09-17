@@ -2361,6 +2361,7 @@ def device_command_history(
 @app.get("/v1/device/commands/next")
 def device_next_command(
     timeout: int = 25,
+    exclude_action: str = "",
     x_iras_device_id: str | None = Header(
         default=None,
         alias="X-IRAS-Device-ID",
@@ -2384,9 +2385,14 @@ def device_next_command(
     deadline = time.monotonic() + timeout
 
     while time.monotonic() < deadline:
+        safe_exclude = (
+            "local_llm_complete"
+            if str(exclude_action or "").strip() == "local_llm_complete"
+            else ""
+        )
         command = (
             runtime.device_bridge
-            .claim_next(device_id)
+            .claim_next(device_id, exclude_action=safe_exclude)
         )
 
         if command:
