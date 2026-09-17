@@ -29,7 +29,7 @@ from iras.safety_runtime import EmergencyStop
 from iras.security.secret_store import protect_secret, unprotect_secret, protection_backend
 from iras.security.tool_content import secure_tool_payload
 from iras.remote_access import is_sensitive_path
-from iras.device_bridge.tools import make_tools
+from iras.device_bridge.tools import make_tools, _bind_project_arguments
 from iras.device_bridge.executor import DeviceExecutor
 from iras.device_bridge.remote_context import remote_command_context, current_remote_command_context
 from iras.device_bridge.store import DeviceBridgeStore
@@ -64,8 +64,8 @@ class _Memory:
 
 
 def main() -> None:
-    print("=== IRAS v4.3 RC2 PROJECT-AWARE ENGINEERING INTEGRATED VALIDATION ===")
-    assert __version__ == "4.3.0-rc2"
+    print("=== IRAS v4.3 RC3 RESULT DELIVERY + PROJECT BINDING INTEGRATED VALIDATION ===")
+    assert __version__ == "4.3.0-rc3"
     assert SCENE_GRAPH_VERSION == "3.7.0"
     assert REMOTE_PROTOCOL_VERSION == 1
 
@@ -91,6 +91,22 @@ def main() -> None:
     ):
         assert required_tool in audit_tools
     assert audit_tools["device_kill_process"].required_permission({"pid": 10}) == PermissionLevel.CRITICAL
+
+    verified_root = r"D:\Projects\IRAS-complete"
+    assert _bind_project_arguments("git_status", {"repo": "."}, verified_root)["repo"] == verified_root
+    assert _bind_project_arguments(
+        "read_text", {"path": r"src\iras\cloud_api.py"}, verified_root
+    )["path"] == r"D:\Projects\IRAS-complete\src\iras\cloud_api.py"
+    try:
+        _bind_project_arguments("read_text", {"path": r"C:\Windows\win.ini"}, verified_root)
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("Project-root escape was not rejected")
+
+    web_text = (PROJECT_ROOT / "clients/web/index.html").read_text(encoding="utf-8")
+    assert "async function watchAgentRunInChat(runId)" in web_text
+    assert "watchAgentRunInChat(activeGoalRunId);" in web_text
     cloud_contract = validate_cloud_health({
         "service_id": "iras-cloud",
         "version": __version__,
@@ -381,6 +397,9 @@ def main() -> None:
     print("TRANSIENT DEVICE BACKPRESSURE WAIT: True")
     print("ORCHESTRATION RESTART RECOVERY: True")
     print("ACTIVE RUN BACKPRESSURE: True")
+    print("MAIN CHAT BACKGROUND RESULT DELIVERY:", True)
+    print("VERIFIED PROJECT ROOT BINDING:", True)
+    print("OUTCOME-AWARE RUN STATUS:", True)
     print("RESULT: PASS")
 
 

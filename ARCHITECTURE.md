@@ -338,3 +338,20 @@ Filesystem mutation uses atomic replacement and recursive copy refuses symlink-c
 Engineering objectives are preflighted against the paired Windows device before orchestration. The cloud verifies the session target is online, calls the bounded read-only `find_projects` device action, selects a project inside the configured bridge roots, verifies Git access, and stores that Windows project root in request-local orchestration context. Workers are instructed to use exactly that path for project/Git/search/edit/test tools. Cloud container paths are never treated as substitutes for the user's Windows repository.
 
 If the target device temporarily disappears during a graph, orchestration classifies the outage as infrastructure backpressure and waits up to `IRAS_ORCHESTRATION_DEVICE_WAIT_SECONDS` without consuming normal task retries. Authorization/root violations remain hard failures.
+
+## v4.3 RC3 — Result Delivery and Project Binding
+
+Autonomous orchestration completion is now a first-class chat event. The web
+client watches the `orchestration_run_id` returned by ordinary chat and posts the
+terminal coordinator result into the main conversation. Tasks remains the
+inspection/control surface, not the only place where results can be read.
+
+The coordinator emits a structured first-line outcome token. Orchestration maps
+that token into `verified_outcome` and refuses to label an incomplete verified
+result as a successful run.
+
+For engineering runs, `project_root` is carried through a ContextVar alongside
+remote-session/device provenance. Project-scoped device tools bind relative or
+placeholder paths to that verified root and reject absolute escapes. The project
+root is therefore enforced by the tool boundary rather than depending only on a
+system-prompt instruction.

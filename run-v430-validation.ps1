@@ -5,7 +5,7 @@ function Invoke-IrasCleanup {
     & .\scripts\maintenance\clean-v400-validation-debris.ps1 -Quiet
 }
 
-Write-Host "=== IRAS v4.3 RC2 PROJECT-AWARE ENGINEERING VALIDATION ==="
+Write-Host "=== IRAS v4.3 RC3 RESULT DELIVERY + PROJECT BINDING VALIDATION ==="
 Write-Host ""
 Invoke-IrasCleanup
 Write-Host "IRAS validation debris cleanup: PASS"
@@ -30,7 +30,7 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     Write-Host ""
-    Write-Host "IRAS v4.3 RC2 VALIDATION RESULT: PASS"
+    Write-Host "IRAS v4.3 RC3 VALIDATION RESULT: PASS"
 }
 finally {
     Invoke-IrasCleanup

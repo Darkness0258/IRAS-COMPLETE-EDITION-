@@ -104,6 +104,7 @@ const screenDlg=$("#screenDlg"),screenImg=$("#screenImg");
 const directDlg=$("#directDlg"),directAction=$("#directAction"),directArgs=$("#directArgs"),directOut=$("#directOut");
 const tasksDlg=$("#tasksDlg"),taskInput=$("#taskInput"),taskOut=$("#taskOut"),goalInput=$("#goalInput");
 let activeGoalRunId="",goalPollGeneration=0;
+const announcedGoalRuns=new Set(),chatGoalWatchers=new Set();
 
 let currentAudio=null,currentAudioUrl=null,currentChatAbort=null;
 let voiceQueue=[],voicePumping=false,voiceSession=0,voiceBuffer="",lastSpokenText="";
@@ -283,6 +284,44 @@ async function fetchAgentRun(runId){
   return await r.json();
 }
 
+function agentRunChatResult(run){
+  const final=String(run.final_result||"").trim();
+  const state=String(run.state||"unknown");
+  const outcome=String(run.verified_outcome||"").trim();
+  const heading=outcome
+    ?`Multi-agent run ${state} · verified outcome: ${outcome}`
+    :`Multi-agent run ${state}`;
+  return final?`${heading}\n\n${final}`:renderAgentRun(run);
+}
+
+function announceAgentRun(run){
+  if(!run||!run.run_id||announcedGoalRuns.has(run.run_id))return;
+  announcedGoalRuns.add(run.run_id);
+  add("IRAS",agentRunChatResult(run));
+}
+
+async function watchAgentRunInChat(runId){
+  if(!runId||chatGoalWatchers.has(runId)||announcedGoalRuns.has(runId))return;
+  chatGoalWatchers.add(runId);
+  const terminal=new Set(["succeeded","partial_failure","failed","cancelled"]);
+  const deadline=Date.now()+30*60*1000;
+  try{
+    while(Date.now()<deadline){
+      const run=await fetchAgentRun(runId);
+      if(terminal.has(run.state)){
+        announceAgentRun(run);
+        status.textContent=`Multi-agent run ${run.state} · ${run.completed_count||0}/${run.task_count||0}`;
+        return run;
+      }
+      await new Promise(resolve=>setTimeout(resolve,1000));
+    }
+  }catch(e){
+    console.warn("IRAS background run watcher failed",e);
+  }finally{
+    chatGoalWatchers.delete(runId);
+  }
+}
+
 async function pollAgentRun(runId){
   const generation=++goalPollGeneration;
   activeGoalRunId=runId;
@@ -319,7 +358,7 @@ async function startAgentGoal(){
   activeGoalRunId=run.run_id;
   taskOut.textContent=renderAgentRun(run);
   add("You","Multi-agent goal: "+objective);
-  pollAgentRun(run.run_id).then(final=>{if(final)add("IRAS",renderAgentRun(final))}).catch(e=>{taskOut.textContent="Error: "+e.message});
+  pollAgentRun(run.run_id).then(final=>{if(final)announceAgentRun(final)}).catch(e=>{taskOut.textContent="Error: "+e.message});
 }
 
 async function loadLatestGoal(){
@@ -722,7 +761,10 @@ async function streamReply(base,c,text,bubble,session,signal){
         bubble.classList.remove("cursor");
         drainVoiceBuffer(session,true);
         conversationUntil=Date.now()+20000;
-        if(data.orchestration_run_id)activeGoalRunId=data.orchestration_run_id;
+        if(data.orchestration_run_id){
+          activeGoalRunId=data.orchestration_run_id;
+          watchAgentRunInChat(activeGoalRunId);
+        }
 
         const first=data.first_token_ms||0,total=data.timing_ms||0;
         const queueWait=data.queue_wait_ms||0;

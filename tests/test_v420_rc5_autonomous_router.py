@@ -67,7 +67,8 @@ def test_tasks_and_chat_prompt_for_remote_before_exact_file_write():
     assert "await ensureRemoteForDeterministicWrite(objective)" in web
     assert "await ensureRemoteForDeterministicWrite(text)" in web
     assert '...remoteHeaders()' in web
-    assert "if(data.orchestration_run_id)activeGoalRunId=data.orchestration_run_id" in web
+    assert "if(data.orchestration_run_id){" in web
+    assert "watchAgentRunInChat(activeGoalRunId);" in web
     assert "This goal may change Windows/project state and requires a live IRAS Remote session" in cloud
 
 

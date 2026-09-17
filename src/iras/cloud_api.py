@@ -327,7 +327,7 @@ def _authorize_remote_session(session_id: str | None, token: str | None) -> dict
 
 
 @contextmanager
-def _remote_permission_scope(session: dict | None, permissions=None):
+def _remote_permission_scope(session: dict | None, permissions=None, *, project_root: str = ""):
     permissions = permissions or runtime.registry.permissions
     old_auto = permissions.auto_level
     old_cap = permissions.hard_cap
@@ -348,7 +348,7 @@ def _remote_permission_scope(session: dict | None, permissions=None):
             permissions.always_confirm_critical = False
         # Device targeting is carried by ContextVar, not mutable global state.
         # This is essential when two parallel tasks use different sessions.
-        with remote_command_context(session):
+        with remote_command_context(session, project_root=project_root):
             yield
     finally:
         permissions.auto_level = old_auto
@@ -552,6 +552,7 @@ def _multitask_worker(prompt: str, context: dict[str, Any]) -> dict[str, Any]:
         with _remote_permission_scope(
             remote_session,
             worker.registry.permissions,
+            project_root=project_root,
         ):
             result = worker.agent.handle(effective_prompt)
         metrics = dict(worker.agent.last_metrics or {})

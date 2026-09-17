@@ -8,6 +8,66 @@ from iras.tools.base import (
 )
 from iras.remote_access import action_permission
 from iras.device_bridge.remote_context import current_remote_command_context
+from pathlib import PureWindowsPath
+
+
+def _windows_path_within(path: PureWindowsPath, root: PureWindowsPath) -> bool:
+    path_parts = [part.casefold() for part in path.parts]
+    root_parts = [part.casefold() for part in root.parts]
+    return len(path_parts) >= len(root_parts) and path_parts[:len(root_parts)] == root_parts
+
+
+def _bind_project_arguments(action: str, arguments: dict, project_root: str) -> dict:
+    """Bind project-scoped device tools to the preflight-verified Windows root.
+
+    Agents sometimes emit placeholders such as `.` or `IRAS` even after the
+    project preflight resolved an absolute Windows path. Rewriting relative
+    project arguments here makes the verified workspace an enforcement
+    boundary instead of a prompt-only hint. Absolute paths outside the
+    verified project are rejected before they reach the device queue.
+    """
+    root_text = str(project_root or "").strip()
+    if not root_text:
+        return dict(arguments or {})
+
+    root = PureWindowsPath(root_text)
+    bound = dict(arguments or {})
+    key_by_action = {
+        "git_status": "repo",
+        "git_diff": "repo",
+        "git_log": "repo",
+        "run_tests": "project",
+        "search_text": "root",
+        "list_directory": "path",
+        "read_text": "path",
+        "read_text_range": "path",
+        "file_info": "path",
+        "write_text": "path",
+        "replace_text": "path",
+        "make_directory": "path",
+        "open_project": "path",
+    }
+    key = key_by_action.get(str(action or ""))
+    if not key:
+        return bound
+
+    raw = str(bound.get(key) or "").strip()
+    aliases = {"", ".", "./", "iras", "project", "repo", "repository"}
+    if raw.casefold() in aliases:
+        candidate = root
+    else:
+        candidate = PureWindowsPath(raw)
+        if not candidate.is_absolute():
+            candidate = root / candidate
+
+    if not _windows_path_within(candidate, root):
+        raise PermissionError(
+            "Project-scoped remote tool path is outside the preflight-verified project root."
+        )
+
+    bound[key] = str(candidate)
+    return bound
+
 
 
 def make_tools(store):
@@ -20,6 +80,7 @@ def make_tools(store):
         context = current_remote_command_context()
         remote_session_id = context.session_id or None
         effective_device_id = device_id or context.device_id or None
+        arguments = _bind_project_arguments(action, arguments, context.project_root)
         return store.request_and_wait(
             action=action,
             arguments=arguments,

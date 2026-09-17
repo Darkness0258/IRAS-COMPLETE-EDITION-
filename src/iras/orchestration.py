@@ -46,7 +46,9 @@ ROLE_DIRECTIVES = {
     ),
     "coordinator": (
         "You are the Coordinator Agent in an IRAS multi-agent run. Synthesize the completed task outputs, distinguish "
-        "verified results from failures, and provide one concise final outcome. Do not invent work that was not completed."
+        "verified results from failures, and provide one concise final outcome. Your first non-empty line MUST be exactly "
+        "OUTCOME: COMPLETE, OUTCOME: INCOMPLETE, or OUTCOME: FAILED. Use COMPLETE only when the objective is verified "
+        "as accomplished. Do not invent work that was not completed."
     ),
     "general": (
         "You are a bounded IRAS worker in a multi-agent run. Complete only the assigned task, use authorized tools when "
@@ -72,6 +74,29 @@ def _clean_text(value: Any, max_chars: int) -> str:
     if len(text) > max_chars:
         raise ValueError(f"Text exceeds the {max_chars:,}-character limit.")
     return text
+
+
+def _infer_verified_outcome(text: str) -> str:
+    """Extract a conservative completion signal from the coordinator result."""
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    lower = raw.lower()
+    explicit = re.search(r"(?:^|\n)\s*(?:[-*# ]*)outcome\s*:\s*(complete|completed|incomplete|failed|failure)\b", lower)
+    if explicit:
+        value = explicit.group(1)
+        if value in {"complete", "completed"}:
+            return "complete"
+        if value == "incomplete":
+            return "incomplete"
+        return "failed"
+    if re.search(r"objective (?:was|is) not (?:fully )?(?:completed|verified|accomplished)", lower):
+        return "incomplete"
+    if "objective completed and verified" in lower or "objective was completed and verified" in lower:
+        return "complete"
+    if re.search(r"\b(final )?result\s*:\s*failed\b", lower):
+        return "failed"
+    return ""
 
 
 @dataclass
@@ -201,6 +226,7 @@ class OrchestrationRun:
     cancelled: bool = False
     plan_error: str = ""
     final_result: str = ""
+    verified_outcome: str = ""
     tasks: dict[str, GraphTaskRecord] = field(default_factory=dict)
     planner_future: Future | None = field(default=None, repr=False, compare=False)
 
@@ -222,6 +248,7 @@ class OrchestrationRun:
             "cancelled": self.cancelled,
             "plan_error": self.plan_error,
             "final_result": self.final_result,
+            "verified_outcome": self.verified_outcome,
             "task_count": len(ordered),
             "completed_count": completed,
             "tasks": [task.public() for task in ordered],
@@ -445,6 +472,10 @@ class OrchestrationManager:
                     cancelled=bool(item.get("cancelled", False)),
                     plan_error=plan_error,
                     final_result=str(item.get("final_result") or ""),
+                    verified_outcome=(
+                        str(item.get("verified_outcome") or "").strip().lower()
+                        or _infer_verified_outcome(str(item.get("final_result") or ""))
+                    ),
                     tasks=records,
                 )
                 self._runs[run.run_id] = run
@@ -814,6 +845,7 @@ class OrchestrationManager:
                 record.metrics.setdefault("total_ms", int((time.perf_counter() - started) * 1000))
                 if record.spec.role == "coordinator":
                     run.final_result = result
+                    run.verified_outcome = _infer_verified_outcome(result)
             record.finished_at = _now_iso()
             self._refresh_run_state_locked(run)
             self._persist_locked()
@@ -845,6 +877,10 @@ class OrchestrationManager:
             run.state = "partial_failure"
         elif any(task.state == "cancelled" for task in non_coordinator):
             run.state = "cancelled"
+        elif run.verified_outcome == "failed":
+            run.state = "failed"
+        elif run.verified_outcome == "incomplete":
+            run.state = "partial_failure"
         else:
             run.state = "succeeded"
         run.finished_at = run.finished_at or _now_iso()
