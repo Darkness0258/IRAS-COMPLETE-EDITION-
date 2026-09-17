@@ -1,4 +1,4 @@
-name: IRAS v4.4 FINAL production validation
+name: IRAS v5.0 RC2 mega-integration validation
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 jobs:
   test-windows:
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -18,7 +18,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[all,cloud]"
       - name: Validate release
         shell: pwsh
-        run: .\run-v440-validation.ps1
+        run: .\run-v500-validation.ps1

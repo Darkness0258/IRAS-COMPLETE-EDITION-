@@ -19,9 +19,13 @@ services:
         value: "*"
       - key: IRAS_REMOTE_SESSION_MAX_PERMISSION_LEVEL
         value: "3"
+      - key: IRAS_V5_SCHEDULER_ENABLED
+        value: "true"
       - key: OPENROUTER_API_KEY
         sync: false
       - key: IRAS_API_TOKEN
         sync: false
       - key: DATABASE_URL
+        sync: false
+      - key: IRAS_VAULT_MASTER_KEY
         sync: false

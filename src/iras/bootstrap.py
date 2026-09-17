@@ -29,9 +29,12 @@ from iras.device_bridge.tools import make_tools as device_bridge_tools
 from iras.device_bridge.skill_tools import make_tools as device_skill_tools
 from iras.device_bridge.skills import PersistentSkillStore
 from iras.persona import build_system_prompt
+from iras.v5 import build_v5_runtime
+from iras.tools.v5 import make_tools as v5_tools
 
 class Runtime:
-    def __init__(self,settings,agent,registry,memory,audit,browser,automations,personality): self.settings=settings; self.agent=agent; self.registry=registry; self.memory=memory; self.audit=audit; self.browser=browser; self.automations=automations; self.personality=personality
+    def __init__(self,settings,agent,registry,memory,audit,browser,automations,personality,v5=None):
+        self.settings=settings; self.agent=agent; self.registry=registry; self.memory=memory; self.audit=audit; self.browser=browser; self.automations=automations; self.personality=personality; self.v5=v5
 
 def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.CRITICAL):
     s=settings or Settings.load(); audit=AuditLogger(s.audit_path); memory=MemoryStore(s.db_path); auto=PermissionLevel(max(0,min(s.auto_permission_level,3)))
@@ -52,5 +55,8 @@ def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.
         provider = OpenAICompatibleProvider(s.base_url, s.api_key, s.model, s.request_timeout)
     else:
         raise ValueError(f'Unknown IRAS_PROVIDER={s.provider}')
+    v5 = build_v5_runtime(state_dir=s.data_dir / "v5")
+    for t in v5_tools(v5):
+        if t.name not in reg.names(): reg.register(t)
     agent=IRASAgent(provider,reg,memory,audit,s.max_agent_steps,system_prompt=build_system_prompt(s.voice_profile),personality=personality,voice_profile=s.voice_profile,recovery_performance_store=RecoveryRoutePerformanceStore(s.data_dir / 'recovery_route_performance.json'))
-    return Runtime(s,agent,reg,memory,audit,browser,autos,personality)
+    return Runtime(s,agent,reg,memory,audit,browser,autos,personality,v5=v5)

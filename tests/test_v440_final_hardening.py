@@ -140,5 +140,5 @@ def test_final_web_and_cloud_contracts_are_present():
 
 def test_final_ci_targets_current_v44_validator():
     text = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert r".\run-v440-validation.ps1" in text
+    assert r".\run-v500-validation.ps1" in text
     assert "run-v430-validation.ps1" not in text

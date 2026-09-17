@@ -39,7 +39,7 @@
 <div class="app">
   <header>
     <div><h1>IRAS</h1><div class="sub">Online assistant · continuous voice</div></div>
-    <div style="display:flex;gap:8px"><button id="screen">Screen</button><button id="direct">Direct</button><button id="tasks">Tasks</button><button id="providers">Providers</button><button id="remote">Remote</button><button id="settings">Server</button></div>
+    <div style="display:flex;gap:8px"><button id="screen">Screen</button><button id="direct">Direct</button><button id="tasks">Tasks</button><button id="providers">Providers</button><button id="v5control">Autonomy</button><button id="remote">Remote</button><button id="settings">Server</button></div>
   </header>
 
   <main id="chat"></main>
@@ -97,6 +97,14 @@ Summarize the current project state"></textarea>
   <div class="row"><button id="refreshProviders">Probe Now</button><button id="closeProviders">Close</button></div>
 </dialog>
 
+<dialog id="v5Dlg" style="max-width:820px">
+  <h3>IRAS Autonomy Control Center</h3>
+  <div class="sub">Persistent jobs, monitoring, goals, notifications, connectors, and audit status.</div>
+  <div id="v5Summary" class="status" style="margin:10px 0">Loading...</div>
+  <pre id="v5Out">Ready.</pre>
+  <div class="row"><button id="v5Refresh">Refresh</button><button id="v5Close">Close</button></div>
+</dialog>
+
 <dialog id="directDlg">
   <h3>Direct remote action</h3>
   <div class="sub" style="margin-bottom:10px">Model-independent control. Every action is still limited by the active remote session and the laptop's local policy.</div>
@@ -113,11 +121,12 @@ const $=s=>document.querySelector(s);
 const chat=$("#chat"),msg=$("#msg"),status=$("#status");
 const cfg=$("#cfg"),server=$("#server"),token=$("#token"),wake=$("#wake");
 const handsButton=$("#handsfree");
-const remoteButton=$("#remote"),screenButton=$("#screen"),directButton=$("#direct"),tasksButton=$("#tasks"),providersButton=$("#providers");
+const remoteButton=$("#remote"),screenButton=$("#screen"),directButton=$("#direct"),tasksButton=$("#tasks"),providersButton=$("#providers"),v5Button=$("#v5control");
 const screenDlg=$("#screenDlg"),screenImg=$("#screenImg");
 const directDlg=$("#directDlg"),directAction=$("#directAction"),directArgs=$("#directArgs"),directOut=$("#directOut");
 const tasksDlg=$("#tasksDlg"),taskInput=$("#taskInput"),taskOut=$("#taskOut"),goalInput=$("#goalInput");
 const providersDlg=$("#providersDlg"),providerGrid=$("#providerGrid"),providerSummary=$("#providerSummary");
+const v5Dlg=$("#v5Dlg"),v5Summary=$("#v5Summary"),v5Out=$("#v5Out");
 let activeGoalRunId="",goalPollGeneration=0,providerStatusGeneration=0;
 const announcedGoalRuns=new Set(),chatGoalWatchers=new Set();
 
@@ -535,6 +544,32 @@ function renderMultitaskRun(run){
     if(task.error)lines.push(`Error: ${task.error}`);
   }
   return lines.join("\n");
+}
+
+
+async function loadV5Control(){
+  const c=loadConfig();
+  if(!c.server||!c.token)throw new Error("Configure the IRAS server first.");
+  const base=c.server.replace(/\/$/,"");
+  const headers={"Authorization":"Bearer "+c.token};
+  const [statusR,goalsR,schedulesR,monitorsR,notificationsR,connectorsR,auditR]=await Promise.all([
+    fetch(base+"/v1/v5/status",{headers}),fetch(base+"/v1/v5/goals",{headers}),fetch(base+"/v1/v5/schedules",{headers}),
+    fetch(base+"/v1/v5/monitors",{headers}),fetch(base+"/v1/v5/notifications",{headers}),fetch(base+"/v1/v5/connectors",{headers}),fetch(base+"/v1/v5/audit",{headers})
+  ]);
+  for(const r of [statusR,goalsR,schedulesR,monitorsR,notificationsR,connectorsR,auditR])if(!r.ok)throw new Error(await r.text());
+  const [st,go,sc,mo,no,co,au]=await Promise.all([statusR.json(),goalsR.json(),schedulesR.json(),monitorsR.json(),notificationsR.json(),connectorsR.json(),auditR.json()]);
+  v5Summary.textContent=`IRAS ${st.version} · ${st.feature_count} capability systems · state: ${st.persistent_backend} · browser: ${st.browser_available?"ready":"optional"} · sandbox: ${st.docker_sandbox_available?"docker":"docker unavailable"}`;
+  const connected=(co.connectors||[]).filter(x=>x.connected).map(x=>x.display_name);
+  v5Out.textContent=[
+    `Scheduled jobs: ${(sc.schedules||[]).length}`,
+    `Monitors: ${(mo.monitors||[]).length}`,
+    `Goals: ${(go.goals||[]).length}`,
+    `Notifications: ${(no.notifications||[]).length}`,
+    `Connected connectors: ${connected.join(", ")||"none"}`,
+    `Audit events: ${au.events||0} · errors: ${au.errors||0}`,
+    "",
+    "Capabilities:",...(st.features||[]).map(x=>"• "+x.replaceAll("_"," "))
+  ].join("\n");
 }
 
 async function runParallelTasks(){
@@ -1314,6 +1349,9 @@ $("#resumeGoal").onclick=()=>controlGoal("resume").catch(e=>{taskOut.textContent
 $("#retryGoal").onclick=()=>controlGoal("retry").catch(e=>{taskOut.textContent="Error: "+e.message});
 $("#rollbackGoal").onclick=()=>rollbackGoalRun().catch(e=>{taskOut.textContent="Error: "+e.message;status.textContent="Rollback error"});
 $("#cancelGoal").onclick=()=>controlGoal("cancel").catch(e=>{taskOut.textContent="Error: "+e.message});
+v5Button.onclick=()=>{v5Dlg.showModal();loadV5Control().catch(e=>{v5Summary.textContent="Error: "+e.message})};
+$("#v5Refresh").onclick=()=>loadV5Control().catch(e=>{v5Summary.textContent="Error: "+e.message});
+$("#v5Close").onclick=()=>v5Dlg.close();
 $("#closeTasks").onclick=()=>tasksDlg.close();
 $("#refreshProviders").onclick=()=>loadProviderStatus().catch(e=>{providerSummary.textContent="Error: "+e.message});
 $("#closeProviders").onclick=()=>providersDlg.close();

@@ -23,6 +23,7 @@ from iras.device_bridge.store import DeviceBridgeStore
 from iras.device_bridge.tools import make_tools as device_bridge_tools
 from iras.device_bridge.skill_tools import make_tools as device_skill_tools
 from iras.device_bridge.skills import PersistentSkillStore
+from iras.tools.v5 import make_tools as v5_tools
 
 
 class CloudRuntime:
@@ -45,6 +46,7 @@ class CloudRuntime:
         self.personality = personality
         self.device_bridge = device_bridge
         self.app_skills = app_skills
+        self.v5 = None
 
 
 class CloudWorker:
@@ -165,6 +167,10 @@ def build_cloud_worker(
         app_skills=runtime.app_skills,
         system_prompt_suffix=system_prompt_suffix,
     )
+    if getattr(runtime, "v5", None) is not None:
+        for tool in v5_tools(runtime.v5):
+            if tool.name not in registry.names():
+                registry.register(tool)
     return CloudWorker(agent, registry, provider, personality)
 
 

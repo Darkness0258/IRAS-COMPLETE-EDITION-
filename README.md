@@ -1,11 +1,18 @@
-# IRAS 4.4.0 FINAL — Persistent Autonomous Work + Provider Health
+# IRAS 5.0.0 RC2 — Autonomous Personal Operating Layer
 
-IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, secure worldwide Windows control, parallel multitasking, and dependency-aware multi-agent execution.
+IRAS v5 builds on the frozen v4.4 permissioned Windows/control core and adds a modular autonomous operating layer: persistent schedules, proactive monitoring, project knowledge, isolated coding workspaces, semantic memory, workflow learning, connectors, full-duplex voice coordination, mobile approvals, artifacts, encrypted secrets/sync, sandboxed capability learning, research/debate agents, rollback timelines, multi-user profiles, and long-term goal hierarchy.
 
-**Release status:** `4.4.0` freezes the v4.4 persistent-autonomy architecture with active provider verification, health-aware routing, durable PostgreSQL checkpoints, guarded rollback, and long-running job recovery. The v4 remote protocol remains `1`.
+**Release status:** `5.0.0-rc2`. The remote protocol remains `1`; v5 does not weaken the v4.4 device bridge, Remote-session, local-policy, emergency-stop, or ToolRegistry boundaries.
 
-RC7 makes project identity a fail-closed boundary: named project discovery scans every configured bridge root fairly and accepts only candidates that actually match the requested identity. It also normalizes complete JSON tool requests from local Ollama only when the requested tool was offered for that turn, so bounded IRAS tools execute instead of leaking raw tool-call JSON into task results.
+## v5.0 RC2 mega-integration
 
+- **Autonomy Control Center:** web UI exposes v5 subsystem status, schedules, monitors, goals, notifications, connectors, and audit summaries.
+- **Persistent autonomy:** v5 state uses PostgreSQL when `DATABASE_URL` is configured and SQLite locally.
+- **Agent-usable v5 tools:** goals, schedules, monitoring, semantic memory, knowledge graphs, notifications, connector status, rollback checkpoints, vault references, and audit summaries are available through the normal permissioned ToolRegistry.
+- **Safe extensibility:** generated capabilities require sandbox tests + explicit approval; signed marketplace skills require Ed25519 verification.
+- **No automatic merge / no secret exposure / no network scanning:** high-impact operations remain explicit and bounded.
+
+See `docs/V5_0_RC2_NOTES.md` for the complete capability inventory.
 
 ## v4.4 FINAL production hardening
 

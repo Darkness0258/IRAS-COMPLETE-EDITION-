@@ -72,6 +72,7 @@ from iras.execution_router import (
     rank_matching_project_candidates,
 )
 from iras.config import Settings
+from iras.v5 import build_v5_runtime
 from iras.voice.humanize import (
     speech_text,
 )
@@ -732,6 +733,19 @@ orchestration_manager = OrchestrationManager(
 )
 
 
+v5_runtime = build_v5_runtime(
+    orchestration_manager=orchestration_manager,
+    state_dir=settings.data_dir / "v5",
+    database_url=settings.database_url,
+)
+runtime.v5 = v5_runtime
+from iras.tools.v5 import make_tools as _make_v5_tools
+for _tool in _make_v5_tools(v5_runtime):
+    if _tool.name not in runtime.registry.names():
+        runtime.registry.register(_tool)
+
+
+
 def _multitask_context(
     *,
     remote_session: dict | None,
@@ -1027,6 +1041,7 @@ def health():
         "service_id": IRAS_CLOUD_SERVICE_ID,
         "version": __version__,
         "remote_protocol": REMOTE_PROTOCOL_VERSION,
+        "v5": v5_runtime.status(),
         "uptime_seconds": int(time.time() - started_at),
     }
 
@@ -2944,6 +2959,112 @@ def tools(
     )
 
 
+
+@app.get("/v1/v5/status")
+def v5_status(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return v5_runtime.status()
+
+
+@app.get("/v1/v5/goals")
+def v5_goals(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    rows = v5_runtime.db.execute(
+        "SELECT item_id FROM v5_goals ORDER BY created_at DESC LIMIT 100",
+        fetch="all",
+    ) or []
+    return {"goals": [v5_runtime.goals.get(row["item_id"]) for row in rows]}
+
+
+@app.post("/v1/v5/goals")
+def v5_create_goal(body: dict, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return v5_runtime.goals.add(
+        str(body.get("title") or "").strip(),
+        level=str(body.get("level") or "goal"),
+        parent_id=str(body.get("parent_id") or "").strip() or None,
+        metadata=dict(body.get("metadata") or {}),
+    )
+
+
+@app.get("/v1/v5/schedules")
+def v5_schedules(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"schedules": v5_runtime.scheduler.list()}
+
+
+@app.post("/v1/v5/schedules")
+def v5_create_schedule(body: dict, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return v5_runtime.scheduler.add(
+        name=str(body.get("name") or "Scheduled autonomous job"),
+        prompt=str(body.get("prompt") or ""),
+        next_run=str(body.get("next_run") or "") or None,
+        interval_seconds=(int(body["interval_seconds"]) if body.get("interval_seconds") is not None else None),
+    )
+
+
+@app.delete("/v1/v5/schedules/{job_id}")
+def v5_cancel_schedule(job_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    v5_runtime.scheduler.cancel(job_id)
+    return {"cancelled": job_id}
+
+
+@app.get("/v1/v5/monitors")
+def v5_monitors(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"monitors": v5_runtime.monitoring.list()}
+
+
+@app.post("/v1/v5/monitors")
+def v5_create_monitor(body: dict, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return v5_runtime.monitoring.add(
+        name=str(body.get("name") or "Monitor"),
+        kind=str(body.get("kind") or "website"),
+        config=dict(body.get("config") or {}),
+    )
+
+
+@app.post("/v1/v5/monitors/{monitor_id}/check")
+def v5_check_monitor(monitor_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return v5_runtime.monitoring.check(monitor_id)
+
+
+@app.get("/v1/v5/notifications")
+def v5_notifications(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"notifications": v5_runtime.notifications.list(limit=100)}
+
+
+@app.get("/v1/v5/audit")
+def v5_audit(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return v5_runtime.audit.summary()
+
+
+@app.get("/v1/v5/connectors")
+def v5_connectors(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"connectors": v5_runtime.connectors.list()}
+
+
+@app.get("/v1/v5/events")
+def v5_events(authorization: str | None = Header(default=None), limit: int = 100):
+    _authorized(authorization)
+    return {"events": v5_runtime.bus.recent(max(1, min(int(limit), 500)))}
+
+
+@app.on_event("startup")
+def v5_startup_event():
+    # Scheduled autonomy is persistent and read-only by default. A scheduled
+    # task still passes through the normal orchestration/tool permission gates.
+    if str(os.getenv("IRAS_V5_SCHEDULER_ENABLED", "true")).strip().lower() not in {"0", "false", "no", "off"}:
+        v5_runtime.start_scheduled_autonomy()
+
+
 _web_candidates = [
     (
         Path(__file__)
@@ -3007,6 +3128,7 @@ else:
 
 @app.on_event("shutdown")
 def shutdown_event():
+    v5_runtime.scheduler.stop()
     multitask_manager.close()
     orchestration_manager.close()
     provider = runtime.agent.provider

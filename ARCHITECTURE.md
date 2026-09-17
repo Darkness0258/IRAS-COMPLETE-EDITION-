@@ -1,4 +1,36 @@
-# IRAS architecture
+# IRAS v5 architecture
+
+```text
+User / Voice / Mobile / Web
+          |
+   V5 Goal + Schedule Layer
+          |
+  +-------+-----------------------------+
+  |       |        |         |          |
+Memory  Monitor  Research  Coding    Workflow
+  |       |        |       Worktrees   Recorder
+  +-------+--------+---------+----------+
+          |
+     V4.4 Agent Core
+          |
+ Permissioned ToolRegistry
+          |
+ Remote session / Local policy / Emergency stop
+          |
+ Windows bridge / Browser / Files / Git / Connectors
+```
+
+The v5 layer organizes long-lived goals, schedules, knowledge, connectors, artifacts, and recovery. It does not replace the v4.4 enforcement boundary. Every real external action still descends through the existing permissioned tools.
+
+## V5 subsystem boundaries
+
+- **State:** PostgreSQL on cloud deployments when configured; SQLite locally.
+- **Secrets:** symbolic vault references only; DPAPI on Windows or explicit AES-GCM master key on non-Windows.
+- **Code:** isolated Git worktrees; no automatic merge.
+- **Skills:** proposal -> sandbox -> explicit approval; marketplace packages require signatures.
+- **Network/home:** adapter allowlists; no ambient scanning; state changes need approval.
+- **Sync:** ciphertext-only bundles; transport does not receive plaintext state.
+
 
 ```text
 Voice / Desktop / CLI / API

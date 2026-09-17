@@ -10,7 +10,11 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 COPY clients/web ./clients/web
 
-RUN pip install --upgrade pip && pip install ".[cloud]"
+# v5 cloud includes PostgreSQL persistence, browser workflows, artifact output,
+# encrypted sync/vault support, and signed skill verification.
+RUN pip install --upgrade pip && \
+    pip install ".[cloud,browser,artifacts,crypto]" && \
+    python -m playwright install --with-deps chromium
 
 RUN useradd --create-home --uid 10001 iras && \
     mkdir -p /app/data /app/logs && chown -R iras:iras /app
