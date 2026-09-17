@@ -59,6 +59,7 @@ DEFAULT_CAPABILITIES = [
     "git_log",
     "run_tests",
     "local_llm_complete",
+    "local_llm_status",
     "capture_screen",
     "interact_app",
     "observe_ui",
@@ -253,6 +254,7 @@ class DeviceExecutor:
             "git_log": self.git_log,
             "run_tests": self.run_tests,
             "local_llm_complete": self.local_llm_complete,
+            "local_llm_status": self.local_llm_status,
             "capture_screen": self.capture_screen,
             "interact_app": self.interact_app,
             "observe_ui": self.observe_ui,
@@ -850,6 +852,69 @@ class DeviceExecutor:
             shell=False,
         )
         return {"repo": str(repository), "returncode": result.returncode, "stdout": result.stdout[-30000:], "stderr": result.stderr[-8000:]}
+
+    def local_llm_status(self):
+        """Return bounded loopback Ollama readiness without running inference."""
+        raw_base = os.getenv(
+            "IRAS_DEVICE_OLLAMA_BASE_URL",
+            "http://127.0.0.1:11434/v1",
+        ).strip().rstrip("/")
+        parsed = urlparse(raw_base)
+        if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+            raise PermissionError(
+                "IRAS_DEVICE_OLLAMA_BASE_URL must be a loopback http:// endpoint."
+            )
+        root = raw_base[:-3] if raw_base.endswith("/v1") else raw_base
+        started = time.perf_counter()
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(connect=1.5, read=2.5, write=2.5, pool=1.5),
+                follow_redirects=False,
+            ) as client:
+                response = client.get(root + "/api/tags")
+                response.raise_for_status()
+                body = response.json()
+        except httpx.ConnectError as exc:
+            raise RuntimeError(
+                "Local Ollama is not reachable at 127.0.0.1:11434."
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise RuntimeError("Local Ollama status probe timed out.") from exc
+        models = [
+            str(item.get("name") or "")
+            for item in (body.get("models") or [])
+            if isinstance(item, dict) and item.get("name")
+        ]
+        preferred = [
+            item.strip()
+            for item in os.getenv(
+                "IRAS_DEVICE_OLLAMA_MODELS",
+                "qwen2.5-coder:7b,qwen2.5-coder:1.5b,llama3.1:8b,llama3",
+            ).split(",")
+            if item.strip()
+        ]
+        names_fold = {name.casefold(): name for name in models}
+        selected = ""
+        for candidate in preferred:
+            if candidate.casefold() in names_fold:
+                selected = names_fold[candidate.casefold()]
+                break
+        if not selected and models:
+            selected = sorted(
+                models,
+                key=lambda name: (
+                    0 if "coder" in name.casefold() else 1,
+                    0 if "qwen" in name.casefold() else 1,
+                    name.casefold(),
+                ),
+            )[0]
+        return {
+            "ready": bool(models),
+            "models": models[:32],
+            "selected_model": selected,
+            "latency_ms": int((time.perf_counter() - started) * 1000),
+            "endpoint": "loopback",
+        }
 
     def local_llm_complete(
         self,

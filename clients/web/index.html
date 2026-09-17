@@ -26,6 +26,11 @@
     dialog{background:#11151f;color:#fff;border:1px solid #353c50;border-radius:14px;max-width:520px;width:calc(100% - 24px)}
     dialog input{width:100%;margin:5px 0 12px}.row{display:flex;gap:8px;justify-content:flex-end}
     .status{font-size:12px;opacity:.65;margin-top:8px}
+    .provider-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin:12px 0}
+    .provider-card{border:1px solid #313749;background:#0d1119;border-radius:12px;padding:11px}
+    .provider-head{display:flex;justify-content:space-between;gap:8px;font-weight:700}
+    .provider-state{font-size:11px;text-transform:uppercase;opacity:.8}
+    .provider-meta{font-size:12px;opacity:.72;line-height:1.45;margin-top:7px;word-break:break-word}
     .cursor::after{content:"";display:inline-block;width:6px;height:1em;margin-left:3px;vertical-align:-2px;background:#fff;opacity:.65;animation:blink .8s steps(1) infinite}
     @keyframes blink{50%{opacity:0}}
   </style>
@@ -34,7 +39,7 @@
 <div class="app">
   <header>
     <div><h1>IRAS</h1><div class="sub">Online assistant · continuous voice</div></div>
-    <div style="display:flex;gap:8px"><button id="screen">Screen</button><button id="direct">Direct</button><button id="tasks">Tasks</button><button id="remote">Remote</button><button id="settings">Server</button></div>
+    <div style="display:flex;gap:8px"><button id="screen">Screen</button><button id="direct">Direct</button><button id="tasks">Tasks</button><button id="providers">Providers</button><button id="remote">Remote</button><button id="settings">Server</button></div>
   </header>
 
   <main id="chat"></main>
@@ -73,7 +78,7 @@
   <div class="sub" style="margin-bottom:10px">Give IRAS one objective and the Planner will build a dependency graph for Researcher, Coder, Tester, Reviewer, and Coordinator agents. Independent nodes run in parallel; Windows actions remain permissioned and queued.</div>
   <label>Multi-agent objective</label>
   <textarea id="goalInput" placeholder="Example: Improve IRAS voice latency, inspect the current implementation, make the safest useful changes, run tests, review regressions, and report the final result."></textarea>
-  <div class="row" style="margin:8px 0 14px"><button class="primary" id="runGoal">Start Goal</button><button id="latestGoal">Latest Run</button><button id="pauseGoal">Pause</button><button id="resumeGoal">Resume</button><button id="cancelGoal">Cancel</button></div>
+  <div class="row" style="margin:8px 0 14px"><button class="primary" id="runGoal">Start Goal</button><button id="latestGoal">Latest Run</button><button id="pauseGoal">Pause</button><button id="resumeGoal">Resume</button><button id="retryGoal">Retry Failed</button><button id="cancelGoal">Cancel</button></div>
   <div class="sub" style="margin:8px 0">Or run independent tasks directly (one per line):</div>
   <textarea id="taskInput" placeholder="Research the latest framework changes
 Check the status of my Windows PC
@@ -81,6 +86,15 @@ Summarize the current project state"></textarea>
   <div class="row" style="margin:8px 0"><button id="runTasks">Run Parallel</button></div>
   <pre id="taskOut">Ready. Multi-agent goals are planned in the background; parallel mode accepts 2–8 independent tasks.</pre>
   <div class="row"><button id="closeTasks">Close</button></div>
+</dialog>
+
+
+<dialog id="providersDlg" style="max-width:760px">
+  <h3>AI Provider Status</h3>
+  <div class="sub">Live health, cooldown, latency, active model, and fallback order. IRAS uses this state internally before retrying provider work.</div>
+  <div id="providerSummary" class="status" style="margin:10px 0">Loading...</div>
+  <div id="providerGrid" class="provider-grid"></div>
+  <div class="row"><button id="refreshProviders">Refresh</button><button id="closeProviders">Close</button></div>
 </dialog>
 
 <dialog id="directDlg">
@@ -99,10 +113,11 @@ const $=s=>document.querySelector(s);
 const chat=$("#chat"),msg=$("#msg"),status=$("#status");
 const cfg=$("#cfg"),server=$("#server"),token=$("#token"),wake=$("#wake");
 const handsButton=$("#handsfree");
-const remoteButton=$("#remote"),screenButton=$("#screen"),directButton=$("#direct"),tasksButton=$("#tasks");
+const remoteButton=$("#remote"),screenButton=$("#screen"),directButton=$("#direct"),tasksButton=$("#tasks"),providersButton=$("#providers");
 const screenDlg=$("#screenDlg"),screenImg=$("#screenImg");
 const directDlg=$("#directDlg"),directAction=$("#directAction"),directArgs=$("#directArgs"),directOut=$("#directOut");
 const tasksDlg=$("#tasksDlg"),taskInput=$("#taskInput"),taskOut=$("#taskOut"),goalInput=$("#goalInput");
+const providersDlg=$("#providersDlg"),providerGrid=$("#providerGrid"),providerSummary=$("#providerSummary");
 let activeGoalRunId="",goalPollGeneration=0;
 const announcedGoalRuns=new Set(),chatGoalWatchers=new Set();
 
@@ -271,14 +286,22 @@ async function runDirectAction(){
 function renderAgentRun(run){
   const lines=[`Multi-agent run ${run.run_id||""} · ${run.state||""} · ${run.completed_count||0}/${run.task_count||0} complete`, `Objective: ${run.objective||""}`];
   if(run.plan_error)lines.push(`Planner error: ${run.plan_error}`);
+  if(run.resume_required)lines.push(`Checkpoint recovered after restart · resume required`);
+  if(run.checkpoint?.project_root)lines.push(`Project: ${run.checkpoint.project_root}`);
+  if(run.checkpoint?.rollback_checkpoint?.head)lines.push(`Rollback checkpoint: ${run.checkpoint.rollback_checkpoint.head}`);
   for(const task of run.tasks||[]){
-    const mark=(task.waiting_for_provider||task.waiting_for_device)?"⏳":task.state==="succeeded"?"✓":task.state==="failed"?"✗":task.state==="blocked"?"⊘":task.state==="running"?"▶":task.state==="cancelled"?"■":"·";
+    const mark=(task.waiting_for_provider||task.waiting_for_device)?"⏳":task.state==="succeeded"?"✓":task.state==="failed"?"✗":task.state==="blocked"?"⊘":task.state==="running"?"▶":task.state==="cancelled"?"■":task.state==="interrupted"?"↻":"·";
     const deps=(task.depends_on||[]).length?` deps=[${task.depends_on.join(", ")}]`:"";
     const providerWait=task.waiting_for_provider?` · provider wait ${task.retry_after_seconds||0}s`:"";
     const deviceWait=task.waiting_for_device?` · device wait ${task.retry_after_seconds||0}s`:"";
     lines.push(`\n${mark} ${task.role||"general"} · ${task.title||task.task_id} · priority ${task.priority??50} · attempt ${task.attempts||0}${providerWait}${deviceWait}${deps}`);
     if(task.result)lines.push(task.result);
     if(task.error)lines.push(`Error: ${task.error}`);
+  }
+  const events=(run.events||[]).slice(-8);
+  if(events.length){
+    lines.push("\nRECENT JOB EVENTS");
+    for(const event of events)lines.push(`- ${event.kind||"event"}: ${event.message||""}`);
   }
   if(run.final_result)lines.push(`\nFINAL COORDINATOR RESULT\n${run.final_result}`);
   return lines.join("\n");
@@ -310,11 +333,15 @@ function announceAgentRun(run){
 async function watchAgentRunInChat(runId){
   if(!runId||chatGoalWatchers.has(runId)||announcedGoalRuns.has(runId))return;
   chatGoalWatchers.add(runId);
-  const terminal=new Set(["succeeded","partial_failure","failed","cancelled"]);
+  const terminal=new Set(["succeeded","partial_failure","failed","cancelled","interrupted"]);
   const deadline=Date.now()+30*60*1000;
   try{
     while(Date.now()<deadline){
       const run=await fetchAgentRun(runId);
+      const lastEvent=(run.events||[]).slice(-1)[0];
+      if(lastEvent&&!terminal.has(run.state)){
+        status.textContent=`${lastEvent.kind||"job"}: ${lastEvent.message||run.state}`;
+      }
       if(terminal.has(run.state)){
         announceAgentRun(run);
         status.textContent=`Multi-agent run ${run.state} · ${run.completed_count||0}/${run.task_count||0}`;
@@ -337,7 +364,7 @@ async function pollAgentRun(runId){
     const run=await fetchAgentRun(runId);
     taskOut.textContent=renderAgentRun(run);
     status.textContent=`Multi-agent run · ${run.state} · ${run.completed_count||0}/${run.task_count||0}`;
-    if(["succeeded","partial_failure","failed","cancelled"].includes(run.state))return run;
+    if(["succeeded","partial_failure","failed","cancelled","interrupted"].includes(run.state))return run;
     await new Promise(resolve=>setTimeout(resolve,800));
   }
 }
@@ -400,19 +427,61 @@ async function loadLatestGoal(){
   if(!runs.length){taskOut.textContent="No multi-agent runs yet.";return}
   activeGoalRunId=runs[0].run_id;
   taskOut.textContent=renderAgentRun(runs[0]);
-  if(!["succeeded","partial_failure","failed","cancelled"].includes(runs[0].state))pollAgentRun(activeGoalRunId).catch(e=>{taskOut.textContent="Error: "+e.message});
+  if(!["succeeded","partial_failure","failed","cancelled","interrupted"].includes(runs[0].state))pollAgentRun(activeGoalRunId).catch(e=>{taskOut.textContent="Error: "+e.message});
 }
 
 async function controlGoal(action){
   if(!activeGoalRunId)throw new Error("No active multi-agent run. Start one or load the latest run.");
   const c=config(),base=c.server||location.origin;
-  const url=base+"/v1/orchestration/runs/"+encodeURIComponent(activeGoalRunId)+(action==="cancel"?"":"/"+action);
-  const r=await fetch(url,{method:action==="cancel"?"DELETE":"POST",headers:{"Authorization":"Bearer "+c.token}});
+  if((action==="resume"||action==="retry")&&!remoteSession()){
+    await ensureRemoteAuthorization();
+  }
+  const suffix=action==="cancel"?"":action==="retry"?"/retry":"/"+action;
+  const url=base+"/v1/orchestration/runs/"+encodeURIComponent(activeGoalRunId)+suffix;
+  const headers={"Authorization":"Bearer "+c.token,"X-Device-ID":"web",...remoteHeaders()};
+  const r=await fetch(url,{method:action==="cancel"?"DELETE":"POST",headers});
   if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
   const run=await r.json();
   taskOut.textContent=renderAgentRun(run);
   status.textContent=`Multi-agent run ${action}: ${run.state}`;
-  if(action==="resume")pollAgentRun(activeGoalRunId).catch(e=>{taskOut.textContent="Error: "+e.message});
+  if(action==="resume"||action==="retry")pollAgentRun(activeGoalRunId).then(final=>{if(final)announceAgentRun(final)}).catch(e=>{taskOut.textContent="Error: "+e.message});
+}
+
+
+function providerStateLabel(state){
+  return String(state||"unknown").replaceAll("_"," ").toUpperCase();
+}
+
+function formatProviderTime(value){
+  if(!value)return "never";
+  const d=new Date(Number(value)*1000);
+  return Number.isNaN(d.getTime())?"unknown":d.toLocaleTimeString();
+}
+
+async function loadProviderStatus(){
+  const c=config();
+  if(!c.token){cfg.showModal();return}
+  const base=c.server||location.origin;
+  providerSummary.textContent="Checking providers...";
+  providerGrid.innerHTML="";
+  const r=await fetch(base+"/v1/providers/status",{headers:{"Authorization":"Bearer "+c.token}});
+  if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
+  const data=await r.json();
+  providerSummary.textContent=`Active: ${data.active_provider||"unknown"} · model: ${data.active_model||"unknown"} · available ${data.available_count||0}/${data.configured_count||0} · fallback: ${(data.fallback_order||[]).join(" → ")||"none"}`;
+  for(const p of data.providers||[]){
+    const card=document.createElement("div");card.className="provider-card";
+    const head=document.createElement("div");head.className="provider-head";
+    const name=document.createElement("span");name.textContent=(p.active?"● ":p.next?"→ ":"")+(p.name||"provider");
+    const state=document.createElement("span");state.className="provider-state";state.textContent=providerStateLabel(p.state);
+    head.append(name,state);
+    const meta=document.createElement("div");meta.className="provider-meta";
+    const bits=[`model: ${p.model||"n/a"}`,`latency: ${p.latency_ms||0}ms`,`cooldown: ${p.cooldown_seconds||0}s`,`last success: ${formatProviderTime(p.last_success_at)}`];
+    if(p.device_name)bits.push(`device: ${p.device_name}`);
+    if(p.last_error)bits.push(`last error: ${p.last_error}`);
+    meta.textContent=bits.join("\n");
+    card.append(head,meta);providerGrid.appendChild(card);
+  }
+  status.textContent="Provider status updated";
 }
 
 function renderMultitaskRun(run){
@@ -1194,13 +1263,17 @@ remoteButton.onclick=toggleRemote;
 screenButton.onclick=()=>refreshRemoteScreen().catch(e=>status.textContent="Screen error: "+e.message);
 directButton.onclick=()=>directDlg.showModal();
 tasksButton.onclick=()=>{tasksDlg.showModal();loadLatestGoal().catch(()=>{});};
+providersButton.onclick=()=>{providersDlg.showModal();loadProviderStatus().catch(e=>{providerSummary.textContent="Error: "+e.message});};
 $("#runTasks").onclick=()=>runParallelTasks().catch(e=>{taskOut.textContent="Error: "+e.message;status.textContent="Parallel task error"});
 $("#runGoal").onclick=()=>startAgentGoal().catch(e=>{taskOut.textContent="Error: "+e.message;status.textContent="Multi-agent start error"});
 $("#latestGoal").onclick=()=>loadLatestGoal().catch(e=>{taskOut.textContent="Error: "+e.message});
 $("#pauseGoal").onclick=()=>controlGoal("pause").catch(e=>{taskOut.textContent="Error: "+e.message});
 $("#resumeGoal").onclick=()=>controlGoal("resume").catch(e=>{taskOut.textContent="Error: "+e.message});
+$("#retryGoal").onclick=()=>controlGoal("retry").catch(e=>{taskOut.textContent="Error: "+e.message});
 $("#cancelGoal").onclick=()=>controlGoal("cancel").catch(e=>{taskOut.textContent="Error: "+e.message});
 $("#closeTasks").onclick=()=>tasksDlg.close();
+$("#refreshProviders").onclick=()=>loadProviderStatus().catch(e=>{providerSummary.textContent="Error: "+e.message});
+$("#closeProviders").onclick=()=>providersDlg.close();
 $("#runDirect").onclick=()=>runDirectAction().catch(e=>{directOut.textContent="Error: "+e.message;status.textContent="Direct remote error"});
 $("#closeDirect").onclick=()=>directDlg.close();
 $("#refreshScreen").onclick=()=>refreshRemoteScreen().catch(e=>status.textContent="Screen error: "+e.message);

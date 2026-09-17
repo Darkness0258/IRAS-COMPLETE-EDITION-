@@ -105,7 +105,7 @@ def run(settings):
     except ValueError:
         orchestration_max_tasks = 12
     try:
-        orchestration_provider_wait = max(0, min(int(os.getenv("IRAS_ORCHESTRATION_PROVIDER_WAIT_SECONDS", "900")), 1800))
+        orchestration_provider_wait = max(0, min(int(os.getenv("IRAS_ORCHESTRATION_PROVIDER_WAIT_SECONDS", "21600")), 86400))
     except ValueError:
         orchestration_provider_wait = 900
     try:

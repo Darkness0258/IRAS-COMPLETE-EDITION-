@@ -876,6 +876,20 @@ def _prepare_orchestration_context(
         {"repo": project_root},
         35,
     )
+    git_head = _deterministic_device_request(
+        context,
+        "git_log",
+        {"repo": project_root, "limit": 1},
+        35,
+    )
+    status_stdout = str((git_check or {}).get("stdout") or "") if isinstance(git_check, dict) else ""
+    head_stdout = str((git_head or {}).get("stdout") or "") if isinstance(git_head, dict) else ""
+    context["rollback_checkpoint"] = {
+        "project_root": project_root,
+        "head": head_stdout.strip().splitlines()[0] if head_stdout.strip() else "",
+        "working_tree_clean": not bool(status_stdout.strip()),
+        "captured_at": time.time(),
+    }
     context["project_root"] = project_root
     context["project_device_id"] = str(device.get("device_id") or device_id or "")
     context["project_device_name"] = str(device.get("display_name") or "Windows PC")
@@ -1011,6 +1025,104 @@ def health():
     }
 
 
+def _cloud_provider_rows() -> list[dict[str, Any]]:
+    provider = runtime.agent.provider
+    if callable(getattr(provider, "diagnostics", None)):
+        try:
+            rows = provider.diagnostics()
+            if isinstance(rows, list):
+                return [dict(item) for item in rows if isinstance(item, dict)]
+        except Exception:
+            pass
+    if callable(getattr(provider, "status", None)):
+        try:
+            rows = provider.status()
+            if isinstance(rows, list):
+                return [dict(item) for item in rows if isinstance(item, dict)]
+        except Exception:
+            pass
+    return [{
+        "name": settings.provider,
+        "model": getattr(provider, "last_model", None) or settings.model,
+        "state": "online",
+        "ready": True,
+        "configured": True,
+        "order": 1,
+        "next": True,
+        "active": True,
+        "cooldown_seconds": 0,
+        "failures": 0,
+        "last_error": "",
+        "latency_ms": int(getattr(provider, "last_request_ms", 0) or 0),
+    }]
+
+
+def _device_ollama_provider_row(requester_device: str = "provider-status") -> dict[str, Any]:
+    row = {
+        "name": "ollama",
+        "kind": "device_local",
+        "model": "",
+        "state": "offline",
+        "ready": False,
+        "configured": True,
+        "cooldown_seconds": 0,
+        "failures": 0,
+        "last_error": "",
+        "latency_ms": 0,
+        "models": [],
+    }
+    try:
+        device = runtime.device_bridge.choose_device()
+        result = runtime.device_bridge.request_and_wait(
+            action="local_llm_status",
+            arguments={},
+            device_id=str(device.get("device_id") or "") or None,
+            timeout=8,
+            requester_device=requester_device[:128],
+        )
+        if isinstance(result, dict):
+            row.update({
+                "state": "online" if result.get("ready") else "offline",
+                "ready": bool(result.get("ready")),
+                "model": str(result.get("selected_model") or ""),
+                "models": list(result.get("models") or [])[:16],
+                "latency_ms": int(result.get("latency_ms") or 0),
+                "device_name": str(device.get("display_name") or "Windows PC"),
+            })
+            if not result.get("ready"):
+                row["last_error"] = "Ollama is reachable but no local models are installed."
+    except Exception as exc:
+        row["last_error"] = str(exc)[:500]
+    return row
+
+
+@app.get("/v1/providers/status")
+def provider_status(
+    authorization: str | None = Header(default=None),
+):
+    _authorized(authorization)
+    cloud = _cloud_provider_rows()
+    local = _device_ollama_provider_row()
+    rows = list(cloud)
+    if not any(str(item.get("name") or "").lower() == "ollama" for item in rows):
+        rows.append(local)
+    else:
+        rows.append({**local, "name": "device-ollama"})
+    active = str(getattr(runtime.agent.provider, "last_provider", settings.provider) or settings.provider)
+    available = [item for item in rows if item.get("ready")]
+    fallback = [str(item.get("name") or "") for item in rows if item.get("ready") and str(item.get("name") or "") != active]
+    return {
+        "ok": True,
+        "updated_at": time.time(),
+        "active_provider": active,
+        "active_model": getattr(runtime.agent.provider, "last_model", None) or settings.model,
+        "available_count": len(available),
+        "configured_count": len(rows),
+        "fallback_order": fallback,
+        "providers": rows,
+    }
+
+
 @app.get("/ready")
 def readiness():
     """Detailed runtime status for diagnostics; not used as Render's health gate."""
@@ -1029,16 +1141,7 @@ def readiness():
             "last_provider",
             settings.provider,
         ),
-        "ai_providers": (
-            runtime.agent.provider.status()
-            if callable(getattr(runtime.agent.provider, "status", None))
-            else [{
-                "name": settings.provider,
-                "model": settings.model,
-                "ready": True,
-                "cooldown_seconds": 0,
-            }]
-        ),
+        "ai_providers": _cloud_provider_rows(),
         "database": "postgres" if settings.database_url else "sqlite-local",
         "voice_profile": settings.voice_profile,
         "voice": profile.voice,
@@ -1217,10 +1320,53 @@ def pause_orchestration_run(
 @app.post("/v1/orchestration/runs/{run_id}/resume")
 def resume_orchestration_run(
     run_id: str,
+    retry_failed: bool = False,
     authorization: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
+    x_iras_remote_session_id: str | None = Header(default=None, alias="X-IRAS-Remote-Session-ID"),
+    x_iras_remote_token: str | None = Header(default=None, alias="X-IRAS-Remote-Token"),
 ):
     _authorized(authorization)
-    run = orchestration_manager.resume(run_id)
+    remote_session = _authorize_remote_session(
+        x_iras_remote_session_id,
+        x_iras_remote_token,
+    )
+    context_update = _multitask_context(
+        remote_session=remote_session,
+        requester_device=x_device_id or "web",
+    )
+    run = orchestration_manager.resume(
+        run_id,
+        context_update=context_update,
+        retry_failed=bool(retry_failed),
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="Orchestration run not found.")
+    return run
+
+
+@app.post("/v1/orchestration/runs/{run_id}/retry")
+def retry_orchestration_run(
+    run_id: str,
+    authorization: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
+    x_iras_remote_session_id: str | None = Header(default=None, alias="X-IRAS-Remote-Session-ID"),
+    x_iras_remote_token: str | None = Header(default=None, alias="X-IRAS-Remote-Token"),
+):
+    _authorized(authorization)
+    remote_session = _authorize_remote_session(
+        x_iras_remote_session_id,
+        x_iras_remote_token,
+    )
+    context_update = _multitask_context(
+        remote_session=remote_session,
+        requester_device=x_device_id or "web",
+    )
+    run = orchestration_manager.resume(
+        run_id,
+        context_update=context_update,
+        retry_failed=True,
+    )
     if not run:
         raise HTTPException(status_code=404, detail="Orchestration run not found.")
     return run

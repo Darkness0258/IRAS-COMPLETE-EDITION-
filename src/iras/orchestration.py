@@ -13,8 +13,8 @@ import uuid
 from typing import Any, Callable
 
 
-TERMINAL_TASK_STATES = {"succeeded", "failed", "cancelled", "blocked"}
-RUN_TERMINAL_STATES = {"succeeded", "partial_failure", "failed", "cancelled"}
+TERMINAL_TASK_STATES = {"succeeded", "failed", "cancelled", "blocked", "interrupted"}
+RUN_TERMINAL_STATES = {"succeeded", "partial_failure", "failed", "cancelled", "interrupted"}
 AGENT_ROLES = {"planner", "researcher", "coder", "tester", "reviewer", "coordinator", "general"}
 
 ROLE_DIRECTIVES = {
@@ -228,6 +228,9 @@ class OrchestrationRun:
     final_result: str = ""
     verified_outcome: str = ""
     tasks: dict[str, GraphTaskRecord] = field(default_factory=dict)
+    events: list[dict[str, Any]] = field(default_factory=list)
+    restart_count: int = 0
+    resume_required: bool = False
     planner_future: Future | None = field(default=None, repr=False, compare=False)
 
     def public(self) -> dict[str, Any]:
@@ -251,6 +254,16 @@ class OrchestrationRun:
             "verified_outcome": self.verified_outcome,
             "task_count": len(ordered),
             "completed_count": completed,
+            "restart_count": self.restart_count,
+            "resume_required": self.resume_required,
+            "checkpoint": {
+                "version": 1,
+                "project_root": str(self.context.get("project_root") or ""),
+                "project_device_id": str(self.context.get("project_device_id") or ""),
+                "project_device_name": str(self.context.get("project_device_name") or ""),
+                "rollback_checkpoint": dict(self.context.get("rollback_checkpoint") or {}),
+            },
+            "events": list(self.events[-120:]),
             "tasks": [task.public() for task in ordered],
         }
 
@@ -289,13 +302,13 @@ class OrchestrationManager:
         if provider_wait_budget_seconds is None:
             provider_wait_budget_seconds = _env_int(
                 "IRAS_ORCHESTRATION_PROVIDER_WAIT_SECONDS",
-                900,
+                21600,
                 0,
-                1800,
+                86400,
             )
         self.provider_wait_budget_seconds = max(
             0,
-            min(int(provider_wait_budget_seconds), 1800),
+            min(int(provider_wait_budget_seconds), 86400),
         )
         if device_wait_budget_seconds is None:
             device_wait_budget_seconds = _env_int(
@@ -365,6 +378,43 @@ class OrchestrationManager:
         for task_id in ids:
             visit(task_id)
 
+    @staticmethod
+    def _safe_checkpoint_context(raw: dict[str, Any] | None) -> dict[str, Any]:
+        raw = raw or {}
+        checkpoint = raw.get("checkpoint") if isinstance(raw, dict) else {}
+        checkpoint = checkpoint if isinstance(checkpoint, dict) else {}
+        context: dict[str, Any] = {}
+        for key in ("project_root", "project_device_id", "project_device_name"):
+            value = str(checkpoint.get(key) or "").strip()
+            if value:
+                context[key] = value
+        rollback = checkpoint.get("rollback_checkpoint")
+        if isinstance(rollback, dict) and rollback:
+            context["rollback_checkpoint"] = dict(rollback)
+        return context
+
+    def _event_locked(
+        self,
+        run: OrchestrationRun,
+        kind: str,
+        message: str,
+        *,
+        task_id: str = "",
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        event = {
+            "at": _now_iso(),
+            "kind": str(kind or "event")[:64],
+            "message": str(message or "")[:1000],
+        }
+        if task_id:
+            event["task_id"] = str(task_id)[:80]
+        if data:
+            event["data"] = dict(data)
+        run.events.append(event)
+        if len(run.events) > 240:
+            del run.events[:-240]
+
     def _normalize_specs(
         self,
         tasks: list[dict[str, Any]],
@@ -426,6 +476,7 @@ class OrchestrationManager:
             return
         try:
             raw = json.loads(self.journal_path.read_text(encoding="utf-8"))
+            journal_version = int(raw.get("version") or 1) if isinstance(raw, dict) else 1
             rows = raw.get("runs") if isinstance(raw, dict) else []
             if not isinstance(rows, list):
                 return
@@ -441,8 +492,12 @@ class OrchestrationManager:
                     state = str(task.get("state") or "failed")
                     error = str(task.get("error") or "")
                     if state not in TERMINAL_TASK_STATES:
-                        state = "failed"
-                        error = error or "Interrupted by server restart; action was not replayed."
+                        if journal_version >= 2:
+                            state = "interrupted"
+                            error = error or "Interrupted by server restart; action was not replayed. Resume this job to continue from its checkpoint."
+                        else:
+                            state = "failed"
+                            error = error or "Interrupted by server restart; action was not replayed."
                     record = GraphTaskRecord(
                         spec=spec,
                         state=state,
@@ -457,7 +512,12 @@ class OrchestrationManager:
                     records[spec.task_id] = record
                 state = str(item.get("state") or "failed")
                 plan_error = str(item.get("plan_error") or "")
-                if state not in RUN_TERMINAL_STATES:
+                interrupted = state not in RUN_TERMINAL_STATES and journal_version >= 2
+                legacy_interrupted = state not in RUN_TERMINAL_STATES and journal_version < 2
+                if interrupted:
+                    state = "interrupted"
+                    plan_error = plan_error or "Run checkpoint recovered after server restart. Explicit resume is required before unfinished work continues."
+                elif legacy_interrupted:
                     state = "failed"
                     plan_error = plan_error or "Run interrupted by server restart; IRAS did not replay pending actions."
                 run = OrchestrationRun(
@@ -476,8 +536,18 @@ class OrchestrationManager:
                         str(item.get("verified_outcome") or "").strip().lower()
                         or _infer_verified_outcome(str(item.get("final_result") or ""))
                     ),
+                    context=self._safe_checkpoint_context(item),
+                    events=list(item.get("events") or [])[-120:] if isinstance(item.get("events"), list) else [],
+                    restart_count=int(item.get("restart_count") or 0) + (1 if interrupted else 0),
+                    resume_required=bool(interrupted),
                     tasks=records,
                 )
+                if interrupted:
+                    self._event_locked(
+                        run,
+                        "checkpoint_recovered",
+                        "Recovered durable job checkpoint after server restart; completed tasks were preserved and unfinished work requires resume.",
+                    )
                 self._runs[run.run_id] = run
         except Exception:
             # A corrupt observability journal must never prevent IRAS startup.
@@ -505,6 +575,7 @@ class OrchestrationManager:
         with self._condition:
             self._ensure_capacity_locked(run.requester_device)
             self._runs[run.run_id] = run
+            self._event_locked(run, "run_created", "Autonomous job created; planner is building the dependency graph.")
             self._prune_locked()
             run.planner_future = self._planner_executor.submit(
                 self._plan_run,
@@ -540,6 +611,7 @@ class OrchestrationManager:
         with self._condition:
             self._ensure_capacity_locked(run.requester_device)
             self._runs[run.run_id] = run
+            self._event_locked(run, "run_started", "Autonomous job graph accepted and queued for execution.")
             self._prune_locked()
             self._persist_locked()
             self._condition.notify_all()
@@ -578,6 +650,7 @@ class OrchestrationManager:
             run.tasks = {spec.task_id: GraphTaskRecord(spec=spec) for spec in specs}
             run.state = "paused" if run.paused else "running"
             run.started_at = _now_iso()
+            self._event_locked(run, "plan_ready", f"Planner produced {len(specs)} executable nodes including coordination.")
             self._persist_locked()
             self._condition.notify_all()
 
@@ -651,6 +724,12 @@ class OrchestrationManager:
                             record.attempts += 1
                             record.started_at = record.started_at or _now_iso()
                             record.error = ""
+                            self._event_locked(
+                                run,
+                                "task_started",
+                                f"{record.spec.role} started: {record.spec.title}",
+                                task_id=record.spec.task_id,
+                            )
                             record.future = self._executor.submit(
                                 self._execute_task,
                                 run.run_id,
@@ -768,6 +847,10 @@ class OrchestrationManager:
                             "device_waits": record.device_waits,
                             "retry_after_seconds": max(1, int(round(wait_for))),
                         }
+                        self._event_locked(
+                            run, "device_wait", record.error, task_id=record.spec.task_id,
+                            data={"retry_after_seconds": max(1, int(round(wait_for)))},
+                        )
                     elif record.attempts <= record.spec.max_retries:
                         record.state = "queued"
                         record.error = f"{type(exc).__name__}: {exc}"
@@ -801,6 +884,10 @@ class OrchestrationManager:
                             "provider_waits": record.provider_waits,
                             "retry_after_seconds": max(1, int(round(wait_for))),
                         }
+                        self._event_locked(
+                            run, "provider_wait", record.error, task_id=record.spec.task_id,
+                            data={"retry_after_seconds": max(1, int(round(wait_for)))},
+                        )
                     elif record.attempts <= record.spec.max_retries:
                         record.state = "queued"
                         record.error = f"{type(exc).__name__}: {exc}"
@@ -847,6 +934,12 @@ class OrchestrationManager:
                     run.final_result = result
                     run.verified_outcome = _infer_verified_outcome(result)
             record.finished_at = _now_iso()
+            self._event_locked(
+                run,
+                "task_completed" if record.state == "succeeded" else "task_finished",
+                f"{record.spec.role} {record.state}: {record.spec.title}",
+                task_id=record.spec.task_id,
+            )
             self._refresh_run_state_locked(run)
             self._persist_locked()
             self._condition.notify_all()
@@ -883,7 +976,15 @@ class OrchestrationManager:
             run.state = "partial_failure"
         else:
             run.state = "succeeded"
+        first_finish = run.finished_at is None
         run.finished_at = run.finished_at or _now_iso()
+        if first_finish:
+            self._event_locked(
+                run,
+                "run_finished",
+                f"Autonomous job reached terminal state: {run.state}.",
+                data={"verified_outcome": run.verified_outcome},
+            )
 
     def pause(self, run_id: str) -> dict[str, Any] | None:
         with self._condition:
@@ -899,15 +1000,76 @@ class OrchestrationManager:
             self._condition.notify_all()
             return run.public()
 
-    def resume(self, run_id: str) -> dict[str, Any] | None:
+    def resume(
+        self,
+        run_id: str,
+        *,
+        context_update: dict[str, Any] | None = None,
+        retry_failed: bool = False,
+    ) -> dict[str, Any] | None:
         with self._condition:
             run = self._runs.get(str(run_id))
             if not run:
                 return None
-            if run.cancelled or run.state in RUN_TERMINAL_STATES:
+            if run.cancelled:
+                return run.public()
+            if context_update:
+                run.context.update(dict(context_update))
+            resumable_restart = run.state == "interrupted" or run.resume_required
+            if resumable_restart:
+                for record in run.tasks.values():
+                    if record.state == "interrupted" or (
+                        record.state == "blocked"
+                        and "dependency did not succeed" in record.error.lower()
+                    ):
+                        record.state = "queued"
+                        record.error = ""
+                        record.finished_at = None
+                        record.next_eligible_at = 0.0
+                        record.future = None
+                run.resume_required = False
+                run.finished_at = None
+                run.plan_error = ""
+                run.verified_outcome = ""
+                run.final_result = ""
+                self._event_locked(
+                    run, "checkpoint_resumed",
+                    "Resumed from durable checkpoint; completed nodes are preserved and unfinished nodes are queued.",
+                )
+            elif retry_failed and run.state in {"failed", "partial_failure"}:
+                for record in run.tasks.values():
+                    if record.spec.role == "coordinator":
+                        record.state = "queued"
+                    elif record.state in {"failed", "blocked", "interrupted"}:
+                        record.state = "queued"
+                    else:
+                        continue
+                    record.error = ""
+                    record.finished_at = None
+                    record.next_eligible_at = 0.0
+                    record.provider_wait_started_at = 0.0
+                    record.device_wait_started_at = 0.0
+                    record.future = None
+                run.finished_at = None
+                run.verified_outcome = ""
+                run.final_result = ""
+                self._event_locked(
+                    run, "failed_nodes_retried",
+                    "Retry requested; succeeded checkpoint nodes were preserved and failed/blocked nodes were re-queued.",
+                )
+            elif run.state in RUN_TERMINAL_STATES:
                 return run.public()
             run.paused = False
             run.state = "planning" if not run.tasks else "running"
+            if not run.tasks and self.planner is not None:
+                run.planner_future = self._planner_executor.submit(
+                    self._plan_run,
+                    run.run_id,
+                )
+                self._event_locked(
+                    run, "planner_resumed",
+                    "Recovered planning-stage job was re-submitted after explicit resume.",
+                )
             self._persist_locked()
             self._condition.notify_all()
             return run.public()
@@ -976,7 +1138,7 @@ class OrchestrationManager:
         try:
             self.journal_path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
-                "version": 1,
+                "version": 2,
                 "updated_at": _now_iso(),
                 "runs": [run.public() for run in self._runs.values()],
             }

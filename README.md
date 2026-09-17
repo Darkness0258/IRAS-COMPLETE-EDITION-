@@ -1,10 +1,21 @@
-# IRAS 4.3.0 RC8 — Responsive Device Bridge
+# IRAS 4.4.0 RC1 — Persistent Autonomous Work + Provider Health
 
 IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, secure worldwide Windows control, parallel multitasking, and dependency-aware multi-agent execution.
 
-**Release status:** `4.3.0-rc8` keeps the v4.3 hardening and fixes a real-device concurrency failure where long paired-device Ollama inference monopolized the single outbound bridge loop, causing the cloud to mark Windows offline and blocking unrelated app/file/Git actions during multitasking. RC8 isolates local AI into a dedicated worker lane while the main bridge keeps polling and heartbeating. The v4 remote protocol remains `1`.
+**Release status:** `4.4.0-rc1` adds live provider health, persistent autonomous-job checkpoints, restart-safe resume/retry, progress history, and rollback metadata while preserving the responsive RC8 device bridge. The v4 remote protocol remains `1`.
 
 RC7 makes project identity a fail-closed boundary: named project discovery scans every configured bridge root fairly and accepts only candidates that actually match the requested identity. It also normalizes complete JSON tool requests from local Ollama only when the requested tool was offered for that turn, so bounded IRAS tools execute instead of leaking raw tool-call JSON into task results.
+
+
+## v4.4 RC1 persistent autonomy and provider health
+
+- **Provider Status panel:** live state, model, cooldown, latency, last error/success, active provider, next provider, and device-local Ollama readiness.
+- **Health-aware failover visibility:** provider cooldown/rate-limit/auth/offline states are exposed through `/v1/providers/status` and used by the existing provider circuit breaker.
+- **Durable autonomous checkpoints:** completed DAG nodes and verified project/rollback metadata survive cloud restarts. Running nodes are never replayed automatically.
+- **Explicit restart resume:** interrupted jobs restore as `interrupted`; Resume re-queues only unfinished nodes while preserving completed evidence. State-changing work requires fresh Remote authorization after restart.
+- **Retry Failed:** re-queues failed/blocked nodes without discarding successful checkpoint nodes.
+- **Progress history:** job events record planning, node starts/completions, provider/device waits, restart recovery, resume/retry, and terminal outcomes.
+- **Rollback metadata:** engineering preflight captures the verified project root, current Git HEAD, and whether the working tree was clean before autonomous edits begin.
 
 ## v4.3 RC8 responsive device bridge
 
@@ -81,7 +92,7 @@ Give IRAS one objective and it can plan and supervise the work instead of requir
 - Priorities, dependencies, attempts, retries, states, errors, and the final Coordinator result are observable.
 - `IRAS_ORCHESTRATION_WORKERS` controls graph workers (default `4`, bounded `1..8`).
 - `IRAS_ORCHESTRATION_MAX_TASKS` controls planned graph size (default `12`, bounded `2..20`; the final Coordinator is added automatically).
-- `IRAS_ORCHESTRATION_PROVIDER_WAIT_SECONDS` controls how long graph tasks automatically wait through temporary all-provider cooldowns before consuming their normal task retry budget (default `900`, bounded `0..1800`).
+- `IRAS_ORCHESTRATION_PROVIDER_WAIT_SECONDS` controls how long graph tasks automatically wait through temporary all-provider cooldowns before consuming their normal task retry budget (default `21600` (6 hours), bounded `0..86400`).
 - `IRAS_ORCHESTRATION_AGENT_MAX_STEPS` controls the bounded tool-step budget for specialized graph workers only (default `14`, bounded `8..24`).
 
 For exact text-file goals of the form `Create C:\path\file.txt containing exactly "..."`, RC6 uses the same deterministic executor in both Direct chat and multi-agent Tasks: only `write_text`, `read_text`, and `git_status` are allowed, state-changing writes still require an active Remote session, and Windows allowed-root/local-policy/emergency-stop checks remain authoritative. This path does not execute shell commands.

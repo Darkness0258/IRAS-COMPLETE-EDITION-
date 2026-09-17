@@ -13,6 +13,11 @@ class ProviderSlot:
     cooldown_until: float = 0.0
     failures: int = 0
     last_error: str = ""
+    last_attempt_at: float = 0.0
+    last_success_at: float = 0.0
+    last_failure_at: float = 0.0
+    last_latency_ms: int = 0
+    last_status_code: int | None = None
 
 
 class MultiProvider:
@@ -76,12 +81,16 @@ class MultiProvider:
     def _mark_failed(self, slot: ProviderSlot, exc: RuntimeError) -> None:
         slot.failures += 1
         slot.last_error = self._safe_error(exc)
+        slot.last_failure_at = time.time()
+        slot.last_status_code = self._status_code(exc)
         slot.cooldown_until = time.monotonic() + self._cooldown_for(exc)
 
     @staticmethod
     def _mark_success(slot: ProviderSlot) -> None:
         slot.failures = 0
         slot.last_error = ""
+        slot.last_success_at = time.time()
+        slot.last_status_code = None
         slot.cooldown_until = 0.0
 
     def _available(self) -> list[ProviderSlot]:
@@ -113,7 +122,24 @@ class MultiProvider:
     def configured_names(self) -> list[str]:
         return [slot.name for slot in self.slots]
 
+    @staticmethod
+    def _public_state(slot: ProviderSlot, now_mono: float) -> str:
+        if slot.cooldown_until > now_mono:
+            code = slot.last_status_code
+            text = slot.last_error.lower()
+            if code == 429 or "rate limit" in text or "rate-limit" in text:
+                return "rate_limited"
+            if code in {401, 403} or "unauthorized" in text or "invalid api" in text:
+                return "auth_error"
+            if code in {402} or "quota" in text or "billing" in text:
+                return "quota_error"
+            if "timed out" in text or "network error" in text or code in {408, 500, 502, 503, 504}:
+                return "offline"
+            return "cooldown"
+        return "online"
+
     def status(self) -> list[dict]:
+        """Backward-compatible minimal provider readiness surface."""
         now = time.monotonic()
         return [
             {
@@ -125,6 +151,36 @@ class MultiProvider:
             for slot in self.slots
         ]
 
+    def diagnostics(self) -> list[dict]:
+        """Rich health telemetry used by the v4.4 Providers panel."""
+        now = time.monotonic()
+        rows = []
+        available_names = [slot.name for slot in self.slots if slot.cooldown_until <= now]
+        next_name = available_names[0] if available_names else ""
+        for index, slot in enumerate(self.slots):
+            state = self._public_state(slot, now)
+            rows.append(
+                {
+                    "name": slot.name,
+                    "model": getattr(slot.provider, "model", ""),
+                    "state": state,
+                    "ready": state == "online",
+                    "configured": True,
+                    "order": index + 1,
+                    "next": bool(slot.name == next_name),
+                    "active": bool(slot.name == self.last_provider and slot.last_success_at > 0),
+                    "cooldown_seconds": max(0, int(slot.cooldown_until - now)),
+                    "failures": slot.failures,
+                    "last_error": slot.last_error,
+                    "last_attempt_at": slot.last_attempt_at or None,
+                    "last_success_at": slot.last_success_at or None,
+                    "last_failure_at": slot.last_failure_at or None,
+                    "latency_ms": slot.last_latency_ms,
+                    "status_code": slot.last_status_code,
+                }
+            )
+        return rows
+
     def complete(self, messages, tools):
         slots = self._available()
         if not slots:
@@ -132,8 +188,11 @@ class MultiProvider:
 
         last_error = None
         for index, slot in enumerate(slots):
+            attempt_started = time.perf_counter()
+            slot.last_attempt_at = time.time()
             try:
                 reply = slot.provider.complete(messages, tools)
+                slot.last_latency_ms = int((time.perf_counter() - attempt_started) * 1000)
                 self._mark_success(slot)
                 self._sync_metrics(slot)
 
@@ -146,6 +205,7 @@ class MultiProvider:
                 return reply
 
             except RuntimeError as exc:
+                slot.last_latency_ms = int((time.perf_counter() - attempt_started) * 1000)
                 last_error = exc
                 self._mark_failed(slot, exc)
                 print(
@@ -164,6 +224,8 @@ class MultiProvider:
         last_error = None
         for index, slot in enumerate(slots):
             emitted = False
+            attempt_started = time.perf_counter()
+            slot.last_attempt_at = time.time()
             try:
                 for text in slot.provider.stream_text(messages, tools):
                     emitted = True
@@ -172,6 +234,7 @@ class MultiProvider:
                 if not emitted:
                     raise RuntimeError("LLM returned an empty stream.")
 
+                slot.last_latency_ms = int((time.perf_counter() - attempt_started) * 1000)
                 self._mark_success(slot)
                 self._sync_metrics(slot)
 
@@ -184,6 +247,7 @@ class MultiProvider:
                 return
 
             except RuntimeError as exc:
+                slot.last_latency_ms = int((time.perf_counter() - attempt_started) * 1000)
                 last_error = exc
                 self._mark_failed(slot, exc)
 
