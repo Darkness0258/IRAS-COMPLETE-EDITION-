@@ -17,6 +17,8 @@ import time
 from urllib.parse import urlparse
 import webbrowser
 
+import httpx
+
 from iras.tools.system import (
     launch_app,
     system_info,
@@ -56,6 +58,7 @@ DEFAULT_CAPABILITIES = [
     "git_diff",
     "git_log",
     "run_tests",
+    "local_llm_complete",
     "capture_screen",
     "interact_app",
     "observe_ui",
@@ -249,6 +252,7 @@ class DeviceExecutor:
             "git_diff": self.git_diff,
             "git_log": self.git_log,
             "run_tests": self.run_tests,
+            "local_llm_complete": self.local_llm_complete,
             "capture_screen": self.capture_screen,
             "interact_app": self.interact_app,
             "observe_ui": self.observe_ui,
@@ -819,6 +823,156 @@ class DeviceExecutor:
             shell=False,
         )
         return {"repo": str(repository), "returncode": result.returncode, "stdout": result.stdout[-30000:], "stderr": result.stderr[-8000:]}
+
+    def local_llm_complete(
+        self,
+        messages,
+        tools=None,
+        model: str = "",
+        max_tokens: int = 900,
+        temperature: float = 0.15,
+        timeout: float = 120.0,
+    ):
+        """Run a bounded OpenAI-compatible chat completion on local Ollama.
+
+        This action is deliberately loopback-only. It is a reasoning fallback,
+        not a network proxy. Returned tool calls are data; execution still goes
+        back through IRAS Cloud's ToolRegistry and normal permission gates.
+        """
+        raw_base = os.getenv(
+            "IRAS_DEVICE_OLLAMA_BASE_URL",
+            "http://127.0.0.1:11434/v1",
+        ).strip().rstrip("/")
+        parsed = urlparse(raw_base)
+        if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+            raise PermissionError(
+                "IRAS_DEVICE_OLLAMA_BASE_URL must be a loopback http:// endpoint."
+            )
+        if parsed.username or parsed.password:
+            raise PermissionError("Credentials are not allowed in the local Ollama URL.")
+
+        if not isinstance(messages, list) or not messages:
+            raise ValueError("messages must be a non-empty list.")
+        messages = [item for item in messages[-32:] if isinstance(item, dict)]
+        if not messages:
+            raise ValueError("messages contained no usable entries.")
+        serialized_messages = json.dumps(messages, ensure_ascii=False)
+        if len(serialized_messages) > 80_000:
+            raise ValueError("Local LLM message payload exceeds the 80k character limit.")
+
+        tools = [item for item in (tools or [])[:48] if isinstance(item, dict)]
+        if len(json.dumps(tools, ensure_ascii=False)) > 60_000:
+            raise ValueError("Local LLM tool schema payload exceeds the 60k character limit.")
+
+        timeout = max(10.0, min(float(timeout), 150.0))
+        max_tokens = max(64, min(int(max_tokens), 2048))
+        temperature = max(0.0, min(float(temperature), 1.0))
+
+        requested = str(model or "").strip()
+        preferred = [
+            item.strip()
+            for item in os.getenv(
+                "IRAS_DEVICE_OLLAMA_MODELS",
+                "qwen2.5-coder:7b,qwen2.5-coder:1.5b,llama3.1:8b,llama3",
+            ).split(",")
+            if item.strip()
+        ]
+
+        try:
+            root = raw_base[:-3] if raw_base.endswith("/v1") else raw_base
+            with httpx.Client(
+                timeout=httpx.Timeout(connect=2.5, read=timeout, write=15.0, pool=5.0),
+                follow_redirects=False,
+            ) as client:
+                installed = []
+                try:
+                    tags = client.get(root + "/api/tags")
+                    if tags.status_code < 400:
+                        installed = [
+                            str(item.get("name") or "")
+                            for item in (tags.json().get("models") or [])
+                            if isinstance(item, dict) and item.get("name")
+                        ]
+                except Exception:
+                    installed = []
+
+                chosen = requested
+                if installed:
+                    names_fold = {name.casefold(): name for name in installed}
+                    if chosen and chosen.casefold() not in names_fold:
+                        chosen = ""
+                    elif chosen:
+                        chosen = names_fold[chosen.casefold()]
+                    if not chosen:
+                        for candidate in preferred:
+                            if candidate.casefold() in names_fold:
+                                chosen = names_fold[candidate.casefold()]
+                                break
+                    if not chosen:
+                        # Prefer coder/qwen models over arbitrary embeddings etc.
+                        ranked = sorted(
+                            installed,
+                            key=lambda name: (
+                                0 if "coder" in name.casefold() else 1,
+                                0 if "qwen" in name.casefold() else 1,
+                                name.casefold(),
+                            ),
+                        )
+                        chosen = ranked[0] if ranked else ""
+                if not chosen:
+                    chosen = requested or (preferred[0] if preferred else "qwen2.5-coder:7b")
+
+                payload = {
+                    "model": chosen,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "stream": False,
+                }
+                if tools:
+                    payload["tools"] = tools
+                    payload["tool_choice"] = "auto"
+                response = client.post(raw_base + "/chat/completions", json=payload)
+                if response.status_code >= 400:
+                    detail = response.text[:1000]
+                    raise RuntimeError(
+                        f"Local Ollama HTTP {response.status_code}: {detail}"
+                    )
+                body = response.json()
+        except httpx.ConnectError as exc:
+            raise RuntimeError(
+                "Local Ollama is not reachable at 127.0.0.1:11434. Start Ollama on the Windows PC."
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise RuntimeError("Local Ollama timed out while generating a fallback response.") from exc
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError("Local Ollama returned an unexpected response format.") from exc
+
+        try:
+            msg = body["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError("Local Ollama response did not contain an assistant message.") from exc
+
+        normalized_calls = []
+        for tc in msg.get("tool_calls") or []:
+            if not isinstance(tc, dict):
+                continue
+            fn = tc.get("function") or {}
+            if not isinstance(fn, dict):
+                continue
+            normalized_calls.append(
+                {
+                    "id": str(tc.get("id") or ""),
+                    "name": str(fn.get("name") or ""),
+                    "arguments": fn.get("arguments") or {},
+                }
+            )
+        return {
+            "model": str(body.get("model") or chosen),
+            "content": msg.get("content") or "",
+            "tool_calls": normalized_calls,
+            "local": True,
+        }
 
     def run_tests(
         self,

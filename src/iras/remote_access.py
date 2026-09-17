@@ -51,6 +51,7 @@ READ_ACTIONS = {
     "verify_state",
     "list_processes",
     "clipboard_get",
+    "local_llm_complete",
 }
 
 SAFE_ACTIONS = {

@@ -78,6 +78,9 @@ from iras.voice.profiles import (
     get_profile,
 )
 
+from iras.providers.device_ollama import DeviceOllamaProvider
+from iras.providers.multi_provider import MultiProvider, ProviderSlot
+
 
 settings = Settings.load()
 runtime = build_cloud_runtime(
@@ -529,6 +532,33 @@ def _multitask_worker(prompt: str, context: dict[str, Any]) -> dict[str, Any]:
         task_memory,
         system_prompt_suffix=system_suffix,
     )
+    remote_session = context.get("remote_session")
+    device_llm_enabled = os.getenv(
+        "IRAS_DEVICE_OLLAMA_FALLBACK",
+        "true",
+    ).strip().lower() in {"1", "true", "yes", "on", "enabled"}
+    if remote_session and device_llm_enabled:
+        device_model = os.getenv("IRAS_DEVICE_OLLAMA_MODEL", "").strip()
+        try:
+            device_timeout = int(os.getenv("IRAS_DEVICE_OLLAMA_TIMEOUT", "120"))
+        except ValueError:
+            device_timeout = 120
+        local_provider = DeviceOllamaProvider(
+            lambda action, arguments, timeout: _deterministic_device_request(
+                context, action, arguments, timeout
+            ),
+            model=device_model,
+            timeout=max(20, min(device_timeout, 180)),
+        )
+        hybrid = MultiProvider(
+            [
+                ProviderSlot("cloud-pool", worker.provider),
+                ProviderSlot("device-ollama", local_provider),
+            ],
+            cooldown_seconds=30,
+        )
+        worker.provider = hybrid
+        worker.agent.provider = hybrid
     orchestration_run_id = str(context.get("orchestration_run_id") or "")
     if orchestration_run_id:
         worker.agent.max_steps = max(worker.agent.max_steps, _orchestration_agent_step_budget())

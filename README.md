@@ -1,11 +1,16 @@
-# IRAS 4.3.0 RC5 — Remote Authorization Continuation
+# IRAS 4.3.0 RC6 — Device-Local AI Failover
 
 IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, secure worldwide Windows control, parallel multitasking, and dependency-aware multi-agent execution.
 
-**Release status:** `4.3.0-rc5` keeps the v4.3 hardening and fixes the latest real-device acceptance failures: autonomous background results are delivered back into the main chat, incomplete coordinator outcomes no longer appear as successful runs, and the preflight-verified Windows project root is enforced at the remote tool boundary. The v4 remote protocol remains `1`.
+**Release status:** `4.3.0-rc6` keeps the v4.3 hardening and fixes the latest real-device acceptance failures: autonomous background results are delivered back into the main chat, incomplete coordinator outcomes no longer appear as successful runs, and the preflight-verified Windows project root is enforced at the remote tool boundary. The v4 remote protocol remains `1`.
 
 RC5 closes the remaining authorization handoff gap in autonomous chat and Tasks. If an engineering objective needs a live Remote session, the web client now requests user authorization and resumes the exact pending objective automatically after consent instead of forcing the user to retype/re-send it. The server safety gate remains authoritative and no session is self-granted.
 
+
+
+## v4.3 RC6 device-local AI failover
+
+When every configured cloud AI provider is unavailable, specialized multi-agent workers can now continue through an Ollama model running locally on the paired Windows PC. The cloud never connects to the laptop directly: the request travels through the authenticated outbound-only device bridge, and the Windows executor may contact only a loopback Ollama endpoint. Local-model tool calls still pass through the same ToolRegistry permissions, verified project root, Remote session, laptop-local policy, and emergency stop. `iras --doctor` reports local fallback readiness and detected models.
 
 ## v4.3 RC5 remote authorization continuation
 

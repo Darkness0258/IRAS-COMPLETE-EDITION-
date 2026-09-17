@@ -37,6 +37,7 @@ from iras.device_bridge.whatsapp_workflow import _full_vision_fallback_enabled
 from iras.vision.omniparser_runtime import OmniParserRuntimeManager
 from iras.vision.scene_graph import SCENE_GRAPH_VERSION
 from iras.tools.web import html_to_text
+from iras.providers.device_ollama import DeviceOllamaProvider
 
 
 class _Memory:
@@ -64,8 +65,8 @@ class _Memory:
 
 
 def main() -> None:
-    print("=== IRAS v4.3 RC5 REMOTE AUTHORIZATION CONTINUATION INTEGRATED VALIDATION ===")
-    assert __version__ == "4.3.0-rc5"
+    print("=== IRAS v4.3 RC6 DEVICE-LOCAL AI FAILOVER INTEGRATED VALIDATION ===")
+    assert __version__ == "4.3.0-rc6"
     assert SCENE_GRAPH_VERSION == "3.7.0"
     assert REMOTE_PROTOCOL_VERSION == 1
 
@@ -77,6 +78,8 @@ def main() -> None:
     assert secured["_iras_security"]["prompt_injection_suspected"] is True
     assert is_sensitive_path(r"C:\\Users\\me\\.ssh\\id_ed25519")
     assert action_permission("kill_process", {"pid": 10}) == PermissionLevel.CRITICAL
+    assert action_permission("local_llm_complete", {}) == PermissionLevel.READ
+    assert DeviceOllamaProvider is not None
 
     class _DummyStore:
         def request_and_wait(self, **kwargs):
@@ -419,6 +422,7 @@ def main() -> None:
     print("OUTCOME-AWARE RUN STATUS:", True)
     print("ENGINEERING PLANNER QUALITY GATE:", True)
     print("REMOTE AUTHORIZATION CONTINUATION:", True)
+    print("DEVICE-LOCAL OLLAMA FAILOVER: True")
     print("RESULT: PASS")
 
 

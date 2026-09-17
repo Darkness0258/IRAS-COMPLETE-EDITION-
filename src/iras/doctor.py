@@ -131,6 +131,36 @@ def run(settings):
         "direct/deterministic/parallel/orchestrate automatic chat routing",
     )
 
+    device_ollama_enabled = str(os.getenv("IRAS_DEVICE_OLLAMA_FALLBACK", "true")).strip().lower() in {
+        "1", "true", "yes", "on", "enabled"
+    }
+    ollama_ready = False
+    ollama_detail = "disabled"
+    if device_ollama_enabled:
+        base = str(os.getenv("IRAS_DEVICE_OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1")).strip().rstrip("/")
+        root = base[:-3] if base.endswith("/v1") else base
+        try:
+            response = httpx.get(root + "/api/tags", timeout=2.5, follow_redirects=False)
+            response.raise_for_status()
+            models = [
+                str(item.get("name") or "")
+                for item in (response.json().get("models") or [])
+                if isinstance(item, dict) and item.get("name")
+            ]
+            ollama_ready = bool(models)
+            ollama_detail = (
+                "ready: " + ", ".join(models[:4])
+                if models
+                else "Ollama reachable but no local models are installed"
+            )
+        except Exception as exc:
+            ollama_detail = f"optional fallback unavailable: {type(exc).__name__}: {exc}"[:220]
+    add(
+        "Device-local AI fallback",
+        (not device_ollama_enabled) or ollama_ready,
+        ollama_detail,
+    )
+
     mic = Listener.microphone_status()
     add("Microphone input", mic.get("available"), f"{mic.get('count', 0)} input device(s)")
 

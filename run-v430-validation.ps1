@@ -5,7 +5,7 @@ function Invoke-IrasCleanup {
     & .\scripts\maintenance\clean-v400-validation-debris.ps1 -Quiet
 }
 
-Write-Host "=== IRAS v4.3 RC5 REMOTE AUTHORIZATION CONTINUATION VALIDATION ==="
+Write-Host "=== IRAS v4.3 RC6 DEVICE-LOCAL AI FAILOVER VALIDATION ==="
 Write-Host ""
 Invoke-IrasCleanup
 Write-Host "IRAS validation debris cleanup: PASS"
@@ -30,7 +30,7 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     Write-Host ""
-    Write-Host "IRAS v4.3 RC5 VALIDATION RESULT: PASS"
+    Write-Host "IRAS v4.3 RC6 VALIDATION RESULT: PASS"
 }
 finally {
     Invoke-IrasCleanup
