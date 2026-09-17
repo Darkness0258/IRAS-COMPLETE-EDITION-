@@ -22,7 +22,7 @@ from iras.deterministic_orchestration import (
     exact_file_plan,
     parse_exact_file_objective,
 )
-from iras.execution_router import decide_execution, engineering_plan_is_adequate, fallback_orchestration_graph, parallel_graph, needs_project_workspace
+from iras.execution_router import decide_execution, engineering_plan_is_adequate, fallback_orchestration_graph, parallel_graph, needs_project_workspace, rank_matching_project_candidates
 from iras.remote_access import RemoteAccessPolicy, action_permission
 from iras.remote_protocol import REMOTE_PROTOCOL_VERSION, validate_cloud_health
 from iras.safety_runtime import EmergencyStop
@@ -65,8 +65,8 @@ class _Memory:
 
 
 def main() -> None:
-    print("=== IRAS v4.3 RC6 DEVICE-LOCAL AI FAILOVER INTEGRATED VALIDATION ===")
-    assert __version__ == "4.3.0-rc6"
+    print("=== IRAS v4.3 RC7 PROJECT IDENTITY + LOCAL TOOL EXECUTION INTEGRATED VALIDATION ===")
+    assert __version__ == "4.3.0-rc7"
     assert SCENE_GRAPH_VERSION == "3.7.0"
     assert REMOTE_PROTOCOL_VERSION == 1
 
@@ -80,6 +80,30 @@ def main() -> None:
     assert action_permission("kill_process", {"pid": 10}) == PermissionLevel.CRITICAL
     assert action_permission("local_llm_complete", {}) == PermissionLevel.READ
     assert DeviceOllamaProvider is not None
+
+    ranked_projects = rank_matching_project_candidates(
+        "IRAS",
+        [
+            {"name": "Agent-Reach", "path": r"C:\Users\mhamz\Agent-Reach", "score": 50},
+            {"name": "IRAS-complete", "path": r"D:\Projects\IRAS-complete", "score": 50},
+        ],
+    )
+    assert [item["name"] for item in ranked_projects] == ["IRAS-complete"]
+
+    local_tool_provider = DeviceOllamaProvider(
+        lambda action, arguments, timeout: {
+            "model": "qwen2.5-coder:7b",
+            "content": '{"name":"device_git_status","arguments":{"repo":"."}}',
+            "tool_calls": [],
+        }
+    )
+    local_tool_reply = local_tool_provider.complete(
+        [{"role": "user", "content": "inspect"}],
+        [{"type": "function", "function": {"name": "device_git_status", "parameters": {"type": "object"}}}],
+    )
+    assert local_tool_reply.text == ""
+    assert local_tool_reply.tool_calls[0].name == "device_git_status"
+    assert local_tool_reply.assistant_message.get("role") == "assistant"
 
     class _DummyStore:
         def request_and_wait(self, **kwargs):
@@ -423,6 +447,9 @@ def main() -> None:
     print("ENGINEERING PLANNER QUALITY GATE:", True)
     print("REMOTE AUTHORIZATION CONTINUATION:", True)
     print("DEVICE-LOCAL OLLAMA FAILOVER: True")
+    print("STRICT PROJECT IDENTITY RESOLUTION: True")
+    print("FAIR BRIDGE-ROOT PROJECT DISCOVERY: True")
+    print("LOCAL OLLAMA TOOL-CALL NORMALIZATION: True")
     print("RESULT: PASS")
 
 

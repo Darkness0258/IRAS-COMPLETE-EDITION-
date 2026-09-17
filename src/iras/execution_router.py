@@ -95,6 +95,73 @@ def _clean(text: str) -> str:
     return " ".join(str(text or "").strip().split())
 
 
+def _project_identity_tokens(value: str) -> tuple[str, ...]:
+    """Normalize a project identifier without guessing unrelated aliases."""
+    return tuple(
+        token
+        for token in re.split(r"[^a-z0-9]+", str(value or "").casefold())
+        if token
+    )
+
+
+def project_candidate_identity_score(query: str, candidate: dict[str, object]) -> int:
+    """Return a strict lexical identity score, or -1 when the candidate does not match.
+
+    Project preflight is a safety boundary: a named objective must never silently
+    bind to an unrelated repository merely because it happened to rank first.
+    """
+    cleaned = _clean(query).casefold()
+    if not cleaned:
+        return 0
+
+    name = str(candidate.get("name") or "").strip().casefold()
+    path = str(candidate.get("path") or "").strip().casefold()
+    if not name and not path:
+        return -1
+    if cleaned == name:
+        return 1000
+    if cleaned and cleaned in name:
+        return 900 - min(200, abs(len(name) - len(cleaned)))
+    if cleaned and cleaned in path:
+        return 700
+
+    query_tokens = set(_project_identity_tokens(cleaned))
+    candidate_tokens = set(_project_identity_tokens(name + " " + path))
+    if query_tokens and query_tokens.issubset(candidate_tokens):
+        return 500 + min(100, len(query_tokens) * 10)
+    return -1
+
+
+def rank_matching_project_candidates(
+    query: str,
+    projects: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Return only candidates that actually match the requested project identity."""
+    if not _clean(query):
+        return list(projects)
+    scored: list[tuple[int, int, str, dict[str, object]]] = []
+    for item in projects:
+        if not isinstance(item, dict):
+            continue
+        identity = project_candidate_identity_score(query, item)
+        if identity < 0:
+            continue
+        try:
+            discovery_score = int(item.get("score") or 0)
+        except (TypeError, ValueError):
+            discovery_score = 0
+        scored.append(
+            (
+                -identity,
+                -discovery_score,
+                str(item.get("path") or "").casefold(),
+                item,
+            )
+        )
+    scored.sort(key=lambda row: row[:3])
+    return [row[3] for row in scored]
+
+
 def _strip_list_marker(text: str) -> str:
     return re.sub(r"^\s*(?:[-*•]+|\d+[.)])\s*", "", text).strip()
 

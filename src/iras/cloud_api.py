@@ -69,6 +69,7 @@ from iras.execution_router import (
     needs_remote_state_change,
     needs_project_workspace,
     parallel_graph,
+    rank_matching_project_candidates,
 )
 from iras.config import Settings
 from iras.voice.humanize import (
@@ -812,28 +813,41 @@ def _prepare_orchestration_context(
         45,
     )
     projects = list((discovery or {}).get("projects") or []) if isinstance(discovery, dict) else []
+    if query:
+        projects = rank_matching_project_candidates(query, projects)
+
     if not projects and query:
-        # A strict query can miss aliases. Retry once without a query and choose
-        # by lexical similarity below.
-        discovery = _deterministic_device_request(
+        # Retry unfiltered only for diagnostics/aliases, but still require a
+        # positive identity match. Never substitute an unrelated repository.
+        all_discovery = _deterministic_device_request(
             context,
             "find_projects",
             {"query": "", "max_depth": 3, "max_results": 30},
             45,
         )
-        projects = list((discovery or {}).get("projects") or []) if isinstance(discovery, dict) else []
-
-    if query and projects:
-        q = query.lower()
-        ranked = sorted(
-            projects,
-            key=lambda item: (
-                0 if q in (str(item.get("name") or "") + " " + str(item.get("path") or "")).lower() else 1,
-                -int(item.get("score") or 0),
-                str(item.get("path") or "").lower(),
-            ),
+        all_projects = (
+            list((all_discovery or {}).get("projects") or [])
+            if isinstance(all_discovery, dict)
+            else []
         )
-        projects = ranked
+        projects = rank_matching_project_candidates(query, all_projects)
+        if not projects:
+            roots = (
+                list((all_discovery or {}).get("allowed_roots") or [])
+                if isinstance(all_discovery, dict)
+                else []
+            )
+            candidate_names = ", ".join(
+                str(item.get("path") or item.get("name") or "")
+                for item in all_projects[:6]
+                if isinstance(item, dict)
+            ) or "none"
+            root_text = ", ".join(str(item) for item in roots[:6]) or "none reported"
+            raise RuntimeError(
+                f"IRAS could not find a project matching {query!r} inside the Windows bridge roots. "
+                f"Configured roots: {root_text}. Candidates found: {candidate_names}. "
+                "Name the intended Windows project path explicitly or update the bridge roots, then retry."
+            )
 
     if not projects:
         roots = list((discovery or {}).get("allowed_roots") or []) if isinstance(discovery, dict) else []

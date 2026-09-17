@@ -645,10 +645,11 @@ class DeviceExecutor:
     ):
         """Discover likely development projects inside configured bridge roots.
 
-        Discovery is read-only, bounded, and never follows symlinks. A project
-        is considered useful when it contains .git or a common project manifest.
-        Results are ranked by query match and repository markers so cloud agents
-        do not have to invent Windows paths.
+        Discovery is read-only, bounded, never follows symlinks, and allocates
+        scanning budget fairly across every allowed root. A large first root
+        therefore cannot starve later roots such as ``D:\\Projects``. When a
+        query is supplied, only identity-matching projects are returned; IRAS
+        must never silently substitute an unrelated repository.
         """
         query = str(query or "").strip().lower()
         max_depth = max(0, min(int(max_depth), 5))
@@ -663,14 +664,23 @@ class DeviceExecutor:
         )
         results = []
         seen: set[str] = set()
-        scanned = 0
-        max_scanned = 2500
+        total_scanned = 0
+        roots = []
+        for raw_root in self.allowed_roots:
+            try:
+                roots.append(raw_root.resolve())
+            except OSError:
+                continue
+
+        # Keep discovery bounded while guaranteeing every configured root a fair
+        # share. Previously one large C:\Users tree could consume the global
+        # budget before D:\Projects was examined.
+        max_scanned_total = 3000
+        per_root_budget = max(250, max_scanned_total // max(1, len(roots)))
+        root_scan_counts: dict[str, int] = {}
+        truncated_by_budget = False
 
         def consider(candidate: Path, depth: int) -> None:
-            nonlocal scanned
-            if scanned >= max_scanned:
-                return
-            scanned += 1
             try:
                 if candidate.is_symlink() or not candidate.is_dir():
                     return
@@ -704,23 +714,34 @@ class DeviceExecutor:
                 "score": score,
             })
 
-        for root in self.allowed_roots:
-            try:
-                root = root.resolve()
-            except OSError:
-                continue
+        for root in roots:
             queue: list[tuple[Path, int]] = [(root, 0)]
-            while queue and scanned < max_scanned:
+            scanned_this_root = 0
+            while queue and scanned_this_root < per_root_budget:
                 current, depth = queue.pop(0)
+                scanned_this_root += 1
+                total_scanned += 1
                 consider(current, depth)
                 if depth >= max_depth:
                     continue
                 try:
-                    children = sorted(current.iterdir(), key=lambda item: item.name.lower())
+                    children = list(current.iterdir())
                 except OSError:
                     continue
+                # Query-looking directories first, then stable alphabetical
+                # traversal. This makes named project lookup fast without
+                # weakening the bounded scan.
+                children.sort(
+                    key=lambda item: (
+                        0 if query and query in item.name.lower() else 1,
+                        item.name.lower(),
+                    )
+                )
                 for child in children:
-                    if child.name in {".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache"}:
+                    if child.name in {
+                        ".git", ".venv", "venv", "node_modules", "__pycache__",
+                        ".pytest_cache", ".mypy_cache", ".ruff_cache",
+                    }:
                         continue
                     try:
                         if child.is_symlink() or not child.is_dir():
@@ -728,19 +749,25 @@ class DeviceExecutor:
                     except OSError:
                         continue
                     queue.append((child, depth + 1))
+            root_scan_counts[str(root)] = scanned_this_root
+            if queue:
+                truncated_by_budget = True
 
         results.sort(key=lambda item: (-int(item["score"]), str(item["path"]).lower()))
         if query:
-            matched = [item for item in results if item["query_match"]]
-            if matched:
-                results = matched
+            # Fail closed for named-project discovery. Returning an unrelated
+            # repository here caused autonomous engineering to operate on the
+            # wrong checkout during RC6 real-device testing.
+            results = [item for item in results if item["query_match"]]
+
         return {
             "query": query,
-            "allowed_roots": [str(path) for path in self.allowed_roots],
+            "allowed_roots": [str(path) for path in roots],
             "projects": results[:max_results],
             "project_count": min(len(results), max_results),
-            "scanned_directories": scanned,
-            "truncated": scanned >= max_scanned or len(results) > max_results,
+            "scanned_directories": total_scanned,
+            "scanned_by_root": root_scan_counts,
+            "truncated": truncated_by_budget or len(results) > max_results,
         }
 
     def git_status(

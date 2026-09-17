@@ -1,12 +1,19 @@
-# IRAS 4.3.0 RC6 — Device-Local AI Failover
+# IRAS 4.3.0 RC7 — Project Identity & Local Tool Execution
 
 IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, secure worldwide Windows control, parallel multitasking, and dependency-aware multi-agent execution.
 
-**Release status:** `4.3.0-rc6` keeps the v4.3 hardening and fixes the latest real-device acceptance failures: autonomous background results are delivered back into the main chat, incomplete coordinator outcomes no longer appear as successful runs, and the preflight-verified Windows project root is enforced at the remote tool boundary. The v4 remote protocol remains `1`.
+**Release status:** `4.3.0-rc7` keeps the v4.3 hardening and fixes the RC6 real-device failures where the project resolver could bind an IRAS engineering objective to an unrelated repository and where a local Ollama model could emit a JSON tool request as plain assistant text. The v4 remote protocol remains `1`.
 
-RC5 closes the remaining authorization handoff gap in autonomous chat and Tasks. If an engineering objective needs a live Remote session, the web client now requests user authorization and resumes the exact pending objective automatically after consent instead of forcing the user to retype/re-send it. The server safety gate remains authoritative and no session is self-granted.
+RC7 makes project identity a fail-closed boundary: named project discovery scans every configured bridge root fairly and accepts only candidates that actually match the requested identity. It also normalizes complete JSON tool requests from local Ollama only when the requested tool was offered for that turn, so bounded IRAS tools execute instead of leaking raw tool-call JSON into task results.
 
+## v4.3 RC7 project identity & local tool execution
 
+- Named project discovery cannot silently substitute an unrelated repository.
+- Project scanning allocates a bounded budget per allowed bridge root, preventing a large `C:\Users` tree from starving `D:\Projects`.
+- Cloud preflight independently re-validates project identity before binding the DAG.
+- Device-local Ollama content-only JSON tool requests are normalized into real IRAS tool calls when—and only when—the tool was supplied in the current schema.
+- Local-provider assistant messages now preserve valid OpenAI-style `role/content/tool_calls` structure across tool rounds.
+- Existing Remote authorization, verified project-root binding, permission levels, emergency stop, and protocol `1` remain unchanged.
 
 ## v4.3 RC6 device-local AI failover
 
