@@ -56,7 +56,7 @@ def main() -> None:
             if any(pattern.search(text) for pattern in SECRET_PATTERNS):
                 secret_hits.append(rel)
 
-    print("=== IRAS v4.3 RC3 CLEAN TREE VALIDATION ===")
+    print("=== IRAS v4.3 RC4 CLEAN TREE VALIDATION ===")
     print("LOCAL .ENV PRESENT:", (ROOT / ".env").exists())
     print("REQUIRED V4.3 FILES PRESENT:", not missing)
     print("CACHE/COMPILED DEBRIS PRESENT:", bool(bad_cache))

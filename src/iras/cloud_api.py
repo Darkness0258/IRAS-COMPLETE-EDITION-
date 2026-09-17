@@ -64,6 +64,7 @@ from iras.deterministic_orchestration import (
 )
 from iras.execution_router import (
     decide_execution,
+    engineering_plan_is_adequate,
     fallback_orchestration_graph,
     needs_remote_state_change,
     needs_project_workspace,
@@ -666,7 +667,19 @@ def _orchestration_planner(
         tasks = data.get("tasks")
         if not isinstance(tasks, list) or not tasks:
             raise ValueError("Planner returned no tasks.")
-        return tasks[:8]
+        tasks = tasks[:8]
+        adequate, reason = engineering_plan_is_adequate(objective, tasks)
+        if not adequate:
+            runtime.audit.record(
+                "orchestration_planner_upgraded",
+                {
+                    "objective": objective[:500],
+                    "reason": reason,
+                    "planner_task_count": len(tasks),
+                },
+            )
+            return _orchestration_fallback_plan(objective)
+        return tasks
     except Exception as exc:
         runtime.audit.record(
             "orchestration_planner_fallback",

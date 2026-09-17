@@ -55,7 +55,7 @@ _INDEPENDENT_VERBS = (
 )
 
 _IMPLEMENTATION_RE = re.compile(
-    r"\b(build|implement|develop|refactor|upgrade|improve|fix|modify|edit|design|integrate|migrate|deploy|configure|install)\b",
+    r"\b(build|implement|develop|refactor|upgrade|improv(?:e|ement)|fix|modify|edit|design|integrate|migrate|deploy|configure|install)\b",
     re.IGNORECASE,
 )
 _VALIDATION_RE = re.compile(
@@ -63,7 +63,7 @@ _VALIDATION_RE = re.compile(
     re.IGNORECASE,
 )
 _WORKFLOW_VERB_RE = re.compile(
-    r"\b(build|implement|develop|refactor|upgrade|improve|fix|modify|edit|design|integrate|migrate|deploy|configure|install|research|inspect|test|verify|validate|review|benchmark|debug|report)\b",
+    r"\b(build|implement|develop|refactor|upgrade|improv(?:e|ement)|fix|modify|edit|design|integrate|migrate|deploy|configure|install|research|inspect|test|verify|validate|review|benchmark|debug|report)\b",
     re.IGNORECASE,
 )
 _STRONG_ORCHESTRATION_RE = re.compile(
@@ -246,6 +246,47 @@ def parallel_graph(tasks: tuple[str, ...] | list[str]) -> list[dict[str, object]
         )
     return graph
 
+
+
+def engineering_plan_is_adequate(objective: str, tasks: list[dict[str, object]]) -> tuple[bool, str]:
+    """Validate that an implementation plan can actually execute engineering work.
+
+    This is semantic validation on top of JSON/schema validation. A planner that
+    returns a generic worker plus verifier for a code-change objective is not
+    adequate even though the JSON is syntactically valid.
+    """
+    cleaned = _clean(objective)
+    if not _IMPLEMENTATION_RE.search(cleaned):
+        return True, "not an engineering implementation objective"
+    if not isinstance(tasks, list) or len(tasks) < 3:
+        return False, "engineering plan has fewer than three executable phases"
+
+    normalized = [item for item in tasks if isinstance(item, dict)]
+    roles = {str(item.get("role") or "general").strip().lower() for item in normalized}
+    required_roles = {"coder", "tester", "reviewer"}
+    missing = sorted(required_roles - roles)
+    if missing:
+        return False, "engineering plan is missing required roles: " + ", ".join(missing)
+
+    ids = {str(item.get("id") or "").strip() for item in normalized}
+    edges: list[tuple[str, str]] = []
+    for item in normalized:
+        task_id = str(item.get("id") or "").strip()
+        deps = item.get("depends_on") or []
+        if isinstance(deps, list):
+            edges.extend((task_id, str(dep).strip()) for dep in deps if str(dep).strip())
+    if not edges:
+        return False, "engineering plan has no dependency ordering"
+    if any(dep not in ids for _, dep in edges):
+        return False, "engineering plan references an unknown dependency"
+
+    coder_ids = {str(item.get("id") or "").strip() for item in normalized if str(item.get("role") or "").lower() == "coder"}
+    tester_items = [item for item in normalized if str(item.get("role") or "").lower() == "tester"]
+    reviewer_items = [item for item in normalized if str(item.get("role") or "").lower() == "reviewer"]
+    if coder_ids and not any(set(map(str, item.get("depends_on") or [])) & coder_ids for item in tester_items + reviewer_items):
+        return False, "engineering verification/review is not ordered after implementation"
+
+    return True, "engineering plan contains implementation, verification, review, and dependency ordering"
 
 def needs_remote_state_change(text: str) -> bool:
     """Conservative local preflight for objectives likely to mutate user state."""

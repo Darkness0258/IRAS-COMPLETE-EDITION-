@@ -339,7 +339,7 @@ Engineering objectives are preflighted against the paired Windows device before 
 
 If the target device temporarily disappears during a graph, orchestration classifies the outage as infrastructure backpressure and waits up to `IRAS_ORCHESTRATION_DEVICE_WAIT_SECONDS` without consuming normal task retries. Authorization/root violations remain hard failures.
 
-## v4.3 RC3 — Result Delivery and Project Binding
+## v4.3 RC4 — Result Delivery and Project Binding
 
 Autonomous orchestration completion is now a first-class chat event. The web
 client watches the `orchestration_run_id` returned by ordinary chat and posts the

@@ -22,7 +22,7 @@ from iras.deterministic_orchestration import (
     exact_file_plan,
     parse_exact_file_objective,
 )
-from iras.execution_router import decide_execution, fallback_orchestration_graph, parallel_graph, needs_project_workspace
+from iras.execution_router import decide_execution, engineering_plan_is_adequate, fallback_orchestration_graph, parallel_graph, needs_project_workspace
 from iras.remote_access import RemoteAccessPolicy, action_permission
 from iras.remote_protocol import REMOTE_PROTOCOL_VERSION, validate_cloud_health
 from iras.safety_runtime import EmergencyStop
@@ -64,8 +64,8 @@ class _Memory:
 
 
 def main() -> None:
-    print("=== IRAS v4.3 RC3 RESULT DELIVERY + PROJECT BINDING INTEGRATED VALIDATION ===")
-    assert __version__ == "4.3.0-rc3"
+    print("=== IRAS v4.3 RC4 ENGINEERING DAG ENFORCEMENT INTEGRATED VALIDATION ===")
+    assert __version__ == "4.3.0-rc4"
     assert SCENE_GRAPH_VERSION == "3.7.0"
     assert REMOTE_PROTOCOL_VERSION == 1
 
@@ -296,6 +296,18 @@ def main() -> None:
         "Inspect IRAS, implement one safe improvement, run tests, review regressions, and report."
     )
     assert [item["role"] for item in fallback] == ["reviewer", "coder", "tester", "reviewer"]
+    weak_plan = [
+        {"id": "execute-objective", "role": "general", "depends_on": []},
+        {"id": "verify-outcome", "role": "tester", "depends_on": ["execute-objective"]},
+    ]
+    adequate, _reason = engineering_plan_is_adequate(
+        "Inspect the IRAS project, make one bounded safe improvement, run tests, review regressions, and give a final report.",
+        weak_plan,
+    )
+    assert adequate is False
+    assert [item["role"] for item in fallback_orchestration_graph(
+        "Inspect the IRAS project, make one bounded safe improvement, run tests, review regressions, and give a final report."
+    )] == ["reviewer", "coder", "tester", "reviewer"]
     assert needs_project_workspace("Inspect the IRAS project, implement a safe fix, run tests, and review the diff")
     with tempfile.TemporaryDirectory() as project_td:
         project_root = Path(project_td) / "Projects"
@@ -400,6 +412,7 @@ def main() -> None:
     print("MAIN CHAT BACKGROUND RESULT DELIVERY:", True)
     print("VERIFIED PROJECT ROOT BINDING:", True)
     print("OUTCOME-AWARE RUN STATUS:", True)
+    print("ENGINEERING PLANNER QUALITY GATE:", True)
     print("RESULT: PASS")
 
 

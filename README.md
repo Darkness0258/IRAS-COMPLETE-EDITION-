@@ -2,10 +2,10 @@
 
 IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, secure worldwide Windows control, parallel multitasking, and dependency-aware multi-agent execution.
 
-**Release status:** `4.3.0-rc3` keeps the v4.3 hardening and fixes the latest real-device acceptance failures: autonomous background results are delivered back into the main chat, incomplete coordinator outcomes no longer appear as successful runs, and the preflight-verified Windows project root is enforced at the remote tool boundary. The v4 remote protocol remains `1`.
+**Release status:** `4.3.0-rc4` keeps the v4.3 hardening and fixes the latest real-device acceptance failures: autonomous background results are delivered back into the main chat, incomplete coordinator outcomes no longer appear as successful runs, and the preflight-verified Windows project root is enforced at the remote tool boundary. The v4 remote protocol remains `1`.
 
 
-## v4.3 RC3 result delivery and verified project binding
+## v4.3 RC4 result delivery and verified project binding
 
 - Autonomous multi-agent runs started from normal chat post their final coordinator result back into the main conversation.
 - Coordinator results expose `verified_outcome`; incomplete work becomes `partial_failure` rather than a false success.
