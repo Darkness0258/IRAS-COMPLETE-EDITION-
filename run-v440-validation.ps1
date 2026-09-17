@@ -5,7 +5,7 @@ function Invoke-IrasCleanup {
     & .\scripts\maintenance\clean-v400-validation-debris.ps1 -Quiet
 }
 
-Write-Host "=== IRAS v4.4 RC1 PERSISTENT AUTONOMY + PROVIDER HEALTH VALIDATION ==="
+Write-Host "=== IRAS v4.4 RC2 PERSISTENT AUTONOMY + PROVIDER HEALTH VALIDATION ==="
 Write-Host ""
 Invoke-IrasCleanup
 Write-Host "IRAS validation debris cleanup: PASS"
@@ -30,7 +30,7 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     Write-Host ""
-    Write-Host "IRAS v4.4 RC1 VALIDATION RESULT: PASS"
+    Write-Host "IRAS v4.4 RC2 VALIDATION RESULT: PASS"
 }
 finally {
     Invoke-IrasCleanup

@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = [
     "docs/V4_4_RC1_NOTES.md",
+    "docs/V4_4_RC2_NOTES.md",
     "tests/test_v440_persistent_jobs_and_provider_status.py",
     "scripts/validate_v440_integrated.py",
     "scripts/validate_v440_clean_tree.py",
@@ -33,7 +34,7 @@ def main() -> None:
             text = path.read_text(encoding="utf-8", errors="ignore")
             if any(pattern.search(text) for pattern in SECRET_PATTERNS):
                 secrets.append(rel)
-    print("=== IRAS v4.4 RC1 CLEAN TREE VALIDATION ===")
+    print("=== IRAS v4.4 RC2 CLEAN TREE VALIDATION ===")
     print("LOCAL .ENV PRESENT:", (ROOT / ".env").exists())
     print("REQUIRED V4.4 FILES PRESENT:", not missing)
     print("CACHE/COMPILED DEBRIS PRESENT:", bool(cache))

@@ -167,3 +167,24 @@ def test_web_provider_panel_and_retry_contract():
     assert 'id="retryGoal"' in text
     assert '"interrupted"' in text
     assert "...remoteHeaders()" in text
+
+
+def test_provider_panel_deduplicates_concurrent_and_repeated_rows():
+    text = open("clients/web/index.html", encoding="utf-8").read()
+    assert "providerStatusGeneration" in text
+    assert "const providerIndex=new Map()" in text
+    assert "providerGrid.replaceChildren(...cards)" in text
+
+
+def test_provider_status_api_deduplicates_logical_provider_identity():
+    text = open("src/iras/cloud_api.py", encoding="utf-8").read()
+    assert "def _provider_identity" in text
+    assert "def _dedupe_provider_rows" in text
+    assert "rows = _dedupe_provider_rows([*cloud, local])" in text
+
+
+def test_v44_ci_runs_v440_validator():
+    text = open(".github/workflows/ci.yml", encoding="utf-8").read()
+    assert "IRAS v4.4 RC2 provider status and current release validation" in text
+    assert r".\run-v440-validation.ps1" in text
+    assert "run-v430-validation.ps1" not in text

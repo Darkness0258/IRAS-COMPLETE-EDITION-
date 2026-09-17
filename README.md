@@ -2,10 +2,17 @@
 
 IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, secure worldwide Windows control, parallel multitasking, and dependency-aware multi-agent execution.
 
-**Release status:** `4.4.0-rc1` adds live provider health, persistent autonomous-job checkpoints, restart-safe resume/retry, progress history, and rollback metadata while preserving the responsive RC8 device bridge. The v4 remote protocol remains `1`.
+**Release status:** `4.4.0-rc2` adds live provider health, persistent autonomous-job checkpoints, restart-safe resume/retry, progress history, and rollback metadata while preserving the responsive RC8 device bridge. The v4 remote protocol remains `1`.
 
 RC7 makes project identity a fail-closed boundary: named project discovery scans every configured bridge root fairly and accepts only candidates that actually match the requested identity. It also normalizes complete JSON tool requests from local Ollama only when the requested tool was offered for that turn, so bounded IRAS tools execute instead of leaking raw tool-call JSON into task results.
 
+
+## v4.4 RC2 provider status + CI hotfix
+
+- **Current-release CI:** GitHub Actions now runs `run-v440-validation.ps1` instead of the stale v4.3 validator.
+- **Provider card de-duplication:** server and web UI collapse repeated provider identities, including device-local Ollama.
+- **Refresh race protection:** overlapping Providers-panel refreshes cannot append duplicate cards.
+- **No protocol change:** Remote protocol remains `1`; all v4.4 RC1 persistent-autonomy behavior is preserved.
 
 ## v4.4 RC1 persistent autonomy and provider health
 

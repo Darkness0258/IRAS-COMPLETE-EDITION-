@@ -29,8 +29,8 @@ class _Provider:
 
 
 def main() -> None:
-    print("=== IRAS v4.4 RC1 PERSISTENT AUTONOMY + PROVIDER HEALTH INTEGRATED VALIDATION ===")
-    assert __version__ == "4.4.0-rc1"
+    print("=== IRAS v4.4 RC2 PERSISTENT AUTONOMY + PROVIDER HEALTH INTEGRATED VALIDATION ===")
+    assert __version__ == "4.4.0-rc2"
     assert REMOTE_PROTOCOL_VERSION == 1
     assert action_permission("local_llm_status", {}) == PermissionLevel.READ
 
@@ -52,6 +52,12 @@ def main() -> None:
     assert '@app.get("/v1/providers/status")' in cloud
     assert '@app.post("/v1/orchestration/runs/{run_id}/retry")' in cloud
     assert 'def local_llm_status' in executor
+    ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert r".\run-v440-validation.ps1" in ci
+    assert "run-v430-validation.ps1" not in ci
+    assert "providerStatusGeneration" in web
+    assert "providerGrid.replaceChildren(...cards)" in web
+    assert "def _dedupe_provider_rows" in cloud
 
     with tempfile.TemporaryDirectory() as td:
         journal = Path(td) / "runs.json"
@@ -96,6 +102,8 @@ def main() -> None:
     print("RETRY FAILED NODES: True")
     print("ROLLBACK CHECKPOINT METADATA: True")
     print("JOB EVENT HISTORY: True")
+    print("CURRENT RELEASE CI VALIDATOR: True")
+    print("PROVIDER STATUS DEDUPLICATION: True")
     print("REMOTE PROTOCOL VERSION:", REMOTE_PROTOCOL_VERSION)
     print("RESULT: PASS")
 

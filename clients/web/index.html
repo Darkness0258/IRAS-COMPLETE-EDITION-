@@ -118,7 +118,7 @@ const screenDlg=$("#screenDlg"),screenImg=$("#screenImg");
 const directDlg=$("#directDlg"),directAction=$("#directAction"),directArgs=$("#directArgs"),directOut=$("#directOut");
 const tasksDlg=$("#tasksDlg"),taskInput=$("#taskInput"),taskOut=$("#taskOut"),goalInput=$("#goalInput");
 const providersDlg=$("#providersDlg"),providerGrid=$("#providerGrid"),providerSummary=$("#providerSummary");
-let activeGoalRunId="",goalPollGeneration=0;
+let activeGoalRunId="",goalPollGeneration=0,providerStatusGeneration=0;
 const announcedGoalRuns=new Set(),chatGoalWatchers=new Set();
 
 let currentAudio=null,currentAudioUrl=null,currentChatAbort=null;
@@ -459,16 +459,34 @@ function formatProviderTime(value){
 }
 
 async function loadProviderStatus(){
+  const generation=++providerStatusGeneration;
   const c=config();
   if(!c.token){cfg.showModal();return}
   const base=c.server||location.origin;
   providerSummary.textContent="Checking providers...";
-  providerGrid.innerHTML="";
   const r=await fetch(base+"/v1/providers/status",{headers:{"Authorization":"Bearer "+c.token}});
   if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
   const data=await r.json();
-  providerSummary.textContent=`Active: ${data.active_provider||"unknown"} · model: ${data.active_model||"unknown"} · available ${data.available_count||0}/${data.configured_count||0} · fallback: ${(data.fallback_order||[]).join(" → ")||"none"}`;
-  for(const p of data.providers||[]){
+  if(generation!==providerStatusGeneration)return;
+  const uniqueProviders=[];
+  const providerIndex=new Map();
+  for(const raw of data.providers||[]){
+    if(!raw||typeof raw!=="object")continue;
+    const name=String(raw.name||"provider").trim();
+    const key=(name.toLowerCase()==="device-ollama"?"ollama":name.toLowerCase());
+    if(!providerIndex.has(key)){
+      providerIndex.set(key,uniqueProviders.length);
+      uniqueProviders.push({...raw,name:key==="ollama"?"ollama":name});
+      continue;
+    }
+    const idx=providerIndex.get(key);
+    const current=uniqueProviders[idx];
+    const preferRaw=String(raw.kind||"").toLowerCase()==="device_local"||(!current.ready&&raw.ready);
+    uniqueProviders[idx]={...(preferRaw?current:raw),...(preferRaw?raw:current),active:Boolean(current.active||raw.active),next:Boolean(current.next||raw.next),ready:Boolean(current.ready||raw.ready),name:key==="ollama"?"ollama":String((preferRaw?raw:current).name||name)};
+  }
+  providerSummary.textContent=`Active: ${data.active_provider||"unknown"} · model: ${data.active_model||"unknown"} · available ${uniqueProviders.filter(p=>p.ready).length}/${uniqueProviders.length} · fallback: ${(data.fallback_order||[]).filter((v,i,a)=>a.indexOf(v)===i).join(" → ")||"none"}`;
+  const cards=[];
+  for(const p of uniqueProviders){
     const card=document.createElement("div");card.className="provider-card";
     const head=document.createElement("div");head.className="provider-head";
     const name=document.createElement("span");name.textContent=(p.active?"● ":p.next?"→ ":"")+(p.name||"provider");
@@ -479,8 +497,9 @@ async function loadProviderStatus(){
     if(p.device_name)bits.push(`device: ${p.device_name}`);
     if(p.last_error)bits.push(`last error: ${p.last_error}`);
     meta.textContent=bits.join("\n");
-    card.append(head,meta);providerGrid.appendChild(card);
+    card.append(head,meta);cards.push(card);
   }
+  providerGrid.replaceChildren(...cards);
   status.textContent="Provider status updated";
 }
 

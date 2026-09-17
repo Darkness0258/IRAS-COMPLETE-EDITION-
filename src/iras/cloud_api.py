@@ -1057,6 +1057,50 @@ def _cloud_provider_rows() -> list[dict[str, Any]]:
     }]
 
 
+
+def _provider_identity(row: dict[str, Any]) -> str:
+    name = str(row.get("name") or "").strip().lower()
+    if name in {"device-ollama", "ollama"}:
+        return "ollama"
+    return name
+
+
+def _dedupe_provider_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return one provider-status row per logical provider.
+
+    Prefer device-local Ollama telemetry for the Ollama identity and otherwise
+    retain the first configured provider row while merging readiness markers.
+    This also makes the API resilient to nested/repeated provider pools.
+    """
+    ordered: list[dict[str, Any]] = []
+    index_by_key: dict[str, int] = {}
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        item = dict(raw)
+        key = _provider_identity(item)
+        if not key:
+            continue
+        if key not in index_by_key:
+            index_by_key[key] = len(ordered)
+            ordered.append(item)
+            continue
+        idx = index_by_key[key]
+        current = ordered[idx]
+        prefer_new = (
+            str(item.get("kind") or "").lower() == "device_local"
+            or (not current.get("ready") and item.get("ready"))
+        )
+        base = dict(item if prefer_new else current)
+        other = current if prefer_new else item
+        base["active"] = bool(current.get("active") or item.get("active"))
+        base["next"] = bool(current.get("next") or item.get("next"))
+        base["ready"] = bool(current.get("ready") or item.get("ready"))
+        if not base.get("last_error") and other.get("last_error"):
+            base["last_error"] = other.get("last_error")
+        ordered[idx] = base
+    return ordered
+
 def _device_ollama_provider_row(requester_device: str = "provider-status") -> dict[str, Any]:
     row = {
         "name": "ollama",
@@ -1103,14 +1147,15 @@ def provider_status(
     _authorized(authorization)
     cloud = _cloud_provider_rows()
     local = _device_ollama_provider_row()
-    rows = list(cloud)
-    if not any(str(item.get("name") or "").lower() == "ollama" for item in rows):
-        rows.append(local)
-    else:
-        rows.append({**local, "name": "device-ollama"})
+    rows = _dedupe_provider_rows([*cloud, local])
     active = str(getattr(runtime.agent.provider, "last_provider", settings.provider) or settings.provider)
+    active_identity = _provider_identity({"name": active})
     available = [item for item in rows if item.get("ready")]
-    fallback = [str(item.get("name") or "") for item in rows if item.get("ready") and str(item.get("name") or "") != active]
+    fallback = [
+        str(item.get("name") or "")
+        for item in rows
+        if item.get("ready") and _provider_identity(item) != active_identity
+    ]
     return {
         "ok": True,
         "updated_at": time.time(),
