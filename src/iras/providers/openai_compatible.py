@@ -208,6 +208,48 @@ class OpenAICompatibleProvider(Provider):
             detail,
         )
 
+
+    def probe(self, timeout: float = 6.0) -> dict[str, Any]:
+        """Perform a low-cost authenticated provider reachability probe.
+
+        The probe uses the OpenAI-compatible ``/models`` endpoint and does not
+        request a chat completion, so a Providers-panel refresh does not burn
+        generation tokens. A provider that does not expose ``/models`` is
+        reported as configured-but-unverified rather than falsely ONLINE.
+        """
+        started = time.perf_counter()
+        timeout = max(1.0, min(float(timeout), 12.0))
+        url = f"{self.base_url}/models"
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(connect=min(timeout, 4.0), read=timeout, write=timeout, pool=4.0),
+                follow_redirects=False,
+            ) as client:
+                response = client.get(url, headers=self._headers())
+        except httpx.TimeoutException as exc:
+            raise RuntimeError(f"LLM health probe timed out after {timeout:g} seconds.") from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"LLM health probe network error: {exc}") from exc
+
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        if response.status_code in {404, 405}:
+            return {
+                "ok": False,
+                "verified": False,
+                "state": "configured",
+                "latency_ms": latency_ms,
+                "status_code": response.status_code,
+                "detail": "Provider does not expose an authenticated /models health endpoint.",
+            }
+        self._check_response(response)
+        return {
+            "ok": True,
+            "verified": True,
+            "state": "online",
+            "latency_ms": latency_ms,
+            "status_code": response.status_code,
+        }
+
     def complete(self, messages, tools):
         started = time.perf_counter()
 

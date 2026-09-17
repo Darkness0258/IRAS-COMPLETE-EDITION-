@@ -1,4 +1,4 @@
-name: IRAS v4.4 RC2 provider status and current release validation
+name: IRAS v4.4 FINAL production validation
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 jobs:
   test-windows:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

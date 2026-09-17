@@ -1,11 +1,20 @@
-# IRAS 4.4.0 RC1 — Persistent Autonomous Work + Provider Health
+# IRAS 4.4.0 FINAL — Persistent Autonomous Work + Provider Health
 
 IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, secure worldwide Windows control, parallel multitasking, and dependency-aware multi-agent execution.
 
-**Release status:** `4.4.0-rc2` adds live provider health, persistent autonomous-job checkpoints, restart-safe resume/retry, progress history, and rollback metadata while preserving the responsive RC8 device bridge. The v4 remote protocol remains `1`.
+**Release status:** `4.4.0` freezes the v4.4 persistent-autonomy architecture with active provider verification, health-aware routing, durable PostgreSQL checkpoints, guarded rollback, and long-running job recovery. The v4 remote protocol remains `1`.
 
 RC7 makes project identity a fail-closed boundary: named project discovery scans every configured bridge root fairly and accepts only candidates that actually match the requested identity. It also normalizes complete JSON tool requests from local Ollama only when the requested tool was offered for that turn, so bounded IRAS tools execute instead of leaking raw tool-call JSON into task results.
 
+
+## v4.4 FINAL production hardening
+
+- **Verified provider health:** cloud providers remain `CONFIGURED` until an authenticated probe or real request proves reachability; the Providers panel now actively probes without generating text.
+- **Shared health-aware routing:** multi-agent worker pools share cooldown/failure telemetry and can prefer healthier fallbacks after repeated failures.
+- **Durable deployment checkpoints:** when `DATABASE_URL` is set, orchestration checkpoints are mirrored to PostgreSQL instead of depending only on Render's ephemeral filesystem.
+- **Guarded rollback:** terminal engineering jobs can restore tracked working-tree changes to their captured Git HEAD after explicit FULL Remote authorization; commit rewrites and untracked-file deletion are refused.
+- **Eight-hour job watchers:** browser progress/result polling now matches long provider recovery windows.
+- **Final release CI:** Windows Actions validates the v4.4 FINAL release script.
 
 ## v4.4 RC2 provider status + CI hotfix
 

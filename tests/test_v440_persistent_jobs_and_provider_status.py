@@ -25,7 +25,7 @@ class _Provider:
 def test_provider_status_exposes_health_routing_and_timestamps():
     provider = MultiProvider([ProviderSlot("alpha", _Provider("a")), ProviderSlot("beta", _Provider("b"))])
     rows = provider.diagnostics()
-    assert rows[0]["state"] == "online"
+    assert rows[0]["state"] == "configured"
     assert rows[0]["next"] is True
     assert rows[0]["last_success_at"] is None
 
@@ -185,6 +185,6 @@ def test_provider_status_api_deduplicates_logical_provider_identity():
 
 def test_v44_ci_runs_v440_validator():
     text = open(".github/workflows/ci.yml", encoding="utf-8").read()
-    assert "IRAS v4.4 RC2 provider status and current release validation" in text
+    assert "IRAS v4.4 FINAL production validation" in text
     assert r".\run-v440-validation.ps1" in text
     assert "run-v430-validation.ps1" not in text

@@ -6,10 +6,13 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = [
     "docs/V4_4_RC1_NOTES.md",
     "docs/V4_4_RC2_NOTES.md",
+    "docs/V4_4_FINAL_NOTES.md",
+    "tests/test_v440_final_hardening.py",
     "tests/test_v440_persistent_jobs_and_provider_status.py",
     "scripts/validate_v440_integrated.py",
     "scripts/validate_v440_clean_tree.py",
     "run-v440-validation.ps1",
+    "run-v440-final-real-device-smoke.ps1",
     "src/iras/orchestration.py",
     "src/iras/providers/multi_provider.py",
     "src/iras/device_bridge/executor.py",
@@ -34,7 +37,7 @@ def main() -> None:
             text = path.read_text(encoding="utf-8", errors="ignore")
             if any(pattern.search(text) for pattern in SECRET_PATTERNS):
                 secrets.append(rel)
-    print("=== IRAS v4.4 RC2 CLEAN TREE VALIDATION ===")
+    print("=== IRAS v4.4.0 FINAL CLEAN TREE VALIDATION ===")
     print("LOCAL .ENV PRESENT:", (ROOT / ".env").exists())
     print("REQUIRED V4.4 FILES PRESENT:", not missing)
     print("CACHE/COMPILED DEBRIS PRESENT:", bool(cache))

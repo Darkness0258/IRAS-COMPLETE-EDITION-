@@ -40,6 +40,7 @@ READ_ACTIONS = {
     "git_status",
     "git_diff",
     "git_log",
+    "git_head",
     "capture_screen",
     "screen_preview",
     "observe_ui",
@@ -86,6 +87,7 @@ CRITICAL_ACTIONS = {
     "delete_path",
     "power_action",
     "run_command",
+    "git_restore_checkpoint",
 }
 
 

@@ -78,7 +78,7 @@
   <div class="sub" style="margin-bottom:10px">Give IRAS one objective and the Planner will build a dependency graph for Researcher, Coder, Tester, Reviewer, and Coordinator agents. Independent nodes run in parallel; Windows actions remain permissioned and queued.</div>
   <label>Multi-agent objective</label>
   <textarea id="goalInput" placeholder="Example: Improve IRAS voice latency, inspect the current implementation, make the safest useful changes, run tests, review regressions, and report the final result."></textarea>
-  <div class="row" style="margin:8px 0 14px"><button class="primary" id="runGoal">Start Goal</button><button id="latestGoal">Latest Run</button><button id="pauseGoal">Pause</button><button id="resumeGoal">Resume</button><button id="retryGoal">Retry Failed</button><button id="cancelGoal">Cancel</button></div>
+  <div class="row" style="margin:8px 0 14px"><button class="primary" id="runGoal">Start Goal</button><button id="latestGoal">Latest Run</button><button id="pauseGoal">Pause</button><button id="resumeGoal">Resume</button><button id="retryGoal">Retry Failed</button><button id="rollbackGoal">Rollback</button><button id="cancelGoal">Cancel</button></div>
   <div class="sub" style="margin:8px 0">Or run independent tasks directly (one per line):</div>
   <textarea id="taskInput" placeholder="Research the latest framework changes
 Check the status of my Windows PC
@@ -94,7 +94,7 @@ Summarize the current project state"></textarea>
   <div class="sub">Live health, cooldown, latency, active model, and fallback order. IRAS uses this state internally before retrying provider work.</div>
   <div id="providerSummary" class="status" style="margin:10px 0">Loading...</div>
   <div id="providerGrid" class="provider-grid"></div>
-  <div class="row"><button id="refreshProviders">Refresh</button><button id="closeProviders">Close</button></div>
+  <div class="row"><button id="refreshProviders">Probe Now</button><button id="closeProviders">Close</button></div>
 </dialog>
 
 <dialog id="directDlg">
@@ -334,7 +334,7 @@ async function watchAgentRunInChat(runId){
   if(!runId||chatGoalWatchers.has(runId)||announcedGoalRuns.has(runId))return;
   chatGoalWatchers.add(runId);
   const terminal=new Set(["succeeded","partial_failure","failed","cancelled","interrupted"]);
-  const deadline=Date.now()+30*60*1000;
+  const deadline=Date.now()+8*60*60*1000;
   try{
     while(Date.now()<deadline){
       const run=await fetchAgentRun(runId);
@@ -359,7 +359,7 @@ async function watchAgentRunInChat(runId){
 async function pollAgentRun(runId){
   const generation=++goalPollGeneration;
   activeGoalRunId=runId;
-  const deadline=Date.now()+30*60*1000;
+  const deadline=Date.now()+8*60*60*1000;
   while(Date.now()<deadline&&generation===goalPollGeneration){
     const run=await fetchAgentRun(runId);
     taskOut.textContent=renderAgentRun(run);
@@ -430,6 +430,27 @@ async function loadLatestGoal(){
   if(!["succeeded","partial_failure","failed","cancelled","interrupted"].includes(runs[0].state))pollAgentRun(activeGoalRunId).catch(e=>{taskOut.textContent="Error: "+e.message});
 }
 
+async function rollbackGoalRun(){
+  if(!activeGoalRunId)throw new Error("No multi-agent run selected. Start one or load the latest run.");
+  if(!remoteSession()&&!(await ensureRemoteAuthorization()))return;
+  const run=await fetchAgentRun(activeGoalRunId);
+  const checkpoint=run.checkpoint?.rollback_checkpoint||{};
+  if(!checkpoint.head)throw new Error("This run has no rollback checkpoint.");
+  if(!checkpoint.working_tree_clean)throw new Error("Safe automatic rollback is unavailable because the project was already dirty before the job started.");
+  const ok=confirm("Rollback tracked project changes from this autonomous job to checkpoint "+checkpoint.head.slice(0,12)+"?\n\nIRAS will NOT delete untracked files and will refuse if Git HEAD changed.");
+  if(!ok)return;
+  const c=config(),base=c.server||location.origin;
+  status.textContent="Executing guarded rollback...";
+  const r=await fetch(base+"/v1/orchestration/runs/"+encodeURIComponent(activeGoalRunId)+"/rollback",{
+    method:"POST",
+    headers:{"Authorization":"Bearer "+c.token,"X-Device-ID":"web",...remoteHeaders()}
+  });
+  if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
+  const data=await r.json();
+  taskOut.textContent=renderAgentRun(data.run||run)+"\n\nROLLBACK RESULT\n"+JSON.stringify(data.rollback||{},null,2);
+  status.textContent="Guarded rollback completed";
+}
+
 async function controlGoal(action){
   if(!activeGoalRunId)throw new Error("No active multi-agent run. Start one or load the latest run.");
   const c=config(),base=c.server||location.origin;
@@ -464,7 +485,7 @@ async function loadProviderStatus(){
   if(!c.token){cfg.showModal();return}
   const base=c.server||location.origin;
   providerSummary.textContent="Checking providers...";
-  const r=await fetch(base+"/v1/providers/status",{headers:{"Authorization":"Bearer "+c.token}});
+  const r=await fetch(base+"/v1/providers/status?probe=true",{headers:{"Authorization":"Bearer "+c.token}});
   if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
   const data=await r.json();
   if(generation!==providerStatusGeneration)return;
@@ -484,7 +505,7 @@ async function loadProviderStatus(){
     const preferRaw=String(raw.kind||"").toLowerCase()==="device_local"||(!current.ready&&raw.ready);
     uniqueProviders[idx]={...(preferRaw?current:raw),...(preferRaw?raw:current),active:Boolean(current.active||raw.active),next:Boolean(current.next||raw.next),ready:Boolean(current.ready||raw.ready),name:key==="ollama"?"ollama":String((preferRaw?raw:current).name||name)};
   }
-  providerSummary.textContent=`Active: ${data.active_provider||"unknown"} · model: ${data.active_model||"unknown"} · available ${uniqueProviders.filter(p=>p.ready).length}/${uniqueProviders.length} · fallback: ${(data.fallback_order||[]).filter((v,i,a)=>a.indexOf(v)===i).join(" → ")||"none"}`;
+  providerSummary.textContent=`Active: ${data.active_provider||"unknown"}${data.active_model?" · model: "+data.active_model:""} · verified online ${data.verified_online_count??uniqueProviders.filter(p=>p.ready).length}/${uniqueProviders.length} · routable ${data.routable_count??uniqueProviders.filter(p=>p.routable!==false).length}/${uniqueProviders.length} · fallback: ${(data.fallback_order||[]).filter((v,i,a)=>a.indexOf(v)===i).join(" → ")||"none"}`;
   const cards=[];
   for(const p of uniqueProviders){
     const card=document.createElement("div");card.className="provider-card";
@@ -493,7 +514,9 @@ async function loadProviderStatus(){
     const state=document.createElement("span");state.className="provider-state";state.textContent=providerStateLabel(p.state);
     head.append(name,state);
     const meta=document.createElement("div");meta.className="provider-meta";
-    const bits=[`model: ${p.model||"n/a"}`,`latency: ${p.latency_ms||0}ms`,`cooldown: ${p.cooldown_seconds||0}s`,`last success: ${formatProviderTime(p.last_success_at)}`];
+    const bits=[`model: ${p.model||"n/a"}`,`latency: ${p.latency_ms||0}ms`,`cooldown: ${p.cooldown_seconds||0}s`,`last probe: ${formatProviderTime(p.last_probe_at)}`,`last success: ${formatProviderTime(p.last_success_at)}`];
+    if(p.success_rate!==null&&p.success_rate!==undefined)bits.push(`success: ${p.success_rate}% · avg ${p.avg_latency_ms||0}ms`);
+    if(p.route_rank)bits.push(`route rank: ${p.route_rank}`);
     if(p.device_name)bits.push(`device: ${p.device_name}`);
     if(p.last_error)bits.push(`last error: ${p.last_error}`);
     meta.textContent=bits.join("\n");
@@ -1289,6 +1312,7 @@ $("#latestGoal").onclick=()=>loadLatestGoal().catch(e=>{taskOut.textContent="Err
 $("#pauseGoal").onclick=()=>controlGoal("pause").catch(e=>{taskOut.textContent="Error: "+e.message});
 $("#resumeGoal").onclick=()=>controlGoal("resume").catch(e=>{taskOut.textContent="Error: "+e.message});
 $("#retryGoal").onclick=()=>controlGoal("retry").catch(e=>{taskOut.textContent="Error: "+e.message});
+$("#rollbackGoal").onclick=()=>rollbackGoalRun().catch(e=>{taskOut.textContent="Error: "+e.message;status.textContent="Rollback error"});
 $("#cancelGoal").onclick=()=>controlGoal("cancel").catch(e=>{taskOut.textContent="Error: "+e.message});
 $("#closeTasks").onclick=()=>tasksDlg.close();
 $("#refreshProviders").onclick=()=>loadProviderStatus().catch(e=>{providerSummary.textContent="Error: "+e.message});

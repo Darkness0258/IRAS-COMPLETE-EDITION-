@@ -728,6 +728,7 @@ orchestration_manager = OrchestrationManager(
     _multitask_worker,
     _orchestration_planner,
     journal_path=settings.data_dir / "orchestration_runs.json",
+    database_url=settings.database_url,
 )
 
 
@@ -878,16 +879,21 @@ def _prepare_orchestration_context(
     )
     git_head = _deterministic_device_request(
         context,
-        "git_log",
-        {"repo": project_root, "limit": 1},
+        "git_head",
+        {"repo": project_root},
         35,
     )
     status_stdout = str((git_check or {}).get("stdout") or "") if isinstance(git_check, dict) else ""
-    head_stdout = str((git_head or {}).get("stdout") or "") if isinstance(git_head, dict) else ""
+    status_lines = [
+        line for line in status_stdout.splitlines()
+        if line.strip() and not line.startswith("##")
+    ]
+    head_value = str((git_head or {}).get("head") or "") if isinstance(git_head, dict) else ""
     context["rollback_checkpoint"] = {
         "project_root": project_root,
-        "head": head_stdout.strip().splitlines()[0] if head_stdout.strip() else "",
-        "working_tree_clean": not bool(status_stdout.strip()),
+        "head": head_value.strip().lower(),
+        "working_tree_clean": not bool(status_lines),
+        "baseline_status": status_lines[:200],
         "captured_at": time.time(),
     }
     context["project_root"] = project_root
@@ -1025,8 +1031,52 @@ def health():
     }
 
 
-def _cloud_provider_rows() -> list[dict[str, Any]]:
+def _cloud_provider_rows(*, probe: bool = False) -> list[dict[str, Any]]:
     provider = runtime.agent.provider
+    if probe and callable(getattr(provider, "probe_all", None)):
+        try:
+            provider.probe_all(timeout=6.0)
+        except Exception:
+            pass
+    elif probe and callable(getattr(provider, "probe", None)):
+        try:
+            result = provider.probe(timeout=6.0)
+            if isinstance(result, dict):
+                return [{
+                    "name": settings.provider,
+                    "model": getattr(provider, "last_model", None) or settings.model,
+                    "state": str(result.get("state") or ("online" if result.get("ok") else "configured")),
+                    "ready": bool(result.get("ok")),
+                    "routable": True,
+                    "configured": True,
+                    "order": 1,
+                    "next": True,
+                    "active": bool(getattr(provider, "last_request_ms", 0)),
+                    "cooldown_seconds": 0,
+                    "failures": 0,
+                    "last_error": str(result.get("detail") or "")[:240],
+                    "latency_ms": int(result.get("latency_ms") or 0),
+                    "last_probe_at": time.time(),
+                    "probe_state": str(result.get("state") or "configured"),
+                }]
+        except Exception as exc:
+            return [{
+                "name": settings.provider,
+                "model": getattr(provider, "last_model", None) or settings.model,
+                "state": "offline",
+                "ready": False,
+                "routable": True,
+                "configured": True,
+                "order": 1,
+                "next": True,
+                "active": False,
+                "cooldown_seconds": 0,
+                "failures": 0,
+                "last_error": str(exc)[:240],
+                "latency_ms": 0,
+                "last_probe_at": time.time(),
+                "probe_state": "offline",
+            }]
     if callable(getattr(provider, "diagnostics", None)):
         try:
             rows = provider.diagnostics()
@@ -1044,18 +1094,18 @@ def _cloud_provider_rows() -> list[dict[str, Any]]:
     return [{
         "name": settings.provider,
         "model": getattr(provider, "last_model", None) or settings.model,
-        "state": "online",
-        "ready": True,
+        "state": "configured",
+        "ready": False,
+        "routable": True,
         "configured": True,
         "order": 1,
         "next": True,
-        "active": True,
+        "active": bool(getattr(provider, "last_request_ms", 0)),
         "cooldown_seconds": 0,
         "failures": 0,
         "last_error": "",
         "latency_ms": int(getattr(provider, "last_request_ms", 0) or 0),
     }]
-
 
 
 def _provider_identity(row: dict[str, Any]) -> str:
@@ -1096,6 +1146,7 @@ def _dedupe_provider_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         base["active"] = bool(current.get("active") or item.get("active"))
         base["next"] = bool(current.get("next") or item.get("next"))
         base["ready"] = bool(current.get("ready") or item.get("ready"))
+        base["routable"] = bool(current.get("routable", current.get("ready")) or item.get("routable", item.get("ready")))
         if not base.get("last_error") and other.get("last_error"):
             base["last_error"] = other.get("last_error")
         ordered[idx] = base
@@ -1108,6 +1159,7 @@ def _device_ollama_provider_row(requester_device: str = "provider-status") -> di
         "model": "",
         "state": "offline",
         "ready": False,
+        "routable": False,
         "configured": True,
         "cooldown_seconds": 0,
         "failures": 0,
@@ -1128,9 +1180,12 @@ def _device_ollama_provider_row(requester_device: str = "provider-status") -> di
             row.update({
                 "state": "online" if result.get("ready") else "offline",
                 "ready": bool(result.get("ready")),
+                "routable": bool(result.get("ready")),
                 "model": str(result.get("selected_model") or ""),
                 "models": list(result.get("models") or [])[:16],
                 "latency_ms": int(result.get("latency_ms") or 0),
+                "last_probe_at": time.time(),
+                "probe_state": "online" if result.get("ready") else "offline",
                 "device_name": str(device.get("display_name") or "Windows PC"),
             })
             if not result.get("ready"):
@@ -1142,28 +1197,53 @@ def _device_ollama_provider_row(requester_device: str = "provider-status") -> di
 
 @app.get("/v1/providers/status")
 def provider_status(
+    probe: bool = False,
     authorization: str | None = Header(default=None),
 ):
     _authorized(authorization)
-    cloud = _cloud_provider_rows()
+    cloud = _cloud_provider_rows(probe=bool(probe))
     local = _device_ollama_provider_row()
     rows = _dedupe_provider_rows([*cloud, local])
-    active = str(getattr(runtime.agent.provider, "last_provider", settings.provider) or settings.provider)
-    active_identity = _provider_identity({"name": active})
-    available = [item for item in rows if item.get("ready")]
-    fallback = [
-        str(item.get("name") or "")
+    provider = runtime.agent.provider
+    route_order = []
+    if callable(getattr(provider, "route_order", None)):
+        try:
+            route_order = [str(item) for item in provider.route_order()]
+        except Exception:
+            route_order = []
+    active_raw = str(getattr(provider, "last_provider", settings.provider) or settings.provider)
+    active_identity = _provider_identity({"name": active_raw})
+    active_verified = any(
+        bool(item.get("active")) and _provider_identity(item) == active_identity
         for item in rows
-        if item.get("ready") and _provider_identity(item) != active_identity
-    ]
+    )
+    active = active_raw if active_verified else "not-yet-used"
+    verified = [item for item in rows if item.get("ready")]
+    routable = [item for item in rows if item.get("routable", item.get("ready"))]
+    ordered_fallback = []
+    for name in route_order:
+        key = _provider_identity({"name": name})
+        if key and key != active_identity and key not in {_provider_identity({"name": x}) for x in ordered_fallback}:
+            ordered_fallback.append(name)
+    if local.get("ready") and "ollama" not in {_provider_identity({"name": x}) for x in ordered_fallback} and active_identity != "ollama":
+        ordered_fallback.append("ollama")
+    if not ordered_fallback:
+        ordered_fallback = [
+            str(item.get("name") or "")
+            for item in routable
+            if _provider_identity(item) != active_identity
+        ]
     return {
         "ok": True,
+        "probe_performed": bool(probe),
         "updated_at": time.time(),
         "active_provider": active,
-        "active_model": getattr(runtime.agent.provider, "last_model", None) or settings.model,
-        "available_count": len(available),
+        "active_model": (getattr(provider, "last_model", None) or settings.model) if active_verified else "",
+        "verified_online_count": len(verified),
+        "available_count": len(verified),
+        "routable_count": len(routable),
         "configured_count": len(rows),
-        "fallback_order": fallback,
+        "fallback_order": ordered_fallback,
         "providers": rows,
     }
 
@@ -1415,6 +1495,83 @@ def retry_orchestration_run(
     if not run:
         raise HTTPException(status_code=404, detail="Orchestration run not found.")
     return run
+
+
+@app.post("/v1/orchestration/runs/{run_id}/rollback")
+def rollback_orchestration_run(
+    run_id: str,
+    authorization: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
+    x_iras_remote_session_id: str | None = Header(default=None, alias="X-IRAS-Remote-Session-ID"),
+    x_iras_remote_token: str | None = Header(default=None, alias="X-IRAS-Remote-Token"),
+):
+    _authorized(authorization)
+    remote_session = _authorize_remote_session(
+        x_iras_remote_session_id,
+        x_iras_remote_token,
+    )
+    if not remote_session:
+        raise HTTPException(status_code=403, detail="Rollback requires a live FULL IRAS Remote session.")
+    if int(remote_session.get("max_permission") or 0) < int(PermissionLevel.CRITICAL):
+        raise HTTPException(status_code=403, detail="Rollback requires a FULL Remote session with CRITICAL permission.")
+    run = orchestration_manager.get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Orchestration run not found.")
+    if str(run.get("state") or "") not in {"succeeded", "partial_failure", "failed", "cancelled", "interrupted"}:
+        raise HTTPException(status_code=409, detail="Pause or wait for the autonomous job to finish before rollback.")
+    checkpoint = ((run.get("checkpoint") or {}).get("rollback_checkpoint") or {})
+    project_root = str(checkpoint.get("project_root") or (run.get("checkpoint") or {}).get("project_root") or "").strip()
+    head = str(checkpoint.get("head") or "").strip().lower()
+    baseline_clean = bool(checkpoint.get("working_tree_clean"))
+    project_device_id = str((run.get("checkpoint") or {}).get("project_device_id") or "").strip()
+    session_device_id = str(remote_session.get("device_id") or "").strip()
+    if project_device_id and session_device_id and project_device_id != session_device_id:
+        raise HTTPException(status_code=409, detail="Rollback Remote session targets a different Windows device than the job checkpoint.")
+    if not project_root or not head:
+        raise HTTPException(status_code=409, detail="This job has no usable Git rollback checkpoint.")
+    if not baseline_clean:
+        raise HTTPException(
+            status_code=409,
+            detail="Safe automatic rollback is unavailable because the project was already dirty before this job started.",
+        )
+    context = {
+        "remote_session": dict(remote_session),
+        "requester_device": str(x_device_id or "web")[:128],
+    }
+    try:
+        result = _deterministic_device_request(
+            context,
+            "git_restore_checkpoint",
+            {"repo": project_root, "head": head, "baseline_clean": True},
+            120,
+        )
+    except (PermissionError, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    orchestration_manager.add_event(
+        run_id,
+        "rollback_executed",
+        "User-approved tracked-file rollback executed against the job checkpoint.",
+        data={
+            "project_root": project_root,
+            "head": head,
+            "restored": bool((result or {}).get("restored")) if isinstance(result, dict) else False,
+            "untracked_preserved": list((result or {}).get("untracked_preserved") or [])[:50] if isinstance(result, dict) else [],
+        },
+    )
+    runtime.audit.record(
+        "orchestration_rollback",
+        {
+            "run_id": run_id,
+            "project_root": project_root,
+            "head": head,
+            "remote_session_id": remote_session.get("session_id"),
+        },
+    )
+    return {
+        "ok": True,
+        "rollback": result,
+        "run": orchestration_manager.get(run_id),
+    }
 
 
 @app.delete("/v1/orchestration/runs/{run_id}")

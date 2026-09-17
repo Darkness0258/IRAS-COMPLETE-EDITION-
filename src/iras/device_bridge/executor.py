@@ -57,6 +57,8 @@ DEFAULT_CAPABILITIES = [
     "git_status",
     "git_diff",
     "git_log",
+    "git_head",
+    "git_restore_checkpoint",
     "run_tests",
     "local_llm_complete",
     "local_llm_status",
@@ -252,6 +254,8 @@ class DeviceExecutor:
             "git_status": self.git_status,
             "git_diff": self.git_diff,
             "git_log": self.git_log,
+            "git_head": self.git_head,
+            "git_restore_checkpoint": self.git_restore_checkpoint,
             "run_tests": self.run_tests,
             "local_llm_complete": self.local_llm_complete,
             "local_llm_status": self.local_llm_status,
@@ -852,6 +856,74 @@ class DeviceExecutor:
             shell=False,
         )
         return {"repo": str(repository), "returncode": result.returncode, "stdout": result.stdout[-30000:], "stderr": result.stderr[-8000:]}
+
+    def git_head(self, repo: str):
+        repository = self._path(repo)
+        if not repository.is_dir():
+            raise NotADirectoryError(repository)
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repository,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=30,
+            shell=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError("Unable to resolve repository HEAD: " + result.stderr[-1000:])
+        head = result.stdout.strip()
+        if not re.fullmatch(r"[0-9a-fA-F]{40,64}", head):
+            raise RuntimeError("Repository HEAD was not a full commit hash.")
+        return {"repo": str(repository), "head": head.lower()}
+
+    def git_restore_checkpoint(self, repo: str, head: str, baseline_clean: bool = False):
+        """Safely restore tracked working-tree changes to a verified checkpoint.
+
+        This deliberately refuses to reset commits or delete untracked files.
+        Rollback is allowed only when the job started from a clean tree and the
+        repository HEAD has not changed since the checkpoint was captured.
+        """
+        repository = self._path(repo)
+        if not repository.is_dir():
+            raise NotADirectoryError(repository)
+        if not bool(baseline_clean):
+            raise PermissionError("Rollback is unavailable because the job did not start from a clean Git working tree.")
+        checkpoint = str(head or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{40,64}", checkpoint):
+            raise ValueError("Rollback checkpoint must be a full Git commit hash.")
+        current = self.git_head(str(repository))["head"]
+        if current != checkpoint:
+            raise PermissionError(
+                "Rollback refused because repository HEAD changed after the checkpoint. "
+                "IRAS will not reset or rewrite commits automatically."
+            )
+        before = subprocess.run(
+            ["git", "status", "--porcelain=v1"],
+            cwd=repository, capture_output=True, text=True, errors="replace", timeout=30, shell=False,
+        )
+        restore = subprocess.run(
+            ["git", "restore", "--source", checkpoint, "--staged", "--worktree", "--", "."],
+            cwd=repository, capture_output=True, text=True, errors="replace", timeout=90, shell=False,
+        )
+        if restore.returncode != 0:
+            raise RuntimeError("Git rollback failed: " + restore.stderr[-2000:])
+        after = subprocess.run(
+            ["git", "status", "--porcelain=v1"],
+            cwd=repository, capture_output=True, text=True, errors="replace", timeout=30, shell=False,
+        )
+        remaining = [line for line in after.stdout.splitlines() if line.strip()]
+        untracked = [line[3:] for line in remaining if line.startswith("?? ")]
+        tracked_remaining = [line for line in remaining if not line.startswith("?? ")]
+        return {
+            "repo": str(repository),
+            "head": current,
+            "restored": not tracked_remaining,
+            "tracked_changes_before": [line for line in before.stdout.splitlines() if line and not line.startswith("?? ")][:200],
+            "tracked_changes_remaining": tracked_remaining[:200],
+            "untracked_preserved": untracked[:200],
+            "note": "IRAS restores tracked changes only; untracked files are intentionally preserved.",
+        }
 
     def local_llm_status(self):
         """Return bounded loopback Ollama readiness without running inference."""

@@ -285,6 +285,7 @@ class OrchestrationManager:
         max_tasks_per_run: int | None = None,
         retained_runs: int = 30,
         journal_path: str | Path | None = None,
+        database_url: str = "",
         provider_wait_budget_seconds: int | None = None,
         device_wait_budget_seconds: int | None = None,
     ):
@@ -299,6 +300,11 @@ class OrchestrationManager:
             "IRAS_ORCHESTRATION_MAX_ACTIVE_RUNS", 4, 1, 20
         )
         self.journal_path = Path(journal_path).expanduser() if journal_path else None
+        self.database_url = str(database_url or "").strip()
+        self._journal_psycopg = None
+        self._journal_connection = None
+        self._journal_db_ready = False
+        self._init_durable_journal()
         if provider_wait_budget_seconds is None:
             provider_wait_budget_seconds = _env_int(
                 "IRAS_ORCHESTRATION_PROVIDER_WAIT_SECONDS",
@@ -340,6 +346,113 @@ class OrchestrationManager:
             daemon=True,
         )
         self._scheduler.start()
+
+    def _journal_connection_ready(self):
+        connection = self._journal_connection
+        if connection is not None and not getattr(connection, "closed", False):
+            return connection
+        if not self.database_url or self._journal_psycopg is None:
+            return None
+        connection = self._journal_psycopg.connect(
+            self.database_url,
+            autocommit=True,
+            connect_timeout=8,
+        )
+        self._journal_connection = connection
+        return connection
+
+    def _init_durable_journal(self) -> None:
+        """Initialize an optional PostgreSQL-backed orchestration journal.
+
+        Render's local filesystem is not a durable deployment boundary. When
+        DATABASE_URL is configured, v4.4 FINAL mirrors the checkpoint journal
+        into PostgreSQL so deploy/restart recovery does not depend on an
+        ephemeral disk. Local JSON remains as a secondary fallback.
+        """
+        if not self.database_url:
+            return
+        try:
+            import psycopg
+            self._journal_psycopg = psycopg
+            conn = self._journal_connection_ready()
+            if conn is None:
+                return
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS iras_orchestration_journal(
+                        journal_key TEXT PRIMARY KEY,
+                        payload TEXT NOT NULL,
+                        updated_at DOUBLE PRECISION NOT NULL
+                    )
+                    """
+                )
+            self._journal_db_ready = True
+        except Exception:
+            self._journal_psycopg = None
+            self._journal_connection = None
+            self._journal_db_ready = False
+
+    def _drop_journal_connection(self) -> None:
+        connection = self._journal_connection
+        self._journal_connection = None
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+    def _read_durable_journal(self) -> dict[str, Any] | None:
+        if not self._journal_db_ready or self._journal_psycopg is None:
+            return None
+        for attempt in range(2):
+            try:
+                conn = self._journal_connection_ready()
+                if conn is None:
+                    return None
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT payload FROM iras_orchestration_journal WHERE journal_key=%s",
+                        ("primary",),
+                    )
+                    row = cur.fetchone()
+                if not row:
+                    return None
+                raw = json.loads(str(row[0]))
+                return raw if isinstance(raw, dict) else None
+            except Exception:
+                self._drop_journal_connection()
+                if attempt == 0:
+                    continue
+                self._journal_db_ready = False
+        return None
+
+    def _write_durable_journal(self, payload: dict[str, Any]) -> None:
+        if not self._journal_db_ready or self._journal_psycopg is None:
+            return
+        encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        for attempt in range(2):
+            try:
+                conn = self._journal_connection_ready()
+                if conn is None:
+                    return
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO iras_orchestration_journal(journal_key,payload,updated_at)
+                        VALUES(%s,%s,%s)
+                        ON CONFLICT(journal_key) DO UPDATE SET
+                            payload=excluded.payload,
+                            updated_at=excluded.updated_at
+                        """,
+                        ("primary", encoded, time.time()),
+                    )
+                return
+            except Exception:
+                self._drop_journal_connection()
+                if attempt == 0:
+                    continue
+                self._journal_db_ready = False
 
     @staticmethod
     def validate_specs(specs: list[GraphTaskSpec], max_tasks: int) -> None:
@@ -472,10 +585,15 @@ class OrchestrationManager:
         never persisted. Any formerly active run is marked failed/interrupted so
         the UI cannot imply it is still executing after Render restarts.
         """
-        if not self.journal_path or not self.journal_path.exists():
-            return
+        raw = self._read_durable_journal()
+        if raw is None:
+            if not self.journal_path or not self.journal_path.exists():
+                return
+            try:
+                raw = json.loads(self.journal_path.read_text(encoding="utf-8"))
+            except Exception:
+                return
         try:
-            raw = json.loads(self.journal_path.read_text(encoding="utf-8"))
             journal_version = int(raw.get("version") or 1) if isinstance(raw, dict) else 1
             rows = raw.get("runs") if isinstance(raw, dict) else []
             if not isinstance(rows, list):
@@ -986,6 +1104,23 @@ class OrchestrationManager:
                 data={"verified_outcome": run.verified_outcome},
             )
 
+    def add_event(
+        self,
+        run_id: str,
+        kind: str,
+        message: str,
+        *,
+        data: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Append a bounded externally-triggered audit event to a job."""
+        with self._condition:
+            run = self._runs.get(str(run_id))
+            if not run:
+                return None
+            self._event_locked(run, kind, message, data=data)
+            self._persist_locked()
+            return run.public()
+
     def pause(self, run_id: str) -> dict[str, Any] | None:
         with self._condition:
             run = self._runs.get(str(run_id))
@@ -1133,20 +1268,23 @@ class OrchestrationManager:
             self._runs.pop(stale.run_id, None)
 
     def _persist_locked(self) -> None:
+        payload = {
+            "version": 3,
+            "updated_at": _now_iso(),
+            "runs": [run.public() for run in self._runs.values()],
+        }
+        # PostgreSQL is the durable deployment boundary when configured.
+        self._write_durable_journal(payload)
         if not self.journal_path:
             return
         try:
             self.journal_path.parent.mkdir(parents=True, exist_ok=True)
-            payload = {
-                "version": 2,
-                "updated_at": _now_iso(),
-                "runs": [run.public() for run in self._runs.values()],
-            }
             tmp = self.journal_path.with_suffix(self.journal_path.suffix + ".tmp")
             tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(self.journal_path)
         except Exception:
-            # Journaling is observability, not an execution dependency.
+            # A local mirror failure must not block execution when the durable
+            # database journal or in-memory scheduler is still available.
             pass
 
     def close(self) -> None:
@@ -1155,6 +1293,7 @@ class OrchestrationManager:
             self._condition.notify_all()
         self._executor.shutdown(wait=False, cancel_futures=True)
         self._planner_executor.shutdown(wait=False, cancel_futures=True)
+        self._drop_journal_connection()
 
 
 def parse_goal_command(text: str) -> str:
