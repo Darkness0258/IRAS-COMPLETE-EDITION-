@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = [
+    "docs/V4_3_RC5_NOTES.md",
     "src/iras/multitasking.py",
     "src/iras/orchestration.py",
     "src/iras/execution_router.py",
@@ -56,7 +57,7 @@ def main() -> None:
             if any(pattern.search(text) for pattern in SECRET_PATTERNS):
                 secret_hits.append(rel)
 
-    print("=== IRAS v4.3 RC4 CLEAN TREE VALIDATION ===")
+    print("=== IRAS v4.3 RC5 CLEAN TREE VALIDATION ===")
     print("LOCAL .ENV PRESENT:", (ROOT / ".env").exists())
     print("REQUIRED V4.3 FILES PRESENT:", not missing)
     print("CACHE/COMPILED DEBRIS PRESENT:", bool(bad_cache))

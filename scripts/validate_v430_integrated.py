@@ -64,8 +64,8 @@ class _Memory:
 
 
 def main() -> None:
-    print("=== IRAS v4.3 RC4 ENGINEERING DAG ENFORCEMENT INTEGRATED VALIDATION ===")
-    assert __version__ == "4.3.0-rc4"
+    print("=== IRAS v4.3 RC5 REMOTE AUTHORIZATION CONTINUATION INTEGRATED VALIDATION ===")
+    assert __version__ == "4.3.0-rc5"
     assert SCENE_GRAPH_VERSION == "3.7.0"
     assert REMOTE_PROTOCOL_VERSION == 1
 
@@ -107,6 +107,11 @@ def main() -> None:
     web_text = (PROJECT_ROOT / "clients/web/index.html").read_text(encoding="utf-8")
     assert "async function watchAgentRunInChat(runId)" in web_text
     assert "watchAgentRunInChat(activeGoalRunId);" in web_text
+    assert "async function ensureRemoteAuthorization()" in web_text
+    assert 'completion.execution_mode==="authorization_required"' in web_text
+    assert "Remote authorized. Resuming your request..." in web_text
+    assert "Remote authorized. Starting the goal automatically..." in web_text
+    assert "improv(?:e|ement)" in web_text
     cloud_contract = validate_cloud_health({
         "service_id": "iras-cloud",
         "version": __version__,
@@ -413,6 +418,7 @@ def main() -> None:
     print("VERIFIED PROJECT ROOT BINDING:", True)
     print("OUTCOME-AWARE RUN STATUS:", True)
     print("ENGINEERING PLANNER QUALITY GATE:", True)
+    print("REMOTE AUTHORIZATION CONTINUATION:", True)
     print("RESULT: PASS")
 
 

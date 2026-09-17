@@ -150,17 +150,24 @@ function deterministicWriteNeedsRemote(text){
   const raw=String(text||"").trim();
   if(/\bcreate\s+[A-Za-z]:\\.+?\.txt\s+containing\s+exactly\b/i.test(raw))return true;
   if(/^(how|what|why|explain|tell me about|show me how|teach me|can you explain)\b/i.test(raw))return false;
-  return /\b(build|implement|develop|refactor|upgrade|improve|fix|modify|edit|integrate|migrate|deploy|configure|install)\b/i.test(raw);
+  // Keep browser preflight aligned with the server's engineering-intent gate.
+  // Noun forms matter: "make one safe improvement" must be treated exactly
+  // like "improve the project" instead of slipping through to a server-only 403.
+  return /\b(build|implement(?:ation)?|develop(?:ment)?|refactor|upgrade|improv(?:e|ement)|fix|modify|modification|edit|patch|integrate|migration|migrate|deploy|configure|install)\b/i.test(raw);
+}
+
+async function ensureRemoteAuthorization(){
+  if(remoteSession())return true;
+  status.textContent="This objective needs your Remote authorization...";
+  await createRemoteSession();
+  return !!remoteSession();
 }
 
 async function ensureRemoteForDeterministicWrite(text){
-  // Legacy function name retained for compatibility; RC6 also preflights
-  // implementation objectives that autonomous routing may promote to Coder work.
+  // Legacy function name retained for compatibility; engineering objectives
+  // promoted to Coder work also use this preflight.
   if(!deterministicWriteNeedsRemote(text))return true;
-  if(remoteSession())return true;
-  status.textContent="This objective may change Windows/project state and needs your Remote authorization...";
-  await createRemoteSession();
-  return !!remoteSession();
+  return await ensureRemoteAuthorization();
 }
 
 function setRemoteSession(value){
@@ -341,19 +348,41 @@ async function startAgentGoal(){
   const objective=goalInput.value.trim();
   if(!objective)throw new Error("Enter a multi-agent objective first.");
   if(!(await ensureRemoteForDeterministicWrite(objective))){
-    taskOut.textContent="This goal changes Windows state and needs an authorized Remote session. Start Remote and try again.";
+    taskOut.textContent="Remote authorization was not granted, so IRAS did not start the state-changing goal.";
     status.textContent="Remote authorization required";
     return;
   }
   const base=c.server||location.origin;
   taskOut.textContent="Planner is building the task graph...";
   status.textContent="Starting multi-agent run...";
-  const r=await fetch(base+"/v1/orchestration/runs",{
-    method:"POST",
-    headers:{"Content-Type":"application/json","Authorization":"Bearer "+c.token,"X-Device-ID":"web",...remoteHeaders()},
-    body:JSON.stringify({objective})
-  });
-  if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
+
+  let retriedAfterAuthorization=false;
+  let r;
+  while(true){
+    r=await fetch(base+"/v1/orchestration/runs",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":"Bearer "+c.token,"X-Device-ID":"web",...remoteHeaders()},
+      body:JSON.stringify({objective})
+    });
+    if(r.ok)break;
+
+    const errorText=(await r.text())||("HTTP "+r.status);
+    const remoteRequired=r.status===403&&/remote session|enable remote|remote authorization/i.test(errorText);
+    if(remoteRequired&&!retriedAfterAuthorization){
+      retriedAfterAuthorization=true;
+      taskOut.textContent="IRAS needs Remote authorization before this goal can change Windows/project state.";
+      status.textContent="Waiting for Remote authorization...";
+      if(!(await ensureRemoteAuthorization())){
+        taskOut.textContent="Remote authorization was not granted, so the goal was not started.";
+        status.textContent="Remote authorization required";
+        return;
+      }
+      taskOut.textContent="Remote authorized. Starting the goal automatically...";
+      continue;
+    }
+    throw new Error(errorText);
+  }
+
   const run=await r.json();
   activeGoalRunId=run.run_id;
   taskOut.textContent=renderAgentRun(run);
@@ -694,6 +723,7 @@ async function legacyReply(base,c,text,bubble,session,signal){
   bubble.textContent=data.response;
   voiceBuffer=data.response;
   drainVoiceBuffer(session,true);
+  return data;
 }
 
 async function streamReply(base,c,text,bubble,session,signal){
@@ -711,8 +741,7 @@ async function streamReply(base,c,text,bubble,session,signal){
   });
 
   if(r.status===404){
-    await legacyReply(base,c,text,bubble,session,signal);
-    return;
+    return await legacyReply(base,c,text,bubble,session,signal);
   }
 
   if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
@@ -720,7 +749,7 @@ async function streamReply(base,c,text,bubble,session,signal){
 
   const reader=r.body.getReader();
   const decoder=new TextDecoder();
-  let buffer="",gotToken=false;
+  let buffer="",gotToken=false,doneData=null;
 
   while(true){
     const {value,done}=await reader.read();
@@ -759,20 +788,31 @@ async function streamReply(base,c,text,bubble,session,signal){
         drainVoiceBuffer(session,false);
       }else if(event==="done"){
         bubble.classList.remove("cursor");
-        drainVoiceBuffer(session,true);
+        doneData=data||{};
+        if(data.execution_mode==="authorization_required"){
+          // Do not speak the temporary safety-gate response; the client can
+          // obtain consent and resume this exact turn automatically.
+          voiceBuffer="";
+          stopCurrentAudio();
+          status.textContent="Remote authorization required";
+        }else{
+          drainVoiceBuffer(session,true);
+        }
         conversationUntil=Date.now()+20000;
         if(data.orchestration_run_id){
           activeGoalRunId=data.orchestration_run_id;
           watchAgentRunInChat(activeGoalRunId);
         }
 
-        const first=data.first_token_ms||0,total=data.timing_ms||0;
-        const queueWait=data.queue_wait_ms||0;
-        status.textContent=handsFree
-          ?"Listening for your next sentence..."
-          :(first>0
-            ?`Reply started in ${(first/1000).toFixed(2)}s · total ${(total/1000).toFixed(2)}s${queueWait>0?` · queued ${(queueWait/1000).toFixed(1)}s`:""}`
-            :`Completed in ${(total/1000).toFixed(2)}s${queueWait>0?` · queued ${(queueWait/1000).toFixed(1)}s`:""}`);
+        if(data.execution_mode!=="authorization_required"){
+          const first=data.first_token_ms||0,total=data.timing_ms||0;
+          const queueWait=data.queue_wait_ms||0;
+          status.textContent=handsFree
+            ?"Listening for your next sentence..."
+            :(first>0
+              ?`Reply started in ${(first/1000).toFixed(2)}s · total ${(total/1000).toFixed(2)}s${queueWait>0?` · queued ${(queueWait/1000).toFixed(1)}s`:""}`
+              :`Completed in ${(total/1000).toFixed(2)}s${queueWait>0?` · queued ${(queueWait/1000).toFixed(1)}s`:""}`);
+        }
       }else if(event==="error"){
         bubble.classList.remove("cursor");
         const err=new Error(data.message||"Streaming failed.");
@@ -783,6 +823,7 @@ async function streamReply(base,c,text,bubble,session,signal){
 
     if(done)break;
   }
+  return doneData;
 }
 
 async function sendText(text,{interrupt=false}={}){
@@ -820,7 +861,25 @@ async function sendText(text,{interrupt=false}={}){
 
   try{
     const base=c.server||location.origin;
-    await streamReply(base,c,text,bubble,session,controller.signal);
+    let completion=await streamReply(base,c,text,bubble,session,controller.signal);
+
+    if(generation!==chatGeneration)return;
+
+    if(completion&&completion.execution_mode==="authorization_required"){
+      status.textContent="Waiting for Remote authorization...";
+      const authorized=await ensureRemoteAuthorization();
+      if(authorized){
+        bubble.textContent="";
+        voiceBuffer="";
+        status.textContent="Remote authorized. Resuming your request...";
+        completion=await streamReply(base,c,text,bubble,session,controller.signal);
+        if(completion&&completion.execution_mode==="authorization_required"){
+          throw new Error("Remote session was created but the server did not accept it. Reopen Remote and try again.");
+        }
+      }else{
+        status.textContent="Remote authorization required";
+      }
+    }
 
     if(generation!==chatGeneration)return;
 

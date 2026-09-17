@@ -355,3 +355,8 @@ remote-session/device provenance. Project-scoped device tools bind relative or
 placeholder paths to that verified root and reject absolute escapes. The project
 root is therefore enforced by the tool boundary rather than depending only on a
 system-prompt instruction.
+
+
+## v4.3 RC5 — Remote Authorization Continuation
+
+State-changing autonomous objectives keep the server-side Remote-session gate. The web client now treats an `authorization_required` completion as a resumable safety checkpoint: it asks the user to authorize the Remote session, then retries the same pending turn once with the new request-local Remote credentials. Manual Tasks goals use the same one-retry handoff on a 403 Remote requirement. Declining consent leaves the objective unstarted.

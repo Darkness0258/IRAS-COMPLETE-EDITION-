@@ -1,16 +1,21 @@
-# IRAS 4.3.0 RC2 — Project-Aware Autonomous Engineering
+# IRAS 4.3.0 RC5 — Remote Authorization Continuation
 
 IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, secure worldwide Windows control, parallel multitasking, and dependency-aware multi-agent execution.
 
-**Release status:** `4.3.0-rc4` keeps the v4.3 hardening and fixes the latest real-device acceptance failures: autonomous background results are delivered back into the main chat, incomplete coordinator outcomes no longer appear as successful runs, and the preflight-verified Windows project root is enforced at the remote tool boundary. The v4 remote protocol remains `1`.
+**Release status:** `4.3.0-rc5` keeps the v4.3 hardening and fixes the latest real-device acceptance failures: autonomous background results are delivered back into the main chat, incomplete coordinator outcomes no longer appear as successful runs, and the preflight-verified Windows project root is enforced at the remote tool boundary. The v4 remote protocol remains `1`.
+
+RC5 closes the remaining authorization handoff gap in autonomous chat and Tasks. If an engineering objective needs a live Remote session, the web client now requests user authorization and resumes the exact pending objective automatically after consent instead of forcing the user to retype/re-send it. The server safety gate remains authoritative and no session is self-granted.
 
 
-## v4.3 RC4 result delivery and verified project binding
+## v4.3 RC5 remote authorization continuation
 
-- Autonomous multi-agent runs started from normal chat post their final coordinator result back into the main conversation.
-- Coordinator results expose `verified_outcome`; incomplete work becomes `partial_failure` rather than a false success.
-- Project-scoped Git/file/test tool calls bind to the preflight-verified Windows project root; relative aliases cannot drift outside it.
-- Absolute project-tool path escapes are rejected before entering the Windows queue.
+- Browser engineering-intent preflight recognizes noun forms such as `improvement` as well as `improve`.
+- Normal streaming chat treats `execution_mode=authorization_required` as a resumable safety checkpoint.
+- After the user explicitly approves the 30-minute FULL Remote session, IRAS retries the exact pending chat turn once with the new Remote headers; the user message is not duplicated.
+- Tasks → Start Goal performs the same one-time authorization continuation when the server returns a Remote-session 403.
+- Declining Remote consent leaves the state-changing objective unstarted.
+- The server-side Remote safety gate remains authoritative; IRAS never self-grants Windows authorization.
+- RC3/RC4 protections remain intact: main-chat final-result delivery, truthful partial-failure status, verified project-root binding, project preflight, and engineering Planner quality enforcement.
 
 ## v4.3 RC2 project-aware engineering preflight
 
