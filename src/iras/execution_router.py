@@ -79,6 +79,12 @@ _INFORMATIONAL_REQUEST_RE = re.compile(
     r"^(?:how\b|what\b|why\b|explain\b|tell me about\b|show me how\b|teach me\b|can you explain\b)",
     re.IGNORECASE,
 )
+
+_PROJECT_WORK_RE = re.compile(
+    r"\b(project|repository|repo|codebase|source|implementation|git|pytest|tests?|regression|IRAS)\b",
+    re.IGNORECASE,
+)
+
 _PARALLEL_CUE_RE = re.compile(
     r"\b(in parallel|simultaneously|at the same time|independent tasks?|do these tasks?|all three|all four|both tasks?)\b",
     re.IGNORECASE,
@@ -250,6 +256,16 @@ def needs_remote_state_change(text: str) -> bool:
         return True
     return bool(_IMPLEMENTATION_RE.search(cleaned))
 
+
+
+def needs_project_workspace(text: str) -> bool:
+    """Return True when an objective needs a concrete development workspace.
+
+    This is deliberately lexical and conservative; it is used only for
+    preflight/path resolution, never as permission to mutate files.
+    """
+    cleaned = _clean(text)
+    return bool(cleaned and _PROJECT_WORK_RE.search(cleaned))
 
 def fallback_orchestration_graph(objective: str) -> list[dict[str, object]]:
     """Build a useful local DAG when the Planner model is unavailable.

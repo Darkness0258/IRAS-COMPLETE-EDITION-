@@ -36,6 +36,7 @@ READ_ACTIONS = {
     "read_text_range",
     "search_text",
     "file_info",
+    "find_projects",
     "git_status",
     "git_diff",
     "git_log",

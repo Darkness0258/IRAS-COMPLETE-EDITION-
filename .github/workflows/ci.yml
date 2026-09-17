@@ -1,4 +1,4 @@
-name: IRAS v4.3 RC1 deep audit validation
+name: IRAS v4.3 RC2 project-aware engineering validation
 
 on:
   push:

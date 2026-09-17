@@ -51,6 +51,7 @@ DEFAULT_CAPABILITIES = [
     "read_text_range",
     "search_text",
     "file_info",
+    "find_projects",
     "git_status",
     "git_diff",
     "git_log",
@@ -243,6 +244,7 @@ class DeviceExecutor:
             "read_text_range": self.read_text_range,
             "search_text": self.search_text,
             "file_info": self.file_info,
+            "find_projects": self.find_projects,
             "git_status": self.git_status,
             "git_diff": self.git_diff,
             "git_log": self.git_log,
@@ -630,6 +632,112 @@ class DeviceExecutor:
                     digest.update(chunk)
             result["sha256"] = digest.hexdigest()
         return result
+
+    def find_projects(
+        self,
+        query: str = "",
+        max_depth: int = 3,
+        max_results: int = 20,
+    ):
+        """Discover likely development projects inside configured bridge roots.
+
+        Discovery is read-only, bounded, and never follows symlinks. A project
+        is considered useful when it contains .git or a common project manifest.
+        Results are ranked by query match and repository markers so cloud agents
+        do not have to invent Windows paths.
+        """
+        query = str(query or "").strip().lower()
+        max_depth = max(0, min(int(max_depth), 5))
+        max_results = max(1, min(int(max_results), 50))
+        markers = (
+            ".git",
+            "pyproject.toml",
+            "package.json",
+            "Cargo.toml",
+            "go.mod",
+            "requirements.txt",
+        )
+        results = []
+        seen: set[str] = set()
+        scanned = 0
+        max_scanned = 2500
+
+        def consider(candidate: Path, depth: int) -> None:
+            nonlocal scanned
+            if scanned >= max_scanned:
+                return
+            scanned += 1
+            try:
+                if candidate.is_symlink() or not candidate.is_dir():
+                    return
+                resolved = candidate.resolve()
+            except OSError:
+                return
+            key = os.path.normcase(str(resolved))
+            if key in seen:
+                return
+            seen.add(key)
+            present = []
+            for marker_name in markers:
+                try:
+                    if (resolved / marker_name).exists():
+                        present.append(marker_name)
+                except OSError:
+                    pass
+            if not present:
+                return
+            haystack = (resolved.name + " " + str(resolved)).lower()
+            query_match = bool(query and query in haystack)
+            git_repo = ".git" in present
+            score = (100 if query_match else 0) + (40 if git_repo else 0) + max(0, 12 - depth)
+            results.append({
+                "path": str(resolved),
+                "name": resolved.name,
+                "depth": depth,
+                "markers": present,
+                "git": git_repo,
+                "query_match": query_match,
+                "score": score,
+            })
+
+        for root in self.allowed_roots:
+            try:
+                root = root.resolve()
+            except OSError:
+                continue
+            queue: list[tuple[Path, int]] = [(root, 0)]
+            while queue and scanned < max_scanned:
+                current, depth = queue.pop(0)
+                consider(current, depth)
+                if depth >= max_depth:
+                    continue
+                try:
+                    children = sorted(current.iterdir(), key=lambda item: item.name.lower())
+                except OSError:
+                    continue
+                for child in children:
+                    if child.name in {".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache"}:
+                        continue
+                    try:
+                        if child.is_symlink() or not child.is_dir():
+                            continue
+                    except OSError:
+                        continue
+                    queue.append((child, depth + 1))
+
+        results.sort(key=lambda item: (-int(item["score"]), str(item["path"]).lower()))
+        if query:
+            matched = [item for item in results if item["query_match"]]
+            if matched:
+                results = matched
+        return {
+            "query": query,
+            "allowed_roots": [str(path) for path in self.allowed_roots],
+            "projects": results[:max_results],
+            "project_count": min(len(results), max_results),
+            "scanned_directories": scanned,
+            "truncated": scanned >= max_scanned or len(results) > max_results,
+        }
 
     def git_status(
         self,

@@ -502,6 +502,9 @@ class IRASAgent:
         ):
             return {"device_run_tests"}
 
+        if cls._contains_any(q, ("find my project", "find the project", "find my repo", "locate project", "locate repository")):
+            return {"device_find_projects"}
+
         if "git status" in q:
             return {"device_git_status"}
 

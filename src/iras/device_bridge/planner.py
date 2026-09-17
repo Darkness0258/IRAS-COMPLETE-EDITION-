@@ -36,6 +36,7 @@ SAFE_DEVICE_PLANNER_TOOLS = (
     "device_open_project",
     "device_list_files",
     "device_read_text",
+    "device_find_projects",
     "device_git_status",
     "device_run_tests",
     "device_capture_screen",

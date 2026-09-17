@@ -22,7 +22,7 @@ from iras.deterministic_orchestration import (
     exact_file_plan,
     parse_exact_file_objective,
 )
-from iras.execution_router import decide_execution, fallback_orchestration_graph, parallel_graph
+from iras.execution_router import decide_execution, fallback_orchestration_graph, parallel_graph, needs_project_workspace
 from iras.remote_access import RemoteAccessPolicy, action_permission
 from iras.remote_protocol import REMOTE_PROTOCOL_VERSION, validate_cloud_health
 from iras.safety_runtime import EmergencyStop
@@ -30,6 +30,7 @@ from iras.security.secret_store import protect_secret, unprotect_secret, protect
 from iras.security.tool_content import secure_tool_payload
 from iras.remote_access import is_sensitive_path
 from iras.device_bridge.tools import make_tools
+from iras.device_bridge.executor import DeviceExecutor
 from iras.device_bridge.remote_context import remote_command_context, current_remote_command_context
 from iras.device_bridge.store import DeviceBridgeStore
 from iras.device_bridge.whatsapp_workflow import _full_vision_fallback_enabled
@@ -63,8 +64,8 @@ class _Memory:
 
 
 def main() -> None:
-    print("=== IRAS v4.3 RC1 DEEP AUDIT INTEGRATED VALIDATION ===")
-    assert __version__ == "4.3.0-rc1"
+    print("=== IRAS v4.3 RC2 PROJECT-AWARE ENGINEERING INTEGRATED VALIDATION ===")
+    assert __version__ == "4.3.0-rc2"
     assert SCENE_GRAPH_VERSION == "3.7.0"
     assert REMOTE_PROTOCOL_VERSION == 1
 
@@ -86,7 +87,7 @@ def main() -> None:
     audit_tools = {tool.name: tool for tool in make_tools(_DummyStore())}
     for required_tool in (
         "device_read_text_range", "device_search_text", "device_file_info",
-        "device_git_diff", "device_git_log", "device_run_tests",
+        "device_find_projects", "device_git_diff", "device_git_log", "device_run_tests",
     ):
         assert required_tool in audit_tools
     assert audit_tools["device_kill_process"].required_permission({"pid": 10}) == PermissionLevel.CRITICAL
@@ -279,6 +280,38 @@ def main() -> None:
         "Inspect IRAS, implement one safe improvement, run tests, review regressions, and report."
     )
     assert [item["role"] for item in fallback] == ["reviewer", "coder", "tester", "reviewer"]
+    assert needs_project_workspace("Inspect the IRAS project, implement a safe fix, run tests, and review the diff")
+    with tempfile.TemporaryDirectory() as project_td:
+        project_root = Path(project_td) / "Projects"
+        project_root.mkdir()
+        target = project_root / "IRAS-complete"
+        target.mkdir()
+        (target / ".git").mkdir()
+        (target / "pyproject.toml").write_text("[project]\nname='iras'\n", encoding="utf-8")
+        finder = DeviceExecutor([str(project_root)]).find_projects("IRAS", max_depth=2)
+        assert finder["projects"] and Path(finder["projects"][0]["path"]).name == "IRAS-complete"
+    device_attempts = {"count": 0}
+    def device_wait_runner(_prompt, _context):
+        device_attempts["count"] += 1
+        if device_attempts["count"] == 1:
+            raise RuntimeError("IRAS device 'Validation PC' is offline.")
+        return {"result": "device recovered", "metrics": {}}
+    device_wait = OrchestrationManager(
+        device_wait_runner, max_workers=1, max_tasks_per_run=4,
+        provider_wait_budget_seconds=0, device_wait_budget_seconds=1,
+    )
+    try:
+        device_run = device_wait.submit_graph(
+            "device recovery validation",
+            [{"id": "device", "prompt": "wait", "max_retries": 0}],
+            add_coordinator=False,
+        )
+        device_final = device_wait.wait(device_run["run_id"], timeout=3)
+        assert device_final["state"] == "succeeded"
+        assert device_final["tasks"][0]["device_waits"] == 1
+        assert device_final["tasks"][0]["attempts"] == 1
+    finally:
+        device_wait.close()
     readable = html_to_text("<html><script>bad()</script><h1>Python 3.14</h1><p>Readable docs</p></html>")
     assert "Python 3.14" in readable and "Readable docs" in readable and "bad()" not in readable
     assert action_permission("replace_text") == PermissionLevel.SYSTEM_ACTION
@@ -344,6 +377,8 @@ def main() -> None:
     print("DYNAMIC DEVICE PERMISSION ALIGNMENT: True")
     print("SENSITIVE PATH PROTECTION: True")
     print("BOUNDED PROJECT INSPECTION TOOLS: True")
+    print("PROJECT-AWARE WINDOWS WORKSPACE PREFLIGHT: True")
+    print("TRANSIENT DEVICE BACKPRESSURE WAIT: True")
     print("ORCHESTRATION RESTART RECOVERY: True")
     print("ACTIVE RUN BACKPRESSURE: True")
     print("RESULT: PASS")

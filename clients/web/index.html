@@ -264,10 +264,11 @@ function renderAgentRun(run){
   const lines=[`Multi-agent run ${run.run_id||""} · ${run.state||""} · ${run.completed_count||0}/${run.task_count||0} complete`, `Objective: ${run.objective||""}`];
   if(run.plan_error)lines.push(`Planner error: ${run.plan_error}`);
   for(const task of run.tasks||[]){
-    const mark=task.waiting_for_provider?"⏳":task.state==="succeeded"?"✓":task.state==="failed"?"✗":task.state==="blocked"?"⊘":task.state==="running"?"▶":task.state==="cancelled"?"■":"·";
+    const mark=(task.waiting_for_provider||task.waiting_for_device)?"⏳":task.state==="succeeded"?"✓":task.state==="failed"?"✗":task.state==="blocked"?"⊘":task.state==="running"?"▶":task.state==="cancelled"?"■":"·";
     const deps=(task.depends_on||[]).length?` deps=[${task.depends_on.join(", ")}]`:"";
     const providerWait=task.waiting_for_provider?` · provider wait ${task.retry_after_seconds||0}s`:"";
-    lines.push(`\n${mark} ${task.role||"general"} · ${task.title||task.task_id} · priority ${task.priority??50} · attempt ${task.attempts||0}${providerWait}${deps}`);
+    const deviceWait=task.waiting_for_device?` · device wait ${task.retry_after_seconds||0}s`:"";
+    lines.push(`\n${mark} ${task.role||"general"} · ${task.title||task.task_id} · priority ${task.priority??50} · attempt ${task.attempts||0}${providerWait}${deviceWait}${deps}`);
     if(task.result)lines.push(task.result);
     if(task.error)lines.push(`Error: ${task.error}`);
   }

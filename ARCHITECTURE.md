@@ -331,3 +331,10 @@ v4.3 hardens the boundary between model reasoning and external state. Retrieved 
 Remote Windows tools now resolve their cloud permission dynamically from the exact `RemoteAccessPolicy` action and arguments. Sensitive credential paths and process termination are `CRITICAL`; this closes the class of bugs where a generic cloud tool permission could be weaker than the device-side action permission. The project surface adds bounded search, ranged reads, hashing, Git diff/log, and targeted tests without granting a general shell.
 
 Filesystem mutation uses atomic replacement and recursive copy refuses symlink-containing trees. Public network tools bound response size/type and revalidate redirects. Supervisors cap active runs per requester. Orchestration journals are loaded only for observable history; active work found after a restart is failed as interrupted rather than replayed, and no remote-session secrets are restored.
+
+
+## v4.3 RC2 — Project-Aware Engineering Preflight
+
+Engineering objectives are preflighted against the paired Windows device before orchestration. The cloud verifies the session target is online, calls the bounded read-only `find_projects` device action, selects a project inside the configured bridge roots, verifies Git access, and stores that Windows project root in request-local orchestration context. Workers are instructed to use exactly that path for project/Git/search/edit/test tools. Cloud container paths are never treated as substitutes for the user's Windows repository.
+
+If the target device temporarily disappears during a graph, orchestration classifies the outage as infrastructure backpressure and waits up to `IRAS_ORCHESTRATION_DEVICE_WAIT_SECONDS` without consuming normal task retries. Authorization/root violations remain hard failures.

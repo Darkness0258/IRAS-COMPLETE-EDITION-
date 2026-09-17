@@ -370,6 +370,14 @@ def make_tools(store):
     def device_file_info(path, sha256=True, device_id=None):
         return request("file_info", {"path": path, "sha256": sha256}, device_id)
 
+    def device_find_projects(query="", max_depth=3, max_results=20, device_id=None):
+        return request(
+            "find_projects",
+            {"query": query, "max_depth": max_depth, "max_results": max_results},
+            device_id,
+            timeout=45,
+        )
+
     def device_git_status(
         repo,
         device_id=None,
@@ -1186,6 +1194,21 @@ def make_tools(store):
             PermissionLevel.READ,
         ),
         Tool(
+            "device_find_projects",
+            "Discover likely development projects/repositories inside configured IRAS bridge roots. Use this before project Git/file tools when the Windows project path is unknown; never invent a cloud/container path.",
+            {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "maxLength": 200},
+                    "max_depth": {"type": "integer", "minimum": 0, "maximum": 5},
+                    "max_results": {"type": "integer", "minimum": 1, "maximum": 50},
+                    **optional_device,
+                },
+            },
+            device_find_projects,
+            PermissionLevel.READ,
+        ),
+        Tool(
             "device_git_status",
             "Run read-only git status in an allowed repository on the paired PC.",
             {
@@ -1447,7 +1470,7 @@ def make_tools(store):
         "device_open_project": "open_project", "device_list_files": "list_directory",
         "device_read_text": "read_text", "device_read_text_range": "read_text_range",
         "device_search_text": "search_text", "device_file_info": "file_info",
-        "device_git_status": "git_status", "device_git_diff": "git_diff", "device_git_log": "git_log",
+        "device_find_projects": "find_projects", "device_git_status": "git_status", "device_git_diff": "git_diff", "device_git_log": "git_log",
         "device_run_tests": "run_tests", "device_capture_screen": "capture_screen",
         "device_screen_preview": "screen_preview", "device_list_processes": "list_processes",
         "device_kill_process": "kill_process", "device_write_text": "write_text",

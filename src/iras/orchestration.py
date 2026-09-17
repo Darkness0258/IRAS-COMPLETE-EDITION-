@@ -153,6 +153,8 @@ class GraphTaskRecord:
     next_eligible_at: float = 0.0
     provider_waits: int = 0
     provider_wait_started_at: float = field(default=0.0, repr=False, compare=False)
+    device_waits: int = 0
+    device_wait_started_at: float = field(default=0.0, repr=False, compare=False)
     future: Future | None = field(default=None, repr=False, compare=False)
 
     def public(self) -> dict[str, Any]:
@@ -170,6 +172,10 @@ class GraphTaskRecord:
                 "provider_waits": self.provider_waits,
                 "waiting_for_provider": bool(
                     self.state == "queued" and self.metrics.get("provider_wait")
+                ),
+                "device_waits": self.device_waits,
+                "waiting_for_device": bool(
+                    self.state == "queued" and self.metrics.get("device_wait")
                 ),
                 "retry_after_seconds": (
                     max(0, int(self.next_eligible_at - time.monotonic()))
@@ -240,6 +246,7 @@ class OrchestrationManager:
         retained_runs: int = 30,
         journal_path: str | Path | None = None,
         provider_wait_budget_seconds: int | None = None,
+        device_wait_budget_seconds: int | None = None,
     ):
         self.runner = runner
         self.planner = planner
@@ -262,6 +269,17 @@ class OrchestrationManager:
         self.provider_wait_budget_seconds = max(
             0,
             min(int(provider_wait_budget_seconds), 1800),
+        )
+        if device_wait_budget_seconds is None:
+            device_wait_budget_seconds = _env_int(
+                "IRAS_ORCHESTRATION_DEVICE_WAIT_SECONDS",
+                180,
+                0,
+                900,
+            )
+        self.device_wait_budget_seconds = max(
+            0,
+            min(int(device_wait_budget_seconds), 900),
         )
         self._executor = ThreadPoolExecutor(
             max_workers=self.max_workers,
@@ -627,6 +645,19 @@ class OrchestrationManager:
         # Give the provider a small grace window beyond its advertised cooldown.
         return max(0.25, min(float(seconds) + 0.5, 120.0))
 
+    @staticmethod
+    def _device_retry_delay(exc: Exception) -> float | None:
+        text = str(exc or "").lower()
+        transient = (
+            "no paired iras computer is online" in text
+            or "iras device" in text and "is offline" in text
+            or "computer did not accept the command before it expired" in text
+            or "computer accepted the command but did not finish it in time" in text
+        )
+        if not transient:
+            return None
+        return 5.0
+
     def _build_worker_context(self, run: OrchestrationRun, record: GraphTaskRecord) -> dict[str, Any]:
         context = dict(run.context)
         dependency_results = []
@@ -681,9 +712,41 @@ class OrchestrationManager:
                     return
                 now = time.monotonic()
                 provider_delay = self._provider_retry_delay(exc)
+                device_delay = self._device_retry_delay(exc)
                 if run.cancelled:
                     record.state = "cancelled"
                     record.finished_at = _now_iso()
+                elif device_delay is not None and self.device_wait_budget_seconds > 0:
+                    if record.device_wait_started_at <= 0:
+                        record.device_wait_started_at = now
+                    elapsed = max(0.0, now - record.device_wait_started_at)
+                    remaining_budget = max(0.0, self.device_wait_budget_seconds - elapsed)
+                    if remaining_budget > 0.0:
+                        wait_for = min(device_delay, remaining_budget)
+                        record.device_waits += 1
+                        record.attempts = max(0, record.attempts - 1)
+                        record.state = "queued"
+                        record.error = (
+                            "Waiting for the paired Windows device to become available; retrying automatically in about "
+                            f"{max(1, int(round(wait_for)))}s. Last device error: {exc}"
+                        )
+                        record.next_eligible_at = now + wait_for
+                        record.metrics = {
+                            "total_ms": int((time.perf_counter() - started) * 1000),
+                            "device_wait": True,
+                            "device_waits": record.device_waits,
+                            "retry_after_seconds": max(1, int(round(wait_for))),
+                        }
+                    elif record.attempts <= record.spec.max_retries:
+                        record.state = "queued"
+                        record.error = f"{type(exc).__name__}: {exc}"
+                        record.next_eligible_at = now + min(8.0, 0.75 * (2 ** (record.attempts - 1)))
+                        record.metrics = {"total_ms": int((time.perf_counter() - started) * 1000)}
+                    else:
+                        record.state = "failed"
+                        record.error = f"{type(exc).__name__}: {exc}"
+                        record.finished_at = _now_iso()
+                        record.metrics = {"total_ms": int((time.perf_counter() - started) * 1000)}
                 elif provider_delay is not None and self.provider_wait_budget_seconds > 0:
                     if record.provider_wait_started_at <= 0:
                         record.provider_wait_started_at = now

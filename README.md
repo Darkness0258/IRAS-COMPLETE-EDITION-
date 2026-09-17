@@ -1,8 +1,17 @@
-# IRAS 4.3.0 RC1 — Deep Audit & Hardened Autonomous Agents
+# IRAS 4.3.0 RC2 — Project-Aware Autonomous Engineering
 
 IRAS is a local-first AI agent for Windows with verified computer control, voice, files, browser automation, persistent skills/memory, multimodal UI grounding, secure worldwide Windows control, parallel multitasking, and dependency-aware multi-agent execution.
 
-**Release status:** `4.3.0-rc1` keeps the accepted v4.2 autonomous execution model and performs a deep security/reliability audit of the tool boundary: untrusted external-content labelling, schema-validated tool calls, stronger secret redaction, dynamic permission alignment, atomic/symlink-safe file operations, bounded project-inspection tools, restart-safe orchestration history, and active-run backpressure. The v4 remote protocol remains `1`.
+**Release status:** `4.3.0-rc2` keeps the RC1 deep-audit protections and fixes the real-device engineering failures found during acceptance: project paths are resolved on the paired Windows computer before a DAG starts, project/Git agents receive one verified Windows workspace root, and temporary device outages are treated as recoverable infrastructure backpressure instead of immediately consuming task retries. The v4 remote protocol remains `1`.
+
+
+## v4.3 RC2 project-aware engineering preflight
+
+Before an engineering DAG starts, IRAS now verifies the target Windows device is online, discovers repositories only inside the device's configured bridge roots, selects the requested project (for example `IRAS`), and proves that Git can read the resolved workspace. The resulting Windows project root is injected into every worker as authoritative context, so Coder/Tester/Reviewer agents no longer guess Render/container paths or unrelated local repositories.
+
+A new read-only `device_find_projects` capability performs bounded repository discovery without following symlinks. If several projects exist and the request does not identify one, IRAS fails early and asks for the project name/path rather than selecting an arbitrary repository. If the project is not under the configured bridge roots, the run is rejected before the graph starts with the actual allowed roots in the diagnostic.
+
+Temporary bridge outages during an already-running graph now use `IRAS_ORCHESTRATION_DEVICE_WAIT_SECONDS` (default `180`, bounded `0..900`). These waits do not consume the task's normal retry budget. The Tasks UI shows `device wait` just like provider cooldown waits. Permission/root errors remain hard failures and are never retried as if they were connectivity problems.
 
 
 ## v4.3 RC1 deep audit hardening
