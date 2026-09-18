@@ -1,7 +1,7 @@
 {
   "product": "IRAS",
   "version": "5.0.0-rc3",
-  "release_name": "Complete Operating Layer - Unified Cloud + CI Hotfix",
+  "release_name": "Complete Operating Layer - Unified Cloud + Render Health Hotfix",
   "baseline_commit": "c37d8a5",
   "remote_protocol": 1,
   "feature_count": 33,
@@ -9,7 +9,7 @@
   "build_mode": "build-first-local",
   "cloud_model_acceptance_used": false,
   "local_regression": {
-    "passed": 830,
+    "passed": 831,
     "failed": 0,
     "android_companion_compile": "static-contract-validated; Android SDK/Gradle build is host-side"
   },
@@ -103,5 +103,12 @@
     "windows_parallel_test": "synchronization-based, no wall-clock threshold",
     "android_ci": "sdkmanager command-line-tools; no setup-android@v3",
     "windows_cloud_client": "IRAS_CLOUD_URL/--server only; production Render default; preflight URL diagnostics"
+  },
+  "render_health_hotfix": {
+    "health_get": true,
+    "health_head": true,
+    "root_head": true,
+    "health_dependency_free": true,
+    "detailed_readiness_endpoint": "/ready"
   }
 }

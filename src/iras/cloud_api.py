@@ -1133,13 +1133,14 @@ def _sse(
     )
 
 
+@app.head("/health", include_in_schema=False)
 @app.get("/health")
 def health():
     """Render deployment liveness probe.
 
-    Keep this endpoint dependency-free and fast: Render requires an HTTP health
-    check response within five seconds during deploys. Rich provider/database
-    diagnostics belong on /ready and must never gate port detection.
+    This endpoint is intentionally constant-time and dependency-free. It must
+    never query providers, PostgreSQL, schedulers, connectors, or v5 state.
+    Detailed readiness belongs on /ready. Render may probe with GET or HEAD.
     """
     return {
         "ok": True,
@@ -1147,9 +1148,14 @@ def health():
         "service_id": IRAS_CLOUD_SERVICE_ID,
         "version": __version__,
         "remote_protocol": REMOTE_PROTOCOL_VERSION,
-        "v5": v5_runtime.status(),
         "uptime_seconds": int(time.time() - started_at),
     }
+
+
+@app.head("/", include_in_schema=False)
+def root_head():
+    """Fast success response for Render port-detection HEAD probes."""
+    return Response(status_code=200)
 
 
 def _cloud_provider_rows(*, probe: bool = False) -> list[dict[str, Any]]:

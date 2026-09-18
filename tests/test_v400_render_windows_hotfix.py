@@ -20,6 +20,17 @@ def test_cloud_health_is_shallow_and_ready_is_detailed():
     assert 'os.getenv(\n            "PORT",\n            "10000"' in text
 
 
+def test_render_health_accepts_head_and_stays_dependency_free():
+    text = Path("src/iras/cloud_api.py").read_text(encoding="utf-8")
+    health_start = text.index('@app.head("/health"')
+    ready_start = text.index('@app.get("/ready")')
+    health_block = text[health_start:ready_start]
+    assert '@app.get("/health")' in health_block
+    assert 'v5_runtime.status()' not in health_block
+    assert 'runtime.agent.provider.status' not in health_block
+    assert '@app.head("/", include_in_schema=False)' in text
+
+
 def test_token_generator_works_on_windows_powershell_51_contract():
     text = Path("generate-iras-token.ps1").read_text(encoding="utf-8")
     assert "RandomNumberGenerator]::Create()" in text
