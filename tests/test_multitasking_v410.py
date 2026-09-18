@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 
 import pytest
@@ -69,21 +70,31 @@ def test_task_memory_isolates_parallel_conversation_turns():
 
 
 def test_multitask_manager_runs_independent_jobs_in_parallel():
+    lock = threading.Lock()
+    active = 0
+    peak_active = 0
+
     def runner(prompt, _context):
-        time.sleep(0.18)
-        return {"result": prompt.upper(), "metrics": {"total_ms": 180}}
+        nonlocal active, peak_active
+        with lock:
+            active += 1
+            peak_active = max(peak_active, active)
+        try:
+            time.sleep(0.18)
+            return {"result": prompt.upper(), "metrics": {"total_ms": 180}}
+        finally:
+            with lock:
+                active -= 1
 
     manager = MultitaskManager(runner, max_workers=3, max_tasks_per_run=6)
     try:
-        started = time.perf_counter()
         run = manager.submit(["one", "two", "three"])
         final = manager.wait(run["run_id"], timeout=3)
-        elapsed = time.perf_counter() - started
 
         assert final["state"] == "succeeded"
         assert [task["result"] for task in final["tasks"]] == ["ONE", "TWO", "THREE"]
-        # Sequential execution would be about 0.54s. Leave generous CI headroom.
-        assert elapsed < 0.48
+        # Verify actual overlap instead of depending on noisy CI wall-clock timing.
+        assert peak_active >= 2
     finally:
         manager.close()
 

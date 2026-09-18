@@ -36,10 +36,13 @@ def _save_state(value: dict) -> None:
 
 
 def _server(settings: Settings, override: str = "") -> str:
+    # IRAS_PUBLIC_BASE_URL describes the server's own public identity and may
+    # point at a local/dev service in a Windows .env. The cloud client must
+    # never inherit it implicitly. Use IRAS_CLOUD_URL/--server to override the
+    # production cloud endpoint explicitly.
     value = (
         override
         or os.getenv("IRAS_CLOUD_URL", "")
-        or settings.public_base_url
         or "https://iras-cloud.onrender.com"
     )
     return value.strip().rstrip("/")
@@ -54,7 +57,10 @@ def _request(client: httpx.Client, method: str, path: str, *, token: str, **kwar
     headers["Authorization"] = f"Bearer {token}"
     response = client.request(method, path, headers=headers, **kwargs)
     if response.status_code >= 400:
-        raise RuntimeError(f"Cloud HTTP {response.status_code}: {response.text[:1200]}")
+        raise RuntimeError(
+            f"Cloud HTTP {response.status_code} for {response.request.url}: "
+            f"{response.text[:1200]}"
+        )
     return response
 
 
@@ -79,6 +85,19 @@ def main() -> None:
     client_id = str(state.get("client_id") or f"pc_{uuid.uuid4().hex}")
 
     with httpx.Client(base_url=server, timeout=120.0) as client:
+        console.print(f"[dim]IRAS Cloud: {server}[/dim]")
+        try:
+            health = client.get("/health", timeout=30.0)
+            if health.status_code >= 400:
+                raise RuntimeError(
+                    f"Cloud preflight HTTP {health.status_code} for "
+                    f"{health.request.url}: {health.text[:1200]}"
+                )
+        except Exception as exc:
+            raise SystemExit(
+                f"IRAS Cloud preflight failed for {server}: {exc}"
+            ) from exc
+
         registration = _request(
             client,
             "POST",

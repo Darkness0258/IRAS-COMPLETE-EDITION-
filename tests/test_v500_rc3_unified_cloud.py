@@ -146,3 +146,17 @@ def test_web_and_android_poll_cloud_for_cross_device_updates():
     assert "cloudRenderedMessageIds" in android
     assert "assistant_message_id" in android
     assert "user_message_id" in android
+
+
+def test_windows_cloud_client_does_not_inherit_public_base_url(monkeypatch):
+    from iras.cloud_client import _server
+
+    class DummySettings:
+        public_base_url = "http://127.0.0.1:8765"
+
+    monkeypatch.delenv("IRAS_CLOUD_URL", raising=False)
+    assert _server(DummySettings()) == "https://iras-cloud.onrender.com"
+
+    monkeypatch.setenv("IRAS_CLOUD_URL", "https://cloud.example.test/")
+    assert _server(DummySettings()) == "https://cloud.example.test"
+    assert _server(DummySettings(), "https://override.example.test/") == "https://override.example.test"

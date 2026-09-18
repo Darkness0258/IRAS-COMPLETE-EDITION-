@@ -1,7 +1,7 @@
 {
   "product": "IRAS",
   "version": "5.0.0-rc3",
-  "release_name": "Complete Operating Layer - Unified Cloud Workspace",
+  "release_name": "Complete Operating Layer - Unified Cloud + CI Hotfix",
   "baseline_commit": "c37d8a5",
   "remote_protocol": 1,
   "feature_count": 33,
@@ -9,7 +9,7 @@
   "build_mode": "build-first-local",
   "cloud_model_acceptance_used": false,
   "local_regression": {
-    "passed": 829,
+    "passed": 830,
     "failed": 0,
     "android_companion_compile": "static-contract-validated; Android SDK/Gradle build is host-side"
   },
@@ -98,5 +98,10 @@
     "thread_scoped_direct_chat_context": true,
     "secrets_stored_in_workspace": false,
     "remote_enforcement_unchanged": true
+  },
+  "cloud_ci_hotfix": {
+    "windows_parallel_test": "synchronization-based, no wall-clock threshold",
+    "android_ci": "sdkmanager command-line-tools; no setup-android@v3",
+    "windows_cloud_client": "IRAS_CLOUD_URL/--server only; production Render default; preflight URL diagnostics"
   }
 }
