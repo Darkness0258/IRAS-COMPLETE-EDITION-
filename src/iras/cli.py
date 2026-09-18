@@ -68,6 +68,10 @@ def _vision_intent(text: str):
         return 'status'
     if q in {'vision start', '/vision start', 'start omniparser', 'omniparser start', '/omniparser start'}:
         return 'start'
+    if q in {'vision restart', '/vision restart', 'restart omniparser', 'omniparser restart', '/omniparser restart'}:
+        return 'restart'
+    if q in {'vision stop', '/vision stop', 'stop omniparser', 'omniparser stop', '/omniparser stop'}:
+        return 'stop'
     return None
 
 
@@ -91,6 +95,10 @@ def main():
     ap.add_argument('--remote-disarm', action='store_true', help='disarm laptop-side remote access')
     ap.add_argument('--emergency-stop', action='store_true', help='trip the controller-level emergency stop')
     ap.add_argument('--emergency-clear', action='store_true', help='clear the emergency stop locally')
+    ap.add_argument('--vision-status', action='store_true', help='show OmniParser managed-runtime status')
+    ap.add_argument('--vision-start', action='store_true', help='start/attach to the managed OmniParser runtime')
+    ap.add_argument('--vision-restart', action='store_true', help='restart the IRAS-managed OmniParser runtime')
+    ap.add_argument('--vision-stop', action='store_true', help='stop the IRAS-managed OmniParser runtime')
     args = ap.parse_args()
     c = Console()
     s = Settings.load()
@@ -128,6 +136,22 @@ def main():
         c.print_json(data=state)
         return
 
+    if args.vision_status:
+        c.print_json(data=vision_runtime.status())
+        return
+    if args.vision_start:
+        result = vision_runtime.ensure_ready(start=True)
+        c.print_json(data=result.as_dict())
+        raise SystemExit(0 if result.ready else 2)
+    if args.vision_restart:
+        result = vision_runtime.restart()
+        c.print_json(data=result.as_dict())
+        raise SystemExit(0 if result.ready else 2)
+    if args.vision_stop:
+        result = vision_runtime.stop()
+        c.print_json(data=result.as_dict())
+        raise SystemExit(0 if result.status == 'stopped' else 2)
+
     if args.voice_test is not None:
         try:
             backend = speaker.test(args.voice_test)
@@ -152,7 +176,7 @@ def main():
                 title='IRAS approval required',
             )
         )
-        return c.input('[bold yellow]Approve this action? [y/N]: [/bold yellow]').strip().lower() in {'y', 'yes'}
+        return c.input('[bold yellow]Approve this action? [y/N]: [/bold yellow]').strip().lower() in {'y', 'yes', 'yeah', 'yep', 'yup', 'ok', 'okay', 'approve', 'approved'}
 
     rt = build_runtime(s, approve)
     if args.tools:
@@ -160,16 +184,20 @@ def main():
             c.print(f"{x['name']}: {x['description']}")
         return
 
+    vision_runtime.start_supervisor(eager=True)
+    if getattr(rt, "v5", None) is not None:
+        rt.v5.start_services()
+
     listener = Listener(s.whisper_model, s.listen_seconds)
     c.print(
         Panel.fit(
             f'[bold]IRAS {__version__}[/bold]\n'
             f'Brain: {s.provider} / {s.model}\n'
             f'Voice profile: {speaker.profile.label} / {speaker.voice}\n'
-            f'Vision: UIA + OmniParser ({"auto-start on demand" if vision_runtime.autostart_enabled() else "manual/external"})\n'
+            f'Vision: UIA + OmniParser ({"managed eager-start + watchdog" if vision_runtime.autostart_enabled() and vision_runtime.eager_start_enabled() else "manual/external"})\n'
             f'Remote Windows: {remote_policy.status().get("mode")} ({"armed" if remote_policy.status().get("enabled") else "disarmed"})\n'
             f'Emergency stop: {"ACTIVE" if emergency_stop.tripped() else "clear"}\n'
-            'Commands: voice, listen, vision status, remote status, remote arm full, remote disarm, emergency stop, personality status, /exit.'
+            'Commands: voice, listen, vision status/start/restart/stop, remote status, remote arm full, remote disarm, emergency stop, personality status, /exit.'
         )
     )
     voice = s.voice_replies
@@ -220,15 +248,27 @@ def main():
             if vision_intent == 'status':
                 status = vision_runtime.status()
                 c.print('[bold]OmniParser vision runtime[/bold]')
-                for key in ('status', 'ready', 'autostart_enabled', 'local_endpoint', 'base_url', 'pid', 'started_by_iras', 'bridge_enabled', 'bridge_runtime', 'text_parse_url', 'text_prewarm_enabled', 'text_model_state', 'text_model_loaded', 'text_model_warmup_ms', 'full_model_loaded', 'log_path', 'reason', 'text_model_error', 'last_start_error'):
+                for key in ('status', 'ready', 'autostart_enabled', 'local_endpoint', 'base_url', 'pid', 'started_by_iras', 'bridge_enabled', 'bridge_runtime', 'text_parse_url', 'text_prewarm_enabled', 'text_model_state', 'text_model_loaded', 'text_model_warmup_ms', 'full_model_state', 'full_model_loaded', 'full_model_warmup_ms', 'full_model_device', 'full_model_error', 'log_path', 'reason', 'text_model_error', 'last_start_error'):
                     if key in status and status.get(key) is not None:
                         c.print(f'  {key}: {status.get(key)}')
-            else:
+            elif vision_intent == 'start':
                 result = vision_runtime.ensure_ready(start=True)
                 if result.ready:
                     c.print(f'[bold green]OmniParser ready[/bold green] — {result.status} at {result.base_url}')
                 else:
                     c.print(f'[bold red]OmniParser unavailable[/bold red] — {result.status}: {result.reason}')
+            elif vision_intent == 'restart':
+                result = vision_runtime.restart()
+                if result.ready:
+                    c.print(f'[bold green]OmniParser restarted[/bold green] — {result.status} at {result.base_url}')
+                else:
+                    c.print(f'[bold red]OmniParser restart failed[/bold red] — {result.status}: {result.reason}')
+            else:
+                result = vision_runtime.stop()
+                if result.status == 'stopped':
+                    c.print('[bold green]OmniParser stopped[/bold green]')
+                else:
+                    c.print(f'[bold yellow]OmniParser stop result[/bold yellow] — {result.status}: {result.reason}')
             continue
 
         if pq in {'personality', 'personality status', '/personality'}:
@@ -320,3 +360,13 @@ def main():
         rt.browser.close()
     except Exception:
         pass
+    try:
+        if getattr(rt, "v5", None) is not None:
+            rt.v5.stop_services()
+            manager = getattr(rt.v5, "orchestration_manager", None)
+            close = getattr(manager, "close", None)
+            if callable(close):
+                close()
+    except Exception:
+        pass
+    vision_runtime.stop_supervisor()

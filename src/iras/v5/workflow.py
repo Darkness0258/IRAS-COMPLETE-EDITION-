@@ -59,6 +59,17 @@ class WorkflowRecorder:
         data = json.loads((self.root / f"{workflow_id}.json").read_text(encoding="utf-8"))
         return RecordedWorkflow(data["workflow_id"], data["name"], [WorkflowStep(**s) for s in data["steps"]], data["created_at"])
 
+
+    def list(self) -> list[dict[str, Any]]:
+        out = []
+        for path in self.root.glob("wf_*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                out.append({"workflow_id": data.get("workflow_id"), "name": data.get("name"), "created_at": data.get("created_at"), "steps": len(data.get("steps") or [])})
+            except Exception:
+                continue
+        return sorted(out, key=lambda x: str(x.get("created_at") or ""), reverse=True)
+
     def replay(self, workflow_id: str, executor: Callable[[str, dict[str, Any]], Any]) -> list[Any]:
         wf = self.load(workflow_id)
         outputs = []

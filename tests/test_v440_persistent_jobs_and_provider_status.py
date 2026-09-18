@@ -185,6 +185,6 @@ def test_provider_status_api_deduplicates_logical_provider_identity():
 
 def test_v44_ci_runs_v440_validator():
     text = open(".github/workflows/ci.yml", encoding="utf-8").read()
-    assert "IRAS v5.0 RC2 mega-integration validation" in text
+    assert "IRAS v5.0 RC3 mega-integration validation" in text
     assert r".\run-v500-validation.ps1" in text
     assert "run-v430-validation.ps1" not in text

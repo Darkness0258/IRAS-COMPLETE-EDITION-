@@ -41,8 +41,8 @@ def test_spotify_diagnostics_include_verified_selection():
         / "ui_control.py"
     ).read_text(encoding="utf-8")
 
-    assert "cursor_actual=" in text
-    assert "green_detected=" in text
-    assert "green_size=" in text
-    assert "attempts=" in text
-    assert "media_play=" not in text
+    assert "search_mode=" in text
+    assert "selected=" in text
+    assert "verified=" in text
+    assert "playing=" in text
+    assert '"media_play_sent": False' in text

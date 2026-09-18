@@ -44,11 +44,20 @@ class LocalDeviceBridgeStore:
         arguments: dict,
         device_id: str | None = None,
         timeout: float = 30.0,
+        remote_session_id: str | None = None,
+        permission_level: int | None = None,
+        requester_device: str = "cloud-agent",
     ):
-        # ``timeout`` is part of the shared cloud/local store contract. Local
-        # execution is synchronous, so the bounded executor itself owns any
-        # operation-specific timeout behavior.
-        _ = timeout
+        # Keep the same keyword contract as DeviceBridgeStore so the shared
+        # device-tool layer can route local CLI actions without branching on
+        # store type.  The in-process store must never become a shortcut for a
+        # remote session, though: remote provenance belongs to the queued cloud
+        # store where session authorization is enforced.
+        _ = (timeout, requester_device)
+        if remote_session_id or permission_level is not None:
+            raise PermissionError(
+                "Remote-session provenance cannot be executed through the local in-process device store."
+            )
 
         if device_id not in {None, "", self.DEVICE_ID}:
             raise RuntimeError(

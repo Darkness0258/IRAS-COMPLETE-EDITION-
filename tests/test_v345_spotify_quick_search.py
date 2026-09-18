@@ -17,12 +17,13 @@ def spotify_play_block() -> str:
     return text[start:end]
 
 
-def test_quick_search_play_is_primary():
+def test_semantic_spotify_selection_is_primary():
     block = spotify_play_block()
-    quick = block.index('_play_spotify_quick_search_result')
-    fallback = block.index('_click_spotify_play_button')
-    assert quick < fallback
-    assert '"quick_search_shift_enter"' in block
+    assert '_spotify_find_query_results' in block
+    assert '_open_spotify_search_uri' in block
+    assert '_play_spotify_quick_search_result(' not in block
+    assert '"uia_invoke_result"' in block
+    assert '"uia_invoke_content_play_button"' in block
 
 
 def test_quick_search_helper_uses_shift_enter_and_foreground_guard():
@@ -42,11 +43,12 @@ def test_query_play_does_not_use_generic_media_play_fallback():
     assert '"media_play_sent": False' in block
 
 
-def test_green_button_path_remains_compatibility_fallback():
+def test_query_play_forbids_unanchored_green_or_space_fallbacks():
     block = spotify_play_block()
-    assert 'except Exception as exc:' in block
-    assert '_click_spotify_play_button' in block
-    assert '"legacy_green_play_button"' in block
+    assert '_spotify_find_content_play_button' in block
+    assert '_click_spotify_play_button' not in block
+    assert '"visual_green_play_button"' not in block
+    assert '"semantic_play_button_space"' not in block
 
 
 def test_duplicate_remote_exception_prefixes_are_cleaned():

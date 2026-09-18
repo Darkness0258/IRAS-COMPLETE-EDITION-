@@ -14,6 +14,7 @@ import android.view.*;
 import android.widget.*;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
 
 import java.io.*;
 import java.net.*;
@@ -26,6 +27,8 @@ public class MainActivity extends Activity {
     private static final String DEFAULT_SERVER =
         "https://iras-cloud.onrender.com";
     private static final int MIC_PERMISSION = 7;
+    private static final int NOTIFICATION_PERMISSION = 8;
+    private static final String COMPANION_CHANNEL = "iras_companion";
 
     private LinearLayout chat;
     private EditText input;
@@ -47,6 +50,15 @@ public class MainActivity extends Activity {
     private volatile boolean handsFree = false;
     private volatile boolean recognitionRunning = false;
     private volatile boolean appForeground = true;
+    private volatile boolean companionPolling = false;
+    private volatile boolean cloudSyncing = false;
+    private volatile boolean cloudHistoryLoaded = false;
+    private final Set<String> activeApprovalIds =
+        Collections.synchronizedSet(new HashSet<>());
+    private final Set<String> cloudRenderedMessageIds =
+        Collections.synchronizedSet(new HashSet<>());
+    private final Runnable companionPollRunnable =
+        this::pollCompanionAsync;
 
     private long conversationUntil = 0L;
     private String lastSpokenText = "";
@@ -76,6 +88,12 @@ public class MainActivity extends Activity {
         }
 
         updateHandsButton();
+        createCompanionNotificationChannel();
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION);
+        }
+        syncCloudSessionAsync(true);
+        mainHandler.postDelayed(companionPollRunnable, 900);
 
         if (
             handsFree
@@ -448,6 +466,10 @@ public class MainActivity extends Activity {
                     if (handsFree) {
                         startHandsFreeListening();
                     }
+                    cloudHistoryLoaded = false;
+                    syncCloudSessionAsync(true);
+                    mainHandler.removeCallbacks(companionPollRunnable);
+                    mainHandler.postDelayed(companionPollRunnable, 250);
                 }
             )
             .setNegativeButton(
@@ -562,6 +584,8 @@ public class MainActivity extends Activity {
 
         final String message =
             text;
+        final String turnId =
+            "turn_" + UUID.randomUUID().toString().replace("-", "");
 
         addMessageView(
             "You",
@@ -584,7 +608,8 @@ public class MainActivity extends Activity {
                 token,
                 message,
                 assistant,
-                generation
+                generation,
+                turnId
             )
         ).start();
     }
@@ -617,7 +642,8 @@ public class MainActivity extends Activity {
         String token,
         String message,
         TextView assistant,
-        int generation
+        int generation,
+        String turnId
     ) {
         HttpURLConnection c =
             null;
@@ -679,6 +705,18 @@ public class MainActivity extends Activity {
             body.put(
                 "device_id",
                 "android"
+            );
+            body.put(
+                "client_id",
+                cloudClientId()
+            );
+            body.put(
+                "thread_id",
+                cloudThreadId()
+            );
+            body.put(
+                "turn_id",
+                turnId
             );
 
             try (
@@ -759,6 +797,18 @@ public class MainActivity extends Activity {
 
                         if (
                             event.equals(
+                                "start"
+                            )
+                        ) {
+                            String threadId = payload.optString("thread_id", "").trim();
+                            if (!threadId.isEmpty()) {
+                                prefs.edit().putString("cloud_thread_id", threadId).apply();
+                            }
+                            String userMessageId = payload.optString("user_message_id", "").trim();
+                            if (!userMessageId.isEmpty()) cloudRenderedMessageIds.add(userMessageId);
+
+                        } else if (
+                            event.equals(
                                 "token"
                             )
                         ) {
@@ -787,6 +837,12 @@ public class MainActivity extends Activity {
                                 "done"
                             )
                         ) {
+                            String threadId = payload.optString("thread_id", "").trim();
+                            if (!threadId.isEmpty()) {
+                                prefs.edit().putString("cloud_thread_id", threadId).apply();
+                            }
+                            String assistantMessageId = payload.optString("assistant_message_id", "").trim();
+                            if (!assistantMessageId.isEmpty()) cloudRenderedMessageIds.add(assistantMessageId);
                             conversationUntil =
                                 System
                                     .currentTimeMillis()
@@ -1188,6 +1244,272 @@ public class MainActivity extends Activity {
             ) {}
 
             voiceFile = null;
+        }
+    }
+
+    private String cloudClientId() {
+        String value = prefs.getString("cloud_client_id", "").trim();
+        if (value.isEmpty()) {
+            value = "android_" + UUID.randomUUID().toString().replace("-", "");
+            prefs.edit().putString("cloud_client_id", value).apply();
+        }
+        return value;
+    }
+
+    private String cloudThreadId() {
+        return prefs.getString("cloud_thread_id", "").trim();
+    }
+
+    private void syncCloudSessionAsync(boolean renderHistory) {
+        if (cloudSyncing) return;
+        String token = prefs.getString("token", "").trim();
+        if (token.isEmpty()) return;
+        cloudSyncing = true;
+        new Thread(() -> {
+            try {
+                JSONObject registration = new JSONObject();
+                registration.put("client_id", cloudClientId());
+                registration.put("name", "IRAS Android - " + Build.MODEL);
+                registration.put("platform", "android");
+                registration.put("app_version", "5.0.0-rc3");
+                JSONArray caps = new JSONArray();
+                caps.put("chat");
+                caps.put("cloud-sync");
+                caps.put("voice");
+                caps.put("approvals");
+                registration.put("capabilities", caps);
+                JSONObject registered = companionRequest("POST", "/v1/cloud/clients/register", registration);
+                String threadId = cloudThreadId();
+                if (threadId.isEmpty()) threadId = registered.optString("active_thread_id", "").trim();
+                String sessionPath = "/v1/cloud/session?message_limit=80";
+                if (!threadId.isEmpty()) sessionPath += "&thread_id=" + pathPart(threadId);
+                JSONObject session = companionRequest("GET", sessionPath, null);
+                JSONObject thread = session.optJSONObject("thread");
+                if (thread != null) threadId = thread.optString("thread_id", threadId).trim();
+                if (threadId.isEmpty()) threadId = session.optString("active_thread_id", "").trim();
+                if (!threadId.isEmpty()) prefs.edit().putString("cloud_thread_id", threadId).apply();
+
+                if (renderHistory && !cloudHistoryLoaded) {
+                    JSONArray messages = session.optJSONArray("messages");
+                    if (messages != null) {
+                        ArrayList<JSONObject> copy = new ArrayList<>();
+                        for (int i = 0; i < messages.length(); i++) {
+                            JSONObject item = messages.optJSONObject(i);
+                            if (item != null) copy.add(item);
+                        }
+                        runOnUiThread(() -> {
+                            if (!cloudHistoryLoaded) {
+                                for (JSONObject item : copy) {
+                                    String role = item.optString("role", "");
+                                    String content = item.optString("content", "");
+                                    String messageId = item.optString("message_id", "").trim();
+                                    if (!messageId.isEmpty()) cloudRenderedMessageIds.add(messageId);
+                                    if (content.isEmpty()) continue;
+                                    addMessageView("user".equals(role) ? "You" : "IRAS", content);
+                                }
+                                cloudHistoryLoaded = true;
+                                status.setText("Cloud synced");
+                            }
+                        });
+                    }
+                }
+            } catch (Exception exc) {
+                final String detail = exc.getMessage() == null ? exc.getClass().getSimpleName() : exc.getMessage();
+                runOnUiThread(() -> status.setText("Cloud sync: " + detail));
+            } finally {
+                cloudSyncing = false;
+            }
+        }, "iras-cloud-sync").start();
+    }
+
+    private void syncCloudMessagesOnce() throws Exception {
+        JSONObject session = companionRequest("GET", "/v1/cloud/session?message_limit=80", null);
+        JSONObject thread = session.optJSONObject("thread");
+        String activeThread = thread == null ? session.optString("active_thread_id", "").trim() : thread.optString("thread_id", "").trim();
+        String currentThread = cloudThreadId();
+        JSONArray messages = session.optJSONArray("messages");
+        if (messages == null) return;
+
+        ArrayList<JSONObject> fresh = new ArrayList<>();
+        boolean switched = !activeThread.isEmpty() && !activeThread.equals(currentThread);
+        if (switched) {
+            prefs.edit().putString("cloud_thread_id", activeThread).apply();
+            cloudRenderedMessageIds.clear();
+        }
+        for (int i = 0; i < messages.length(); i++) {
+            JSONObject item = messages.optJSONObject(i);
+            if (item == null) continue;
+            String messageId = item.optString("message_id", "").trim();
+            if (!messageId.isEmpty() && cloudRenderedMessageIds.contains(messageId)) continue;
+            if (!messageId.isEmpty()) cloudRenderedMessageIds.add(messageId);
+            fresh.add(item);
+        }
+        if (fresh.isEmpty() && !switched) return;
+        runOnUiThread(() -> {
+            if (switched) chat.removeAllViews();
+            for (JSONObject item : fresh) {
+                String role = item.optString("role", "");
+                String content = item.optString("content", "");
+                if (content.isEmpty()) continue;
+                addMessageView("user".equals(role) ? "You" : "IRAS", content);
+            }
+            if (!fresh.isEmpty()) status.setText("Cloud synced");
+        });
+    }
+
+    private void createCompanionNotificationChannel() {
+        if (Build.VERSION.SDK_INT < 26) return;
+        NotificationChannel channel = new NotificationChannel(
+            COMPANION_CHANNEL,
+            "IRAS Companion",
+            NotificationManager.IMPORTANCE_DEFAULT
+        );
+        channel.setDescription("IRAS approvals, monitors and autonomous task notifications");
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager != null) manager.createNotificationChannel(channel);
+    }
+
+    private void showCompanionNotification(String title, String body) {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return;
+        Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+            ? new Notification.Builder(this, COMPANION_CHANNEL)
+            : new Notification.Builder(this);
+        builder.setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(title == null || title.isEmpty() ? "IRAS" : title)
+            .setContentText(body == null ? "" : body)
+            .setAutoCancel(true);
+        NotificationManager manager = (NotificationManager)getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager != null) manager.notify((int)(System.currentTimeMillis() & 0x7fffffff), builder.build());
+    }
+
+    private void pollCompanionAsync() {
+        if (!appForeground || companionPolling) return;
+        String token = prefs.getString("token", "").trim();
+        if (token.isEmpty()) return;
+        companionPolling = true;
+        new Thread(() -> {
+            try {
+                String mobileId = prefs.getString("mobile_id", "").trim();
+                if (mobileId.isEmpty()) {
+                    JSONObject register = new JSONObject();
+                    register.put("name", "IRAS Android - " + Build.MODEL);
+                    register.put("platform", "android");
+                    JSONObject response = companionRequest("POST", "/v1/v5/mobile/register", register);
+                    mobileId = response.optString("mobile_id", "").trim();
+                    if (mobileId.isEmpty()) throw new IOException("IRAS mobile registration returned no mobile_id");
+                    prefs.edit().putString("mobile_id", mobileId).apply();
+                }
+                try {
+                    companionRequest("POST", "/v1/cloud/clients/" + pathPart(cloudClientId()) + "/heartbeat", new JSONObject());
+                    if (!requestActive) syncCloudMessagesOnce();
+                } catch (Exception ignored) {}
+                JSONObject events = companionRequest("GET", "/v1/v5/mobile/" + pathPart(mobileId) + "/events?limit=50", null);
+                processCompanionEvents(mobileId, events.optJSONArray("events"));
+            } catch (Exception exc) {
+                final String detail = exc.getMessage() == null ? exc.getClass().getSimpleName() : exc.getMessage();
+                runOnUiThread(() -> status.setText("Companion: " + detail));
+            } finally {
+                companionPolling = false;
+                if (appForeground) mainHandler.postDelayed(companionPollRunnable, 4000);
+            }
+        }, "iras-mobile-companion").start();
+    }
+
+    private void processCompanionEvents(String mobileId, JSONArray events) {
+        if (events == null) return;
+        for (int i = 0; i < events.length(); i++) {
+            JSONObject event = events.optJSONObject(i);
+            if (event == null) continue;
+            String eventId = event.optString("event_id", "");
+            String kind = event.optString("kind", "");
+            JSONObject payload = event.optJSONObject("payload");
+            if (payload == null) payload = new JSONObject();
+            if ("approval.requested".equals(kind)) {
+                String approvalId = payload.optString("approval_id", "");
+                if (!approvalId.isEmpty() && activeApprovalIds.add(approvalId)) {
+                    JSONObject finalPayload = payload;
+                    runOnUiThread(() -> showCompanionApproval(mobileId, eventId, approvalId, finalPayload));
+                }
+                continue;
+            }
+            String title = payload.optString("title", "IRAS " + kind);
+            String body = payload.optString("body", payload.optString("summary", kind));
+            final String message = title + (body.isEmpty() ? "" : "\n" + body);
+            runOnUiThread(() -> {
+                showCompanionNotification(title, body);
+                addMessageView("IRAS", message);
+            });
+            acknowledgeCompanionEvent(mobileId, eventId);
+        }
+    }
+
+    private void showCompanionApproval(String mobileId, String eventId, String approvalId, JSONObject eventPayload) {
+        JSONObject payload = eventPayload.optJSONObject("payload");
+        String kind = eventPayload.optString("kind", "IRAS action");
+        String detail = payload == null ? "" : payload.toString();
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("IRAS approval required")
+            .setMessage(kind + (detail.isEmpty() ? "" : "\n\n" + detail))
+            .setPositiveButton("Approve", (d, w) -> resolveCompanionApproval(mobileId, eventId, approvalId, true))
+            .setNegativeButton("Deny", (d, w) -> resolveCompanionApproval(mobileId, eventId, approvalId, false))
+            .create();
+        dialog.setCancelable(false);
+        dialog.setCanceledOnTouchOutside(false);
+        dialog.show();
+    }
+
+    private void resolveCompanionApproval(String mobileId, String eventId, String approvalId, boolean approved) {
+        new Thread(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("approved", approved);
+                body.put("note", approved ? "Approved from IRAS Android companion" : "Denied from IRAS Android companion");
+                companionRequest("POST", "/v1/v5/mobile/approvals/" + pathPart(approvalId), body);
+                acknowledgeCompanionEvent(mobileId, eventId);
+            } catch (Exception exc) {
+                final String detail = exc.getMessage() == null ? exc.getClass().getSimpleName() : exc.getMessage();
+                runOnUiThread(() -> status.setText("Approval sync failed: " + detail));
+            } finally {
+                activeApprovalIds.remove(approvalId);
+            }
+        }, "iras-mobile-approval").start();
+    }
+
+    private void acknowledgeCompanionEvent(String mobileId, String eventId) {
+        if (eventId == null || eventId.isEmpty()) return;
+        try {
+            companionRequest("POST", "/v1/v5/mobile/" + pathPart(mobileId) + "/events/" + pathPart(eventId) + "/ack", new JSONObject());
+        } catch (Exception ignored) {}
+    }
+
+    private String pathPart(String value) throws UnsupportedEncodingException {
+        return URLEncoder.encode(value == null ? "" : value, "UTF-8").replace("+", "%20");
+    }
+
+    private JSONObject companionRequest(String method, String path, JSONObject body) throws Exception {
+        String token = prefs.getString("token", "").trim();
+        if (token.isEmpty()) throw new IOException("IRAS token is not configured");
+        HttpURLConnection c = (HttpURLConnection)new URL(serverUrl() + path).openConnection();
+        try {
+            c.setRequestMethod(method);
+            c.setConnectTimeout(15000);
+            c.setReadTimeout(30000);
+            c.setRequestProperty("Authorization", "Bearer " + token);
+            c.setRequestProperty("Accept", "application/json");
+            c.setRequestProperty("X-Device-ID", "android-companion");
+            if (body != null && !"GET".equals(method)) {
+                c.setDoOutput(true);
+                c.setRequestProperty("Content-Type", "application/json");
+                try (OutputStream os = c.getOutputStream()) {
+                    os.write(body.toString().getBytes(StandardCharsets.UTF_8));
+                }
+            }
+            int code = c.getResponseCode();
+            String text = readAll(code >= 200 && code < 300 ? c.getInputStream() : c.getErrorStream());
+            if (code < 200 || code >= 300) throw new IOException("HTTP " + code + (text.isEmpty() ? "" : ": " + text));
+            return text.trim().isEmpty() ? new JSONObject() : new JSONObject(text);
+        } finally {
+            c.disconnect();
         }
     }
 
@@ -1840,12 +2162,16 @@ public class MainActivity extends Activity {
                 500
             );
         }
+        syncCloudSessionAsync(false);
+        mainHandler.removeCallbacks(companionPollRunnable);
+        mainHandler.postDelayed(companionPollRunnable, 300);
     }
 
     @Override protected void onPause() {
         appForeground =
             false;
 
+        mainHandler.removeCallbacks(companionPollRunnable);
         stopRecognition();
         super.onPause();
     }
@@ -1854,6 +2180,7 @@ public class MainActivity extends Activity {
         appForeground =
             false;
 
+        mainHandler.removeCallbacks(companionPollRunnable);
         stopRecognition();
         stopVoice();
 

@@ -11,15 +11,21 @@ def test_spotify_keeps_legacy_visual_detector():
     assert "ImageGrab.grab(" in t
     assert "def _click_spotify_play_button(" in t
 
-def test_spotify_quick_search_uses_shift_enter():
+def test_spotify_keeps_shift_enter_helper_only_for_legacy_compatibility():
     t=src()
     assert "def _play_spotify_quick_search_result(" in t
     assert '"shift"' in t and '"enter"' in t
-    assert '"quick_search_shift_enter"' in t
+    assert '"shift+enter"' in t
+    assert "_play_spotify_quick_search_result(" not in block()
 
-def test_quick_search_is_primary_and_green_button_is_fallback():
+def test_semantic_result_selection_is_primary_and_unbound_play_fallbacks_are_forbidden():
     t=block()
-    assert t.index("_play_spotify_quick_search_result") < t.index("_click_spotify_play_button")
+    assert "_spotify_find_query_results" in t
+    assert t.index("_spotify_find_query_results") < t.index("_spotify_find_content_play_button")
+    assert "uia_invoke_content_play_button" in t
+    assert "semantic_content_play_button" in t
+    assert "_click_spotify_play_button" not in t
+    assert "semantic_play_button_space" not in t
 
 def test_query_play_never_uses_generic_media_play():
     t=block()

@@ -105,6 +105,10 @@ class IRASAgent:
         # orchestration workers use this to expose only the bounded tools
         # appropriate for their role (researcher/coder/tester/reviewer).
         self.tool_allowlist = None
+        # Optional request-scoped conversation history supplied by the cloud
+        # workspace. The cloud server serializes agent execution, so this can
+        # safely be swapped for one request and restored afterwards.
+        self.context_messages_override = None
         self.last_metrics = {}
         self._last_device_action = None
         self.recovery_performance_store = recovery_performance_store
@@ -228,12 +232,11 @@ class IRASAgent:
                 }
             )
 
-        msgs.extend(
-            self.memory
-            .recent_messages(
-                self.context_message_limit
-            )
-        )
+        if self.context_messages_override is None:
+            history = self.memory.recent_messages(self.context_message_limit)
+        else:
+            history = list(self.context_messages_override)[-self.context_message_limit:]
+        msgs.extend(history)
 
         return msgs
 

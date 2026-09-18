@@ -7,6 +7,7 @@ from iras.bootstrap import build_runtime
 from iras.core.agent import IRASAgent
 from iras.device_bridge.intent import direct_device_intent
 from iras.device_bridge.local_store import LocalDeviceBridgeStore
+from iras.device_bridge.tools import make_tools
 
 
 class _FakeExecutor:
@@ -138,3 +139,28 @@ def test_spotify_pause_with_verification_routes_to_media_control():
         "arguments": {"command": "pause", "app": "spotify"},
         "kind": "media_control",
     }
+
+
+def test_local_spotify_fastpath_accepts_shared_device_store_metadata():
+    fake = _FakeExecutor()
+    store = LocalDeviceBridgeStore(fake)
+    tools = make_tools(store)
+    spotify = next(item for item in tools if item.name == "device_spotify_play")
+
+    result = spotify.handler(query="naat")
+
+    assert result["ok"] is True
+    assert fake.calls[-1] == ("spotify_play", {"query": "naat"})
+
+
+def test_local_store_rejects_remote_session_provenance():
+    store = LocalDeviceBridgeStore(_FakeExecutor())
+    import pytest
+
+    with pytest.raises(PermissionError):
+        store.request_and_wait(
+            action="system_info",
+            arguments={},
+            remote_session_id="remote-session",
+            permission_level=2,
+        )

@@ -20,6 +20,14 @@ class ArtifactEngine:
             raise ValueError("Artifact path escaped root.")
         return path
 
+    def list(self) -> list[dict[str, Any]]:
+        out = []
+        for path in sorted(self.root.iterdir(), key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True):
+            if path.is_file():
+                stat = path.stat()
+                out.append({"name": path.name, "path": str(path), "size": stat.st_size, "modified": stat.st_mtime})
+        return out
+
     def document(self, name: str, paragraphs: list[str]) -> str:
         from docx import Document
         path = self._path(name, ".docx")

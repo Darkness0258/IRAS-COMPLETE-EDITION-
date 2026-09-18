@@ -40,6 +40,7 @@ from iras.models import PermissionLevel
 from iras.remote_protocol import IRAS_CLOUD_SERVICE_ID, REMOTE_PROTOCOL_VERSION
 from iras.remote_access import action_permission, level_for_mode
 from iras.device_bridge.remote_context import remote_command_context
+from iras.cloud_state import CloudStateStore
 from iras.cloud_bootstrap import (
     build_cloud_runtime,
     build_cloud_worker,
@@ -153,6 +154,9 @@ class ChatIn(BaseModel):
         default="unknown",
         max_length=128,
     )
+    client_id: str = Field(default="", max_length=128)
+    thread_id: str = Field(default="", max_length=128)
+    turn_id: str = Field(default="", max_length=128)
 
 
 class ChatOut(BaseModel):
@@ -162,6 +166,25 @@ class ChatOut(BaseModel):
     timing_ms: int
     model_ms: int
     tool_schema_count: int
+    thread_id: str = ""
+    user_message_id: str = ""
+    assistant_message_id: str = ""
+
+
+class CloudClientIn(BaseModel):
+    client_id: str = Field(default="", max_length=128)
+    name: str = Field(default="IRAS Client", max_length=160)
+    platform: str = Field(default="unknown", max_length=80)
+    app_version: str = Field(default="unknown", max_length=40)
+    capabilities: list[str] = Field(default_factory=list, max_length=64)
+
+
+class CloudThreadIn(BaseModel):
+    title: str = Field(default="New chat", max_length=180)
+
+
+class CloudPreferenceIn(BaseModel):
+    value: Any = None
 
 
 class MultitaskIn(BaseModel):
@@ -743,22 +766,99 @@ from iras.tools.v5 import make_tools as _make_v5_tools
 for _tool in _make_v5_tools(v5_runtime):
     if _tool.name not in runtime.registry.names():
         runtime.registry.register(_tool)
+v5_runtime.bind_tool_executor(runtime.registry.execute)
+cloud_state = CloudStateStore(v5_runtime.db)
 
+
+def _cloud_platform(device_id: str) -> str:
+    value = str(device_id or "").lower()
+    if value.startswith("web"):
+        return "web"
+    if value.startswith("android") or value.startswith("mob_"):
+        return "android"
+    if value.startswith("pc_") or value.startswith("win"):
+        return "windows"
+    return "unknown"
+
+
+def _begin_cloud_turn(body: ChatIn, *, device_id: str, request_id: str) -> tuple[str, str, str]:
+    client_id = (body.client_id or device_id or "unknown")[:128]
+    try:
+        cloud_state.touch_client(client_id, platform=_cloud_platform(client_id))
+    except Exception:
+        # Chat availability must not depend on presence bookkeeping.
+        pass
+    thread = cloud_state.ensure_thread(body.thread_id or None)
+    thread_id = str(thread["thread_id"])
+    cloud_state.activate_thread(thread_id)
+    turn_key = (body.turn_id or request_id)[:128]
+    user = cloud_state.add_message(
+        thread_id,
+        "user",
+        body.message,
+        client_id=client_id,
+        request_id=turn_key,
+    )
+    return client_id, thread_id, str(user.get("message_id") or "")
+
+
+def _finish_cloud_turn(
+    *,
+    thread_id: str,
+    client_id: str,
+    request_id: str,
+    content: str,
+) -> str:
+    if not content:
+        return ""
+    row = cloud_state.add_message(
+        thread_id,
+        "assistant",
+        content,
+        client_id=client_id,
+        request_id=request_id,
+    )
+    return str(row.get("message_id") or "")
+
+
+@contextmanager
+def _cloud_thread_scope(thread_id: str):
+    previous = getattr(runtime.agent, "context_messages_override", None)
+    rows = cloud_state.messages(thread_id, limit=max(2, int(getattr(runtime.agent, "context_message_limit", 12))))
+    runtime.agent.context_messages_override = [
+        {"role": str(row.get("role") or "assistant"), "content": str(row.get("content") or "")}
+        for row in rows
+        if str(row.get("role") or "") in {"user", "assistant"} and str(row.get("content") or "")
+    ]
+    try:
+        yield
+    finally:
+        runtime.agent.context_messages_override = previous
 
 
 def _multitask_context(
     *,
     remote_session: dict | None,
     requester_device: str,
+    thread_id: str = "",
 ) -> dict[str, Any]:
     try:
         history_limit = max(2, int(os.getenv("IRAS_CONTEXT_MESSAGES", "8")))
     except ValueError:
         history_limit = 8
+    if thread_id:
+        seed_messages = [
+            {"role": str(row.get("role") or "assistant"), "content": str(row.get("content") or "")}
+            for row in cloud_state.messages(thread_id, limit=history_limit)
+            if str(row.get("role") or "") in {"user", "assistant"}
+        ]
+    else:
+        seed_messages = runtime.memory.recent_messages(history_limit)
     return {
         "remote_session": dict(remote_session) if remote_session else None,
         "requester_device": str(requester_device or "cloud-agent")[:128],
-        "seed_messages": runtime.memory.recent_messages(history_limit),
+        "cloud_thread_id": str(thread_id or ""),
+        "seed_messages": seed_messages,
     }
 
 
@@ -789,6 +889,7 @@ def _prepare_orchestration_context(
     *,
     remote_session: dict | None,
     requester_device: str,
+    thread_id: str = "",
 ) -> dict[str, Any]:
     """Build orchestration context and resolve a concrete Windows workspace.
 
@@ -800,6 +901,7 @@ def _prepare_orchestration_context(
     context = _multitask_context(
         remote_session=remote_session,
         requester_device=requester_device,
+        thread_id=thread_id,
     )
     if parse_exact_file_objective(objective) is not None:
         return context
@@ -935,12 +1037,14 @@ def _start_multitask(
     *,
     remote_session: dict | None,
     requester_device: str,
+    thread_id: str = "",
 ) -> dict[str, Any]:
     run = multitask_manager.submit(
         tasks,
         context=_multitask_context(
             remote_session=remote_session,
             requester_device=requester_device,
+            thread_id=thread_id,
         ),
         requester_device=requester_device,
     )
@@ -985,6 +1089,7 @@ def _start_auto_parallel_graph(
     objective: str,
     remote_session: dict | None,
     requester_device: str,
+    thread_id: str = "",
 ) -> dict[str, Any]:
     graph = parallel_graph(tasks)
     if len(graph) < 2:
@@ -995,6 +1100,7 @@ def _start_auto_parallel_graph(
         context=_multitask_context(
             remote_session=remote_session,
             requester_device=requester_device,
+            thread_id=thread_id,
         ),
         requester_device=requester_device,
         add_coordinator=True,
@@ -1632,6 +1738,9 @@ def chat(
         or body.device_id
         or "unknown"
     )[:128]
+    cloud_client_id, cloud_thread_id, cloud_user_message_id = _begin_cloud_turn(
+        body, device_id=device_id, request_id=request_id
+    )
 
     runtime.audit.record(
         "cloud_chat_request",
@@ -1640,6 +1749,8 @@ def chat(
                 request_id
             ),
             "device_id": device_id,
+            "client_id": cloud_client_id,
+            "thread_id": cloud_thread_id,
             "stream": False,
             "remote_session_id": (remote_session or {}).get("session_id"),
         },
@@ -1666,6 +1777,7 @@ def chat(
                     goal_objective,
                     remote_session=remote_session,
                     requester_device=device_id,
+                    thread_id=cloud_thread_id,
                 )
             except RuntimeError as exc:
                 response = str(exc)
@@ -1696,6 +1808,7 @@ def chat(
                 parallel_tasks,
                 remote_session=remote_session,
                 requester_device=device_id,
+                thread_id=cloud_thread_id,
             )
             run = multitask_manager.wait(
                 run["run_id"],
@@ -1737,6 +1850,7 @@ def chat(
                     objective,
                     remote_session=remote_session,
                     requester_device=device_id,
+                    thread_id=cloud_thread_id,
                 )
             except RuntimeError as exc:
                 response = str(exc)
@@ -1768,6 +1882,7 @@ def chat(
                 objective=decision.objective or body.message,
                 remote_session=remote_session,
                 requester_device=device_id,
+                thread_id=cloud_thread_id,
             )
             try:
                 auto_timeout = float(os.getenv("IRAS_AUTONOMOUS_WAIT_TIMEOUT", "600"))
@@ -1801,8 +1916,9 @@ def chat(
                 metrics = direct["metrics"]
             else:
                 with agent_lock:
-                    with _remote_permission_scope(remote_session):
-                        response = runtime.agent.handle(body.message)
+                    with _cloud_thread_scope(cloud_thread_id):
+                        with _remote_permission_scope(remote_session):
+                            response = runtime.agent.handle(body.message)
                 metrics = runtime.agent.last_metrics or {}
 
     except Exception as exc:
@@ -1844,6 +1960,13 @@ def chat(
             ),
         ) from exc
 
+    cloud_assistant_message_id = _finish_cloud_turn(
+        thread_id=cloud_thread_id,
+        client_id=cloud_client_id,
+        request_id=request_id,
+        content=response,
+    )
+
     return ChatOut(
         response=response,
         request_id=request_id,
@@ -1869,6 +1992,9 @@ def chat(
                 0,
             )
         ),
+        thread_id=cloud_thread_id,
+        user_message_id=cloud_user_message_id,
+        assistant_message_id=cloud_assistant_message_id,
     )
 
 
@@ -1907,6 +2033,9 @@ def chat_stream(
         or body.device_id
         or "unknown"
     )[:128]
+    cloud_client_id, cloud_thread_id, cloud_user_message_id = _begin_cloud_turn(
+        body, device_id=device_id, request_id=request_id
+    )
 
     goal_objective = parse_goal_command(body.message)
     parallel_tasks = parse_parallel_command(body.message)
@@ -1926,6 +2055,8 @@ def chat_stream(
         {
             "request_id": request_id,
             "device_id": device_id,
+            "client_id": cloud_client_id,
+            "thread_id": cloud_thread_id,
             "stream": True,
             "direct_stream": (
                 direct_stream
@@ -1977,6 +2108,7 @@ def chat_stream(
                         goal_objective,
                         remote_session=remote_session,
                         requester_device=device_id,
+                        thread_id=cloud_thread_id,
                     )
                 except RuntimeError as exc:
                     text = str(exc)
@@ -2026,6 +2158,7 @@ def chat_stream(
                     parallel_tasks,
                     remote_session=remote_session,
                     requester_device=device_id,
+                    thread_id=cloud_thread_id,
                 )
                 yield _sse(
                     "queued",
@@ -2130,6 +2263,7 @@ def chat_stream(
                         objective,
                         remote_session=remote_session,
                         requester_device=device_id,
+                        thread_id=cloud_thread_id,
                     )
                 except RuntimeError as exc:
                     text = str(exc)
@@ -2181,6 +2315,7 @@ def chat_stream(
                     objective=decision.objective or body.message,
                     remote_session=remote_session,
                     requester_device=device_id,
+                    thread_id=cloud_thread_id,
                 )
                 yield _sse(
                     "queued",
@@ -2367,8 +2502,9 @@ def chat_stream(
                 # lock, copy metrics, then release the lock BEFORE yielding SSE
                 # data so a slow/aborted client cannot pin the agent.
                 try:
-                    with _remote_permission_scope(remote_session):
-                        tool_text = runtime.agent.handle(body.message)
+                    with _cloud_thread_scope(cloud_thread_id):
+                        with _remote_permission_scope(remote_session):
+                            tool_text = runtime.agent.handle(body.message)
                     metrics = dict(
                         runtime.agent.last_metrics
                         or {}
@@ -2389,9 +2525,10 @@ def chat_stream(
             else:
                 # Ordinary no-tool conversation keeps true token streaming.
                 try:
-                    with _remote_permission_scope(remote_session):
-                        for text in runtime.agent.handle_stream(body.message):
-                            yield _sse(
+                    with _cloud_thread_scope(cloud_thread_id):
+                        with _remote_permission_scope(remote_session):
+                            for text in runtime.agent.handle_stream(body.message):
+                                yield _sse(
                                 "token",
                                 {
                                     "text": text,
@@ -2513,8 +2650,50 @@ def chat_stream(
                 },
             )
 
+    def persisted_events():
+        assistant_parts: list[str] = []
+        recorded = False
+        for chunk in events():
+            event_name = ""
+            data: dict[str, Any] | None = None
+            try:
+                for line in str(chunk).splitlines():
+                    if line.startswith("event:"):
+                        event_name = line.split(":", 1)[1].strip()
+                    elif line.startswith("data:"):
+                        raw = line.split(":", 1)[1].strip()
+                        loaded = json.loads(raw)
+                        if isinstance(loaded, dict):
+                            data = loaded
+                if event_name == "token" and data:
+                    assistant_parts.append(str(data.get("text") or ""))
+                elif event_name == "start" and data is not None:
+                    data["thread_id"] = cloud_thread_id
+                    data["client_id"] = cloud_client_id
+                    data["user_message_id"] = cloud_user_message_id
+                    chunk = _sse("start", data)
+                elif event_name == "done" and data is not None:
+                    assistant_message_id = ""
+                    if not recorded:
+                        assistant_message_id = _finish_cloud_turn(
+                            thread_id=cloud_thread_id,
+                            client_id=cloud_client_id,
+                            request_id=request_id,
+                            content="".join(assistant_parts),
+                        )
+                        recorded = True
+                    data["thread_id"] = cloud_thread_id
+                    data["assistant_message_id"] = assistant_message_id
+                    chunk = _sse("done", data)
+            except Exception as exc:
+                runtime.audit.record(
+                    "cloud_transcript_persist_error",
+                    {"request_id": request_id, "error": repr(exc)},
+                )
+            yield chunk
+
     return StreamingResponse(
-        events(),
+        persisted_events(),
         media_type=(
             "text/event-stream"
         ),
@@ -2960,10 +3139,119 @@ def tools(
 
 
 
+@app.post("/v1/cloud/clients/register")
+def cloud_client_register(body: CloudClientIn, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return cloud_state.register_client(
+        client_id=body.client_id or None,
+        name=body.name,
+        platform=body.platform,
+        app_version=body.app_version,
+        capabilities=body.capabilities,
+    )
+
+
+@app.post("/v1/cloud/clients/{client_id}/heartbeat")
+def cloud_client_heartbeat(client_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return cloud_state.touch_client(client_id, platform=_cloud_platform(client_id))
+
+
+@app.get("/v1/cloud/clients")
+def cloud_clients(authorization: str | None = Header(default=None), limit: int = 100):
+    _authorized(authorization)
+    return {"clients": cloud_state.list_clients(limit=max(1, min(int(limit), 500)))}
+
+
+@app.get("/v1/cloud/session")
+def cloud_session(
+    thread_id: str = "",
+    message_limit: int = 80,
+    authorization: str | None = Header(default=None),
+):
+    _authorized(authorization)
+    return cloud_state.snapshot(
+        thread_id=thread_id or None,
+        message_limit=max(1, min(int(message_limit), 500)),
+    )
+
+
+@app.get("/v1/cloud/threads")
+def cloud_threads(authorization: str | None = Header(default=None), limit: int = 50):
+    _authorized(authorization)
+    return {
+        "active_thread_id": cloud_state.active_thread_id(),
+        "threads": cloud_state.list_threads(limit=max(1, min(int(limit), 200))),
+    }
+
+
+@app.post("/v1/cloud/threads")
+def cloud_thread_create(body: CloudThreadIn, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    thread = cloud_state.create_thread(body.title)
+    cloud_state.activate_thread(str(thread["thread_id"]))
+    return thread
+
+
+@app.post("/v1/cloud/threads/{thread_id}/activate")
+def cloud_thread_activate(thread_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return cloud_state.activate_thread(thread_id)
+
+
+@app.post("/v1/cloud/threads/{thread_id}/archive")
+def cloud_thread_archive(thread_id: str, body: dict | None = None, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    try:
+        return cloud_state.archive_thread(thread_id, bool((body or {}).get("archived", True)))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Cloud thread not found.") from exc
+
+
+@app.get("/v1/cloud/threads/{thread_id}/messages")
+def cloud_thread_messages(
+    thread_id: str,
+    limit: int = 100,
+    authorization: str | None = Header(default=None),
+):
+    _authorized(authorization)
+    if not cloud_state.get_thread(thread_id):
+        raise HTTPException(status_code=404, detail="Cloud thread not found.")
+    return {
+        "thread_id": thread_id,
+        "messages": cloud_state.messages(thread_id, limit=max(1, min(int(limit), 500))),
+    }
+
+
+@app.get("/v1/cloud/preferences")
+def cloud_preferences(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"preferences": cloud_state.preferences()}
+
+
+@app.post("/v1/cloud/preferences/{key}")
+def cloud_preference_set(key: str, body: CloudPreferenceIn, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    cloud_state.set_preference(key, body.value)
+    return {"key": key, "value": cloud_state.get_preference(key)}
+
+
 @app.get("/v1/v5/status")
 def v5_status(authorization: str | None = Header(default=None)):
     _authorized(authorization)
     return v5_runtime.status()
+
+
+@app.get("/v1/v5/features")
+def v5_features(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"features": v5_runtime.feature_status()}
+
+
+@app.get("/v1/v5/migrations")
+def v5_migrations(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return v5_runtime.migrations.status()
 
 
 @app.get("/v1/v5/goals")
@@ -3011,6 +3299,18 @@ def v5_cancel_schedule(job_id: str, authorization: str | None = Header(default=N
     return {"cancelled": job_id}
 
 
+@app.post("/v1/v5/schedules/{job_id}/pause")
+def v5_pause_schedule(job_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return v5_runtime.scheduler.pause(job_id)
+
+
+@app.post("/v1/v5/schedules/{job_id}/resume")
+def v5_resume_schedule(job_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return v5_runtime.scheduler.resume(job_id)
+
+
 @app.get("/v1/v5/monitors")
 def v5_monitors(authorization: str | None = Header(default=None)):
     _authorized(authorization)
@@ -3033,10 +3333,59 @@ def v5_check_monitor(monitor_id: str, authorization: str | None = Header(default
     return v5_runtime.monitoring.check(monitor_id)
 
 
+@app.post("/v1/v5/monitors/{monitor_id}/pause")
+def v5_pause_monitor(monitor_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return v5_runtime.monitoring.pause(monitor_id)
+
+
+@app.post("/v1/v5/monitors/{monitor_id}/resume")
+def v5_resume_monitor(monitor_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return v5_runtime.monitoring.resume(monitor_id)
+
+
+@app.delete("/v1/v5/monitors/{monitor_id}")
+def v5_delete_monitor(monitor_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    v5_runtime.monitoring.delete(monitor_id)
+    return {"deleted": monitor_id}
+
+
+@app.get("/v1/v5/memory/search")
+def v5_memory_search(q: str, namespace: str = "", limit: int = 20, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"memories": v5_runtime.semantic_memory.search(q, namespace=namespace or None, limit=max(1, min(int(limit), 100)))}
+
+
+@app.post("/v1/v5/memory")
+def v5_memory_add(body: dict, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    memory_id = v5_runtime.semantic_memory.remember(
+        str(body.get("text") or ""), namespace=str(body.get("namespace") or "default"),
+        kind=str(body.get("kind") or "note"), source=str(body.get("source") or "web"),
+        metadata=dict(body.get("metadata") or {}), expires_at=(str(body.get("expires_at")) if body.get("expires_at") else None),
+    )
+    return {"memory_id": memory_id}
+
+
+@app.delete("/v1/v5/memory/{memory_id}")
+def v5_memory_forget(memory_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    v5_runtime.semantic_memory.forget(memory_id)
+    return {"forgotten": memory_id}
+
+
 @app.get("/v1/v5/notifications")
 def v5_notifications(authorization: str | None = Header(default=None)):
     _authorized(authorization)
     return {"notifications": v5_runtime.notifications.list(limit=100)}
+
+
+@app.get("/v1/v5/rollback/{checkpoint_id}/preview")
+def v5_rollback_preview(checkpoint_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return v5_runtime.rollback.preview(checkpoint_id)
 
 
 @app.get("/v1/v5/audit")
@@ -3045,10 +3394,173 @@ def v5_audit(authorization: str | None = Header(default=None)):
     return v5_runtime.audit.summary()
 
 
+@app.get("/v1/v5/artifacts")
+def v5_artifacts(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"artifacts": v5_runtime.artifacts.list()}
+
+
+@app.get("/v1/v5/recovery")
+def v5_recovery(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"strategies": v5_runtime.self_healing.stats()}
+
+
+@app.get("/v1/v5/capabilities")
+def v5_capabilities(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"proposals": v5_runtime.capability_learning.list(), "installed": v5_runtime.capability_learning.installed_list()}
+
+
+@app.get("/v1/v5/home-adapters")
+def v5_home_adapters(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"adapters": v5_runtime.home_network.list()}
+
+
 @app.get("/v1/v5/connectors")
 def v5_connectors(authorization: str | None = Header(default=None)):
     _authorized(authorization)
     return {"connectors": v5_runtime.connectors.list()}
+
+
+@app.get("/v1/v5/workspaces")
+def v5_workspaces(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"workspaces": v5_runtime.workspace_manager.list()}
+
+
+@app.post("/v1/v5/workspaces")
+def v5_create_workspace(body: dict, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    ws = v5_runtime.workspace_manager.create(str(body.get("repo") or ""), name=str(body.get("name") or "task"), base_ref=str(body.get("base_ref") or "HEAD"))
+    return ws.__dict__
+
+
+@app.get("/v1/v5/workspaces/{workspace_id}/diff")
+def v5_workspace_diff(workspace_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"workspace_id": workspace_id, "diff": v5_runtime.workspace_manager.diff(workspace_id)}
+
+
+@app.post("/v1/v5/workspaces/{workspace_id}/test")
+def v5_workspace_test(workspace_id: str, body: dict | None = None, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return v5_runtime.workspace_manager.run_tests(workspace_id, list((body or {}).get("args") or ["-q"]))
+
+
+@app.get("/v1/v5/workspaces/{workspace_id}/merge-plan")
+def v5_workspace_merge_plan(workspace_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return v5_runtime.workspace_manager.merge_plan(workspace_id)
+
+
+@app.post("/v1/v5/workspaces/{workspace_id}/merge")
+def v5_workspace_merge(workspace_id: str, body: dict, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return v5_runtime.workspace_manager.merge(workspace_id, approved=bool(body.get("approved")))
+
+
+@app.get("/v1/v5/workflows")
+def v5_workflows(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"workflows": v5_runtime.workflows.list()}
+
+
+@app.post("/v1/v5/browser/start")
+def v5_browser_start(body: dict | None = None, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    body = body or {}
+    v5_runtime.browser.start(headless=bool(body.get("headless", True)), profile=str(body.get("profile") or "default"))
+    return {"started": True, "tabs": v5_runtime.browser.tabs()}
+
+
+@app.post("/v1/v5/browser/stop")
+def v5_browser_stop(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    v5_runtime.browser.stop()
+    return {"stopped": True}
+
+
+@app.get("/v1/v5/browser/tabs")
+def v5_browser_tabs(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"tabs": v5_runtime.browser.tabs()}
+
+
+@app.post("/v1/v5/browser/navigate")
+def v5_browser_navigate(body: dict, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    if not getattr(v5_runtime.browser, "_context", None):
+        v5_runtime.browser.start(headless=True, profile=str(body.get("profile") or "default"))
+    return v5_runtime.browser.navigate(str(body.get("url") or ""), tab_id=str(body.get("tab_id") or "") or None).__dict__
+
+
+@app.get("/v1/v5/mobile/devices")
+def v5_mobile_devices(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"devices": v5_runtime.mobile.list_devices()}
+
+
+@app.post("/v1/v5/mobile/register")
+def v5_mobile_register(body: dict, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return v5_runtime.mobile.register(
+        str(body.get("name") or "IRAS Android")[:160],
+        platform=str(body.get("platform") or "android")[:80],
+    )
+
+
+@app.post("/v1/v5/mobile/{mobile_id}/heartbeat")
+def v5_mobile_heartbeat(mobile_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    v5_runtime.mobile.heartbeat(mobile_id)
+    return {"ok": True, "mobile_id": mobile_id}
+
+
+@app.get("/v1/v5/mobile/{mobile_id}/events")
+def v5_mobile_events(mobile_id: str, limit: int = 50, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    v5_runtime.mobile.heartbeat(mobile_id)
+    return {"events": v5_runtime.mobile.pending(mobile_id, limit=max(1, min(int(limit), 200)))}
+
+
+@app.post("/v1/v5/mobile/{mobile_id}/events/{event_id}/ack")
+def v5_mobile_ack(mobile_id: str, event_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    v5_runtime.mobile.acknowledge(event_id, mobile_id)
+    return {"ok": True, "mobile_id": mobile_id, "event_id": event_id}
+
+
+@app.post("/v1/v5/mobile/{mobile_id}/enabled")
+def v5_mobile_enabled(mobile_id: str, body: dict, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    v5_runtime.mobile.set_enabled(mobile_id, bool(body.get("enabled", True)))
+    return {"ok": True, "mobile_id": mobile_id, "enabled": bool(body.get("enabled", True))}
+
+
+@app.get("/v1/v5/mobile/approvals")
+def v5_mobile_approvals(status: str = "", authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"approvals": v5_runtime.mobile.approvals(status=status or None)}
+
+
+@app.post("/v1/v5/mobile/approvals/{approval_id}")
+def v5_mobile_resolve_approval(approval_id: str, body: dict, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return v5_runtime.mobile.resolve_approval(approval_id, approved=bool(body.get("approved")), note=str(body.get("note") or ""))
+
+
+@app.get("/v1/v5/skills")
+def v5_skills(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"skills": v5_runtime.skills.list()}
+
+
+@app.get("/v1/v5/profiles")
+def v5_profiles(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"profiles": v5_runtime.profiles.list()}
 
 
 @app.get("/v1/v5/events")
@@ -3128,7 +3640,7 @@ else:
 
 @app.on_event("shutdown")
 def shutdown_event():
-    v5_runtime.scheduler.stop()
+    v5_runtime.stop_services()
     multitask_manager.close()
     orchestration_manager.close()
     provider = runtime.agent.provider

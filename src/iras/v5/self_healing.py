@@ -37,6 +37,22 @@ class SelfHealingEngine:
         s, f = int(row.get("successes") or 0), int(row.get("failures") or 0)
         return (s + 1) / (s + f + 2)
 
+    def stats(self) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            "SELECT strategy,successes,failures,last_used,last_error FROM v5_recovery_stats ORDER BY last_used DESC",
+            fetch="all",
+        ) or []
+        known = {row["strategy"] for row in rows}
+        for strategy in self.strategies:
+            if strategy.name not in known:
+                rows.append({
+                    "strategy": strategy.name, "successes": 0, "failures": 0,
+                    "last_used": None, "last_error": "",
+                })
+        for row in rows:
+            row["score"] = round(self._score(row["strategy"]), 6)
+        return rows
+
     def recover(self, error: Exception | str, context: dict[str, Any]) -> dict[str, Any]:
         text = f"{type(error).__name__}: {error}" if isinstance(error, Exception) else str(error)
         matches = [s for s in self.strategies if s.error_class == "*" or s.error_class.lower() in text.lower()]

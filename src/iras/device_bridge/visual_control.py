@@ -159,6 +159,93 @@ $result = [PSCustomObject]@{
 $result | ConvertTo-Json -Depth 8 -Compress
 """
 
+_UIA_INVOKE_PS = r"""
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+
+$hwnd = [Int64]$env:IRAS_UI_HWND
+$name = [string]$env:IRAS_UI_NAME
+$role = [string]$env:IRAS_UI_ROLE
+$left = [Int32]$env:IRAS_UI_LEFT
+$top = [Int32]$env:IRAS_UI_TOP
+$width = [Int32]$env:IRAS_UI_WIDTH
+$height = [Int32]$env:IRAS_UI_HEIGHT
+
+$root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$hwnd)
+if ($null -eq $root) { throw 'UI Automation could not attach to this window.' }
+
+$all = $root.FindAll(
+    [System.Windows.Automation.TreeScope]::Descendants,
+    [System.Windows.Automation.Condition]::TrueCondition
+)
+$best = $null
+$bestScore = [double]::PositiveInfinity
+
+for ($i = 0; $i -lt $all.Count; $i++) {
+    $el = $all.Item($i)
+    try { $currentName = [string]$el.Current.Name } catch { $currentName = '' }
+    if ($currentName -ne $name) { continue }
+
+    try {
+        $currentRole = [string]$el.Current.ControlType.ProgrammaticName
+        $currentRole = $currentRole -replace '^ControlType\.', ''
+    } catch { $currentRole = '' }
+    if (-not [string]::IsNullOrWhiteSpace($role) -and $currentRole -ne $role) { continue }
+
+    try {
+        $rect = $el.Current.BoundingRectangle
+        $score = [Math]::Abs([double]$rect.Left - $left) +
+                 [Math]::Abs([double]$rect.Top - $top) +
+                 [Math]::Abs([double]$rect.Width - $width) +
+                 [Math]::Abs([double]$rect.Height - $height)
+    } catch { continue }
+
+    if ($score -lt $bestScore) {
+        $best = $el
+        $bestScore = $score
+    }
+}
+
+if ($null -eq $best) {
+    throw 'The previously observed UI element is no longer present.'
+}
+
+$method = $null
+try {
+    $invoke = $best.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+    if ($null -ne $invoke) {
+        $invoke.Invoke()
+        $method = 'InvokePattern'
+    }
+} catch {}
+
+if ($null -eq $method) {
+    try {
+        $legacy = $best.GetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern)
+        if ($null -ne $legacy) {
+            $legacy.DoDefaultAction()
+            $method = 'LegacyIAccessiblePattern'
+        }
+    } catch {}
+}
+
+if ($null -eq $method) {
+    throw 'The observed UI element exposes no invokable accessibility action.'
+}
+
+[PSCustomObject]@{
+    invoked = $true
+    method = $method
+    name = $name
+    role = $role
+    match_score = $bestScore
+} | ConvertTo-Json -Compress
+"""
+
+
 
 def _normalize(value: str) -> str:
     return " ".join(
@@ -300,6 +387,56 @@ class SemanticVisualController:
             ),
         )
 
+        return payload
+
+    def invoke_observed_element(
+        self,
+        app: str,
+        element: dict,
+        *,
+        ensure_open: bool = False,
+    ) -> dict:
+        """Invoke one previously observed UIA element without adding shell power elsewhere."""
+        canonical, hwnd, launched = self._ensure_window(app, ensure_open=bool(ensure_open))
+        rect = element.get("rect") or {}
+        env = dict(os.environ)
+        env["IRAS_UI_HWND"] = str(int(hwnd))
+        env["IRAS_UI_NAME"] = str(element.get("name") or "")
+        env["IRAS_UI_ROLE"] = str(element.get("role") or "")
+        env["IRAS_UI_LEFT"] = str(int(rect.get("left", 0) or 0))
+        env["IRAS_UI_TOP"] = str(int(rect.get("top", 0) or 0))
+        env["IRAS_UI_WIDTH"] = str(int(rect.get("width", 0) or 0))
+        env["IRAS_UI_HEIGHT"] = str(int(rect.get("height", 0) or 0))
+
+        result = subprocess.run(
+            [
+                self._powershell(),
+                "-NoProfile",
+                "-NonInteractive",
+                "-EncodedCommand",
+                self._encoded_script(_UIA_INVOKE_PS),
+            ],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=10,
+            shell=False,
+            env=env,
+        )
+        if result.returncode != 0:
+            error = result.stderr.strip() or result.stdout.strip() or "Unknown UI Automation invoke error."
+            raise RuntimeError("Windows UI Automation invoke failed: " + error[-1800:])
+
+        raw = result.stdout.strip()
+        if not raw:
+            raise RuntimeError("Windows UI Automation invoke returned no data.")
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("Windows UI Automation invoke returned invalid JSON: " + raw[-1200:]) from exc
+        if not isinstance(payload, dict) or not payload.get("invoked"):
+            raise RuntimeError("Windows UI Automation did not invoke the requested element.")
+        payload.update({"app": canonical, "window": int(hwnd), "launched": bool(launched)})
         return payload
 
     def _ensure_window(

@@ -97,10 +97,18 @@ Summarize the current project state"></textarea>
   <div class="row"><button id="refreshProviders">Probe Now</button><button id="closeProviders">Close</button></div>
 </dialog>
 
-<dialog id="v5Dlg" style="max-width:820px">
+<dialog id="v5Dlg" style="max-width:920px">
   <h3>IRAS Autonomy Control Center</h3>
-  <div class="sub">Persistent jobs, monitoring, goals, notifications, connectors, and audit status.</div>
+  <div class="sub">Persistent autonomy, monitoring, memory, isolated coding, browser, connectors, mobile approvals and audit.</div>
   <div id="v5Summary" class="status" style="margin:10px 0">Loading...</div>
+  <div class="provider-grid">
+    <div class="provider-card"><b>Create goal</b><input id="v5GoalTitle" placeholder="Goal title"><div class="row"><button id="v5AddGoal">Add</button></div></div>
+    <div class="provider-card"><b>Schedule</b><input id="v5ScheduleName" placeholder="Daily project brief"><input id="v5SchedulePrompt" placeholder="Check projects and brief me"><input id="v5ScheduleSeconds" type="number" min="60" value="86400"><div class="row"><button id="v5AddSchedule">Add</button></div></div>
+    <div class="provider-card"><b>Monitor</b><input id="v5MonitorName" placeholder="IRAS health"><input id="v5MonitorUrl" placeholder="https://example.com/health"><input id="v5MonitorSeconds" type="number" min="60" value="300"><div class="row"><button id="v5AddMonitor">Add</button></div></div>
+    <div class="provider-card"><b>Memory</b><input id="v5MemoryQuery" placeholder="Search semantic memory"><div class="row"><button id="v5SearchMemory">Search</button></div></div>
+    <div class="provider-card"><b>Browser agent</b><input id="v5BrowserUrl" placeholder="https://example.com"><div class="row"><button id="v5Browse">Open</button></div></div>
+    <div class="provider-card"><b>Coding workspace</b><input id="v5RepoPath" placeholder="Authorized Git repository path"><input id="v5WorkspaceName" placeholder="task-name"><div class="row"><button id="v5CreateWorkspace">Create</button></div></div>
+  </div>
   <pre id="v5Out">Ready.</pre>
   <div class="row"><button id="v5Refresh">Refresh</button><button id="v5Close">Close</button></div>
 </dialog>
@@ -133,6 +141,8 @@ const announcedGoalRuns=new Set(),chatGoalWatchers=new Set();
 let currentAudio=null,currentAudioUrl=null,currentChatAbort=null;
 let voiceQueue=[],voicePumping=false,voiceSession=0,voiceBuffer="",lastSpokenText="";
 let sending=false,chatGeneration=0;
+const cloudRenderedMessageIds=new Set();
+let cloudPollTimer=null;
 let handsFree=false,recognition=null,restartTimer=null,manualRecognition=null;
 let conversationUntil=0;
 let recognitionHadAudio=false,recognitionHadSpeech=false;
@@ -155,6 +165,81 @@ function add(who,text){
 function config(){
   const stored=JSON.parse(localStorage.getItem("iras-config")||"{}");
   return {...stored,token:sessionStorage.getItem("iras-api-token")||token.value.trim()};
+}
+
+function cloudClientId(){
+  let id=localStorage.getItem("iras-cloud-client-id")||"";
+  if(!id){
+    const suffix=(crypto&&crypto.randomUUID)?crypto.randomUUID().replace(/-/g,""):Math.random().toString(36).slice(2)+Date.now().toString(36);
+    id="web_"+suffix;
+    localStorage.setItem("iras-cloud-client-id",id);
+  }
+  return id;
+}
+
+function cloudThreadId(){return localStorage.getItem("iras-cloud-thread-id")||""}
+function setCloudThreadId(id){if(id)localStorage.setItem("iras-cloud-thread-id",String(id))}
+function cloudTurnId(){
+  const suffix=(crypto&&crypto.randomUUID)?crypto.randomUUID().replace(/-/g,""):Math.random().toString(36).slice(2)+Date.now().toString(36);
+  return "turn_"+suffix;
+}
+
+async function initCloudSession({renderHistory=true}={}){
+  const c=config();
+  if(!c.token)return null;
+  const base=(c.server||location.origin).replace(/\/$/,"");
+  const headers={"Authorization":"Bearer "+c.token,"Content-Type":"application/json"};
+  const reg=await fetch(base+"/v1/cloud/clients/register",{
+    method:"POST",headers,
+    body:JSON.stringify({client_id:cloudClientId(),name:"IRAS Web",platform:"web",app_version:"5.0.0-rc3",capabilities:["chat","cloud-sync","remote-control","voice"]})
+  });
+  if(!reg.ok)throw new Error((await reg.text())||("HTTP "+reg.status));
+  const registered=await reg.json();
+  if(!cloudThreadId()&&registered.active_thread_id)setCloudThreadId(registered.active_thread_id);
+  const wanted=cloudThreadId();
+  const sessionUrl=base+"/v1/cloud/session"+(wanted?("?thread_id="+encodeURIComponent(wanted)+"&message_limit=80"):"?message_limit=80");
+  const response=await fetch(sessionUrl,{headers:{"Authorization":"Bearer "+c.token}});
+  if(!response.ok)throw new Error((await response.text())||("HTTP "+response.status));
+  const data=await response.json();
+  setCloudThreadId((data.thread||{}).thread_id||data.active_thread_id||wanted);
+  if(renderHistory&&chat.childElementCount===0){
+    for(const item of (data.messages||[])){
+      if(item.message_id)cloudRenderedMessageIds.add(item.message_id);
+      if(item.role==="user")add("You",item.content||"");
+      else if(item.role==="assistant")add("IRAS",item.content||"");
+    }
+  }else{
+    for(const item of (data.messages||[])){if(item.message_id)cloudRenderedMessageIds.add(item.message_id)}
+  }
+  status.textContent="Cloud synced · "+((data.clients||[]).length||1)+" client(s)";
+  return data;
+}
+
+async function syncCloudMessages(){
+  const c=config();
+  if(!c.token||sending)return;
+  const base=(c.server||location.origin).replace(/\/$/,"");
+  const response=await fetch(base+"/v1/cloud/session?message_limit=80",{headers:{"Authorization":"Bearer "+c.token}});
+  if(!response.ok)return;
+  const data=await response.json();
+  const active=(data.thread||{}).thread_id||data.active_thread_id||"";
+  if(active&&active!==cloudThreadId()){
+    setCloudThreadId(active);
+    chat.innerHTML="";
+    cloudRenderedMessageIds.clear();
+  }
+  for(const item of (data.messages||[])){
+    const id=item.message_id||"";
+    if(id&&cloudRenderedMessageIds.has(id))continue;
+    if(id)cloudRenderedMessageIds.add(id);
+    if(item.role==="user")add("You",item.content||"");
+    else if(item.role==="assistant")add("IRAS",item.content||"");
+  }
+}
+
+function startCloudPolling(){
+  if(cloudPollTimer)clearInterval(cloudPollTimer);
+  cloudPollTimer=setInterval(()=>syncCloudMessages().catch(()=>{}),5000);
 }
 
 function remoteSession(){
@@ -552,25 +637,47 @@ async function loadV5Control(){
   if(!c.server||!c.token)throw new Error("Configure the IRAS server first.");
   const base=c.server.replace(/\/$/,"");
   const headers={"Authorization":"Bearer "+c.token};
-  const [statusR,goalsR,schedulesR,monitorsR,notificationsR,connectorsR,auditR]=await Promise.all([
+  const rs=await Promise.all([
     fetch(base+"/v1/v5/status",{headers}),fetch(base+"/v1/v5/goals",{headers}),fetch(base+"/v1/v5/schedules",{headers}),
-    fetch(base+"/v1/v5/monitors",{headers}),fetch(base+"/v1/v5/notifications",{headers}),fetch(base+"/v1/v5/connectors",{headers}),fetch(base+"/v1/v5/audit",{headers})
+    fetch(base+"/v1/v5/monitors",{headers}),fetch(base+"/v1/v5/notifications",{headers}),fetch(base+"/v1/v5/connectors",{headers}),fetch(base+"/v1/v5/audit",{headers}),
+    fetch(base+"/v1/v5/workspaces",{headers}),fetch(base+"/v1/v5/mobile/devices",{headers}),fetch(base+"/v1/v5/mobile/approvals",{headers}),fetch(base+"/v1/v5/skills",{headers}),fetch(base+"/v1/v5/profiles",{headers}),
+    fetch(base+"/v1/v5/features",{headers}),fetch(base+"/v1/v5/migrations",{headers}),fetch(base+"/v1/v5/artifacts",{headers}),fetch(base+"/v1/v5/recovery",{headers}),fetch(base+"/v1/v5/capabilities",{headers}),fetch(base+"/v1/v5/home-adapters",{headers}),
+    fetch(base+"/v1/cloud/session?message_limit=1",{headers})
   ]);
-  for(const r of [statusR,goalsR,schedulesR,monitorsR,notificationsR,connectorsR,auditR])if(!r.ok)throw new Error(await r.text());
-  const [st,go,sc,mo,no,co,au]=await Promise.all([statusR.json(),goalsR.json(),schedulesR.json(),monitorsR.json(),notificationsR.json(),connectorsR.json(),auditR.json()]);
-  v5Summary.textContent=`IRAS ${st.version} · ${st.feature_count} capability systems · state: ${st.persistent_backend} · browser: ${st.browser_available?"ready":"optional"} · sandbox: ${st.docker_sandbox_available?"docker":"docker unavailable"}`;
+  for(const r of rs)if(!r.ok)throw new Error(await r.text());
+  const [st,go,sc,mo,no,co,au,ws,md,ma,sk,pr,fs,mi,ar,re,ca,ho,cl]=await Promise.all(rs.map(r=>r.json()));
+  const featureRows=fs.features||st.feature_status||[];
+  const featureReady=featureRows.filter(x=>x.operational).length;
+  v5Summary.textContent=`IRAS ${st.version} · ${featureReady}/${st.feature_count} operational · ${st.persistent_backend} · workers: ${st.services_started?"running":"stopped"} · browser: ${st.browser_available?"ready":"optional"} · sandbox: ${st.docker_sandbox_available?"docker":st.sandbox_local_fallback?"local fallback":"not available"}`;
   const connected=(co.connectors||[]).filter(x=>x.connected).map(x=>x.display_name);
+  const ready=(co.connectors||[]).filter(x=>x.credentials?.ready).map(x=>x.display_name);
   v5Out.textContent=[
-    `Scheduled jobs: ${(sc.schedules||[]).length}`,
-    `Monitors: ${(mo.monitors||[]).length}`,
-    `Goals: ${(go.goals||[]).length}`,
-    `Notifications: ${(no.notifications||[]).length}`,
+    `Scheduled jobs: ${(sc.schedules||[]).length} · Monitors: ${(mo.monitors||[]).length} · Goals: ${(go.goals||[]).length}`,
+    `Notifications: ${(no.notifications||[]).length} · Workspaces: ${(ws.workspaces||[]).length}`,
+    `Cloud clients: ${(cl.clients||[]).length} · Active thread: ${cl.active_thread_id||"none"}`,
+    `Mobile devices: ${(md.devices||[]).length} · Pending approvals: ${(ma.approvals||[]).filter(x=>x.status==="pending").length}`,
+    `Installed skills: ${(sk.skills||[]).length} · Profiles: ${(pr.profiles||[]).length}`,
     `Connected connectors: ${connected.join(", ")||"none"}`,
+    `Credential-ready connectors: ${ready.join(", ")||"none"}`,
     `Audit events: ${au.events||0} · errors: ${au.errors||0}`,
+    `Artifacts: ${(ar.artifacts||[]).length} · Learned capabilities: ${(ca.installed||[]).length} installed / ${(ca.proposals||[]).length} proposed`,
+    `Recovery strategies: ${(re.strategies||[]).length} · Home adapters: ${(ho.adapters||[]).length} · Migrations complete: ${mi.complete?"yes":"no"}`,
     "",
-    "Capabilities:",...(st.features||[]).map(x=>"• "+x.replaceAll("_"," "))
+    "Feature matrix:",...featureRows.map(x=>(x.operational?"✓ ":"⚠ ")+String(x.feature||"").replaceAll("_"," "))
   ].join("\n");
 }
+
+async function v5Post(path,body){
+  const c=loadConfig();if(!c.server||!c.token)throw new Error("Configure the IRAS server first.");
+  const r=await fetch(c.server.replace(/\/$/,"")+path,{method:"POST",headers:{"Authorization":"Bearer "+c.token,"Content-Type":"application/json"},body:JSON.stringify(body||{})});
+  if(!r.ok)throw new Error(await r.text());return r.json();
+}
+async function v5AddGoal(){const title=$("#v5GoalTitle").value.trim();if(!title)return;v5Out.textContent=JSON.stringify(await v5Post("/v1/v5/goals",{title,level:"goal"}),null,2);await loadV5Control();}
+async function v5AddSchedule(){v5Out.textContent=JSON.stringify(await v5Post("/v1/v5/schedules",{name:$("#v5ScheduleName").value||"Scheduled job",prompt:$("#v5SchedulePrompt").value,interval_seconds:Number($("#v5ScheduleSeconds").value||86400)}),null,2);await loadV5Control();}
+async function v5AddMonitor(){v5Out.textContent=JSON.stringify(await v5Post("/v1/v5/monitors",{name:$("#v5MonitorName").value||"Monitor",kind:"website",config:{url:$("#v5MonitorUrl").value},interval_seconds:Number($("#v5MonitorSeconds").value||300)}),null,2);await loadV5Control();}
+async function v5SearchMemory(){const c=loadConfig();const q=$("#v5MemoryQuery").value.trim();const r=await fetch(c.server.replace(/\/$/,"")+"/v1/v5/memory/search?q="+encodeURIComponent(q),{headers:{"Authorization":"Bearer "+c.token}});if(!r.ok)throw new Error(await r.text());v5Out.textContent=JSON.stringify(await r.json(),null,2);}
+async function v5Browse(){v5Out.textContent=JSON.stringify(await v5Post("/v1/v5/browser/navigate",{url:$("#v5BrowserUrl").value}),null,2);}
+async function v5CreateWorkspace(){v5Out.textContent=JSON.stringify(await v5Post("/v1/v5/workspaces",{repo:$("#v5RepoPath").value,name:$("#v5WorkspaceName").value||"task"}),null,2);await loadV5Control();}
 
 async function runParallelTasks(){
   const c=config();
@@ -625,6 +732,7 @@ function saveConfig(){
     handsFree
   }));
   cfg.close();
+  setTimeout(()=>initCloudSession({renderHistory:true}).then(startCloudPolling).catch(e=>status.textContent="Cloud sync error: "+e.message),50);
 }
 
 function wakeWord(){return (config().wakeWord||"IRAS").trim()}
@@ -851,7 +959,7 @@ function parseFrame(frame){
   catch(_){return null}
 }
 
-async function legacyReply(base,c,text,bubble,session,signal){
+async function legacyReply(base,c,text,bubble,session,signal,turnId){
   const r=await fetch(base+"/v1/chat",{
     method:"POST",
     signal,
@@ -861,18 +969,21 @@ async function legacyReply(base,c,text,bubble,session,signal){
       "X-Device-ID":"web",
       ...remoteHeaders()
     },
-    body:JSON.stringify({message:text,device_id:"web"})
+    body:JSON.stringify({message:text,device_id:"web",client_id:cloudClientId(),thread_id:cloudThreadId(),turn_id:turnId})
   });
 
   if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
   const data=await r.json();
+  if(data.thread_id)setCloudThreadId(data.thread_id);
+  if(data.user_message_id)cloudRenderedMessageIds.add(data.user_message_id);
+  if(data.assistant_message_id)cloudRenderedMessageIds.add(data.assistant_message_id);
   bubble.textContent=data.response;
   voiceBuffer=data.response;
   drainVoiceBuffer(session,true);
   return data;
 }
 
-async function streamReply(base,c,text,bubble,session,signal){
+async function streamReply(base,c,text,bubble,session,signal,turnId){
   const r=await fetch(base+"/v1/chat/stream",{
     method:"POST",
     signal,
@@ -883,11 +994,11 @@ async function streamReply(base,c,text,bubble,session,signal){
       "X-Device-ID":"web",
       ...remoteHeaders()
     },
-    body:JSON.stringify({message:text,device_id:"web"})
+    body:JSON.stringify({message:text,device_id:"web",client_id:cloudClientId(),thread_id:cloudThreadId(),turn_id:turnId})
   });
 
   if(r.status===404){
-    return await legacyReply(base,c,text,bubble,session,signal);
+    return await legacyReply(base,c,text,bubble,session,signal,turnId);
   }
 
   if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
@@ -911,6 +1022,8 @@ async function streamReply(base,c,text,bubble,session,signal){
       const {event,data}=parsed;
 
       if(event==="start"){
+        if(data.thread_id)setCloudThreadId(data.thread_id);
+        if(data.user_message_id)cloudRenderedMessageIds.add(data.user_message_id);
         status.textContent=data.streaming?"IRAS is thinking...":"IRAS is working...";
       }else if(event==="queued"){
         const waited=data.waited_ms||0;
@@ -935,6 +1048,8 @@ async function streamReply(base,c,text,bubble,session,signal){
       }else if(event==="done"){
         bubble.classList.remove("cursor");
         doneData=data||{};
+        if(data.thread_id)setCloudThreadId(data.thread_id);
+        if(data.assistant_message_id)cloudRenderedMessageIds.add(data.assistant_message_id);
         if(data.execution_mode==="authorization_required"){
           // Do not speak the temporary safety-gate response; the client can
           // obtain consent and resume this exact turn automatically.
@@ -989,6 +1104,7 @@ async function sendText(text,{interrupt=false}={}){
 
   const generation=++chatGeneration;
   const session=++voiceSession;
+  const turnId=cloudTurnId();
   voiceQueue=[];
   voiceBuffer="";
   voicePumping=false;
@@ -1007,7 +1123,7 @@ async function sendText(text,{interrupt=false}={}){
 
   try{
     const base=c.server||location.origin;
-    let completion=await streamReply(base,c,text,bubble,session,controller.signal);
+    let completion=await streamReply(base,c,text,bubble,session,controller.signal,turnId);
 
     if(generation!==chatGeneration)return;
 
@@ -1018,7 +1134,7 @@ async function sendText(text,{interrupt=false}={}){
         bubble.textContent="";
         voiceBuffer="";
         status.textContent="Remote authorized. Resuming your request...";
-        completion=await streamReply(base,c,text,bubble,session,controller.signal);
+        completion=await streamReply(base,c,text,bubble,session,controller.signal,turnId);
         if(completion&&completion.execution_mode==="authorization_required"){
           throw new Error("Remote session was created but the server did not accept it. Reopen Remote and try again.");
         }
@@ -1351,6 +1467,12 @@ $("#rollbackGoal").onclick=()=>rollbackGoalRun().catch(e=>{taskOut.textContent="
 $("#cancelGoal").onclick=()=>controlGoal("cancel").catch(e=>{taskOut.textContent="Error: "+e.message});
 v5Button.onclick=()=>{v5Dlg.showModal();loadV5Control().catch(e=>{v5Summary.textContent="Error: "+e.message})};
 $("#v5Refresh").onclick=()=>loadV5Control().catch(e=>{v5Summary.textContent="Error: "+e.message});
+$("#v5AddGoal").onclick=()=>v5AddGoal().catch(e=>v5Out.textContent="Error: "+e.message);
+$("#v5AddSchedule").onclick=()=>v5AddSchedule().catch(e=>v5Out.textContent="Error: "+e.message);
+$("#v5AddMonitor").onclick=()=>v5AddMonitor().catch(e=>v5Out.textContent="Error: "+e.message);
+$("#v5SearchMemory").onclick=()=>v5SearchMemory().catch(e=>v5Out.textContent="Error: "+e.message);
+$("#v5Browse").onclick=()=>v5Browse().catch(e=>v5Out.textContent="Error: "+e.message);
+$("#v5CreateWorkspace").onclick=()=>v5CreateWorkspace().catch(e=>v5Out.textContent="Error: "+e.message);
 $("#v5Close").onclick=()=>v5Dlg.close();
 $("#closeTasks").onclick=()=>tasksDlg.close();
 $("#refreshProviders").onclick=()=>loadProviderStatus().catch(e=>{providerSummary.textContent="Error: "+e.message});
@@ -1434,7 +1556,10 @@ if("serviceWorker" in navigator){
 
 if(!localStorage.getItem("iras-config")){
   cfg.showModal();
-}else if(handsFree){
+}else{
+  setTimeout(()=>initCloudSession({renderHistory:true}).then(startCloudPolling).catch(e=>status.textContent="Cloud sync error: "+e.message),250);
+}
+if(localStorage.getItem("iras-config")&&handsFree){
   setTimeout(async()=>{
     const allowed=await ensureMicrophoneAccess();
     if(allowed)startHandsRecognition();

@@ -9,6 +9,7 @@ from urllib.parse import quote
 from iras.tools.system import launch_app
 
 
+
 class WindowsUIController:
     APP_TITLES = {
         "chrome": ("Google Chrome", "Chrome"),
@@ -415,6 +416,134 @@ class WindowsUIController:
             "window": hwnd,
             "launched": launched,
             "foreground_verified": True,
+        }
+
+    def _window_visual_signature(self, hwnd: int):
+        """Return a tiny visual fingerprint for readiness/stability checks.
+
+        This is deliberately read-only.  It lets the Spotify fast path wait
+        for the real application window to finish opening/rendering instead
+        of relying on a single fixed sleep and then typing into a half-loaded
+        UI.  Failure to capture is tolerated by the caller, which falls back
+        to foreground + elapsed-time readiness.
+        """
+        self._require_windows()
+        from PIL import ImageGrab
+
+        rect = self._physical_window_rect(hwnd)
+        left = int(rect.left)
+        top = int(rect.top)
+        right = int(rect.right)
+        bottom = int(rect.bottom)
+        width = max(1, right - left)
+        height = max(1, bottom - top)
+        if width < 320 or height < 240:
+            return None
+
+        # Ignore most window chrome/taskbar edges and fingerprint the content.
+        bbox = (
+            left + int(width * 0.08),
+            top + int(height * 0.10),
+            right - int(width * 0.05),
+            bottom - int(height * 0.06),
+        )
+        try:
+            image = ImageGrab.grab(bbox=bbox, all_screens=True)
+        except TypeError:
+            image = ImageGrab.grab(bbox=bbox)
+        image = image.convert("L").resize((32, 18))
+        return tuple(image.getdata())
+
+    @staticmethod
+    def _visual_signature_delta(left, right) -> float:
+        if not left or not right or len(left) != len(right):
+            return 999.0
+        return sum(abs(int(a) - int(b)) for a, b in zip(left, right)) / len(left)
+
+    def _wait_for_spotify_ui_ready(
+        self,
+        hwnd: int,
+        *,
+        minimum_wait: float = 0.8,
+        timeout: float = 12.0,
+        baseline=None,
+        require_visual_change: bool = False,
+        phase: str = "startup",
+    ) -> dict:
+        """Wait for Spotify to be visible, foreground and visually settled.
+
+        A bounded visual-stability probe is much more reliable than firing the
+        next keyboard shortcut immediately after the first window handle
+        appears.  It also stays fail-closed: IRAS will not type while another
+        application owns the foreground.
+        """
+        started = time.monotonic()
+        deadline = started + max(float(timeout), float(minimum_wait), 0.5)
+        previous = None
+        stable_samples = 0
+        visual_changed = baseline is None or not require_visual_change
+        captured = False
+
+        while time.monotonic() < deadline:
+            if not self._force_foreground(int(hwnd)):
+                time.sleep(0.20)
+                continue
+
+            sig = None
+            try:
+                sig = self._window_visual_signature(int(hwnd))
+            except Exception:
+                sig = None
+
+            if sig is not None:
+                captured = True
+                if baseline is not None and self._visual_signature_delta(sig, baseline) >= 3.0:
+                    visual_changed = True
+                if previous is not None and self._visual_signature_delta(sig, previous) <= 2.0:
+                    stable_samples += 1
+                else:
+                    stable_samples = 0
+                previous = sig
+
+            elapsed = time.monotonic() - started
+            # If screen capture is unavailable, still enforce a real settle
+            # window plus verified foreground instead of a zero-delay action.
+            visually_ready = (captured and stable_samples >= 2 and visual_changed)
+            timed_fallback_ready = (not captured and elapsed >= max(1.25, minimum_wait))
+            if elapsed >= minimum_wait and (visually_ready or timed_fallback_ready):
+                waited_ms = int(elapsed * 1000)
+                print(
+                    f"[IRAS SPOTIFY READY] phase={phase} waited={waited_ms}ms "
+                    f"visual={captured} changed={visual_changed} stable={stable_samples}",
+                    flush=True,
+                )
+                return {
+                    "ready": True,
+                    "waited_ms": waited_ms,
+                    "visual_probe": captured,
+                    "visual_changed": bool(visual_changed),
+                    "stable_samples": stable_samples,
+                }
+            time.sleep(0.22)
+
+        elapsed = time.monotonic() - started
+        if not self._force_foreground(int(hwnd)):
+            raise RuntimeError(
+                "Spotify did not become the verified foreground window before the readiness timeout."
+            )
+        waited_ms = int(elapsed * 1000)
+        print(
+            f"[IRAS SPOTIFY READY] phase={phase} waited={waited_ms}ms "
+            f"visual={captured} changed={visual_changed} stable={stable_samples} timeout=True",
+            flush=True,
+        )
+        return {
+            "ready": True,
+            "waited_ms": waited_ms,
+            "visual_probe": captured,
+            "visual_changed": bool(visual_changed),
+            "stable_samples": stable_samples,
+            "timed_out_waiting_for_stability": True,
         }
 
     def _key_event(self, key: str, down: bool):
@@ -1236,49 +1365,63 @@ class WindowsUIController:
                 "Spotify query is too long."
             )
 
-        deep_link_opened = False
-
-        try:
-            deep_link_opened = (
-                self._open_spotify_search_uri(
-                    query
-                )
-            )
-        except Exception:
-            deep_link_opened = False
-
-        if deep_link_opened:
-            time.sleep(1.0)
-
+        # Deterministic sequence: open/focus first, wait for the actual Spotify
+        # window to finish rendering, then interact with search.  The URI path
+        # is now fallback-only instead of racing application startup.
         focused = self.focus_app(
             "spotify",
             ensure_open=True,
         )
+        startup_ready = self._wait_for_spotify_ui_ready(
+            int(focused["window"]),
+            minimum_wait=(1.35 if focused.get("launched") else 0.35),
+            timeout=(15.0 if focused.get("launched") else 6.0),
+            phase="startup",
+        )
 
-        if not deep_link_opened:
-            self.hotkey(
-                [
-                    "ctrl",
-                    "k",
-                ]
-            )
-            time.sleep(0.25)
-            self.hotkey(
-                [
-                    "ctrl",
-                    "a",
-                ]
-            )
+        deep_link_opened = False
+        search_ready = {}
+        baseline = None
+        try:
+            baseline = self._window_visual_signature(int(focused["window"]))
+        except Exception:
+            baseline = None
+
+        try:
+            self.hotkey(["ctrl", "k"])
+            time.sleep(0.20)
+            self.hotkey(["ctrl", "a"])
             time.sleep(0.05)
-            self.type_text(
-                query
+            self.type_text(query)
+            search_ready = self._wait_for_spotify_ui_ready(
+                int(focused["window"]),
+                minimum_wait=0.80,
+                timeout=5.0,
+                baseline=baseline,
+                require_visual_change=(baseline is not None),
+                phase="search_results",
             )
-            time.sleep(0.45)
+        except Exception:
+            # URI search remains a compatibility fallback, but only after the
+            # Spotify app itself has been opened and verified ready.
+            deep_link_opened = self._open_spotify_search_uri(query)
+            if not deep_link_opened:
+                raise
+            focused = self.focus_app("spotify", ensure_open=True)
+            search_ready = self._wait_for_spotify_ui_ready(
+                int(focused["window"]),
+                minimum_wait=1.10,
+                timeout=7.0,
+                phase="uri_search_results",
+            )
 
         print(
             "[IRAS SPOTIFY SEARCH] "
             f"query={query!r} "
+            f"launched={focused.get('launched', False)} "
             f"deep_link={deep_link_opened} "
+            f"startup_wait_ms={startup_ready.get('waited_ms')} "
+            f"search_wait_ms={search_ready.get('waited_ms')} "
             f"foreground={focused.get('foreground_verified', False)}",
             flush=True,
         )
@@ -1286,13 +1429,17 @@ class WindowsUIController:
         return {
             "app": "spotify",
             "query": query,
+            "launched": bool(focused.get("launched")),
             "deep_link_opened": deep_link_opened,
             "foreground_verified": focused.get(
                 "foreground_verified",
                 False,
             ),
+            "startup_ready": startup_ready,
+            "search_ready": search_ready,
             "search_opened": True,
         }
+
 
     def _play_spotify_quick_search_result(
         self,
@@ -1318,136 +1465,726 @@ class WindowsUIController:
             "requested_action": "play_highlighted_search_result",
         }
 
+    def _verify_spotify_playback(
+        self,
+        hwnd: int,
+        query: str,
+    ) -> dict:
+        """Read back Spotify state without mistaking unrelated playback for success.
+
+        A request such as ``play naat`` is only verified when Spotify exposes a
+        playing transport *and* query-related evidence in the now-playing
+        surface (right details panel or bottom transport metadata). Library or
+        search-page text does not count because it can remain visible while an
+        unrelated track continues playing.
+        """
+        try:
+            from iras.device_bridge.visual_control import SemanticVisualController
+
+            snapshot = SemanticVisualController(self).observe(
+                "spotify",
+                ensure_open=False,
+                max_elements=320,
+                screenshot=False,
+            )
+        except Exception as exc:
+            return {
+                "verified": False,
+                "playing": False,
+                "query_match": False,
+                "spotify_error": None,
+                "error": f"{type(exc).__name__}: {exc}",
+                "query_evidence": [],
+                "now_playing_candidates": [],
+            }
+
+        def norm(value: str) -> str:
+            return " ".join(
+                str(value or "")
+                .strip()
+                .lower()
+                .replace("_", " ")
+                .replace("-", " ")
+                .replace("’", "'")
+                .split()
+            )
+
+        elements = [
+            item for item in (snapshot.get("elements") or [])
+            if str(item.get("name") or "").strip()
+        ]
+        names = [str(item.get("name") or "").strip() for item in elements]
+        normalized_names = [norm(name) for name in names]
+
+        # Spotify's central transport changes from Play to Pause while audio is
+        # actually active. A connected-device banner alone is not playback.
+        playing = any(
+            name == "pause" or name.startswith("pause ") or "pause current" in name
+            for name in normalized_names
+        )
+
+        error_messages = []
+        for original, normalized in zip(names, normalized_names):
+            if (
+                "spotify can't play this right now" in normalized
+                or "spotify can t play this right now" in normalized
+                or "can't play this right now" in normalized
+                or "can t play this right now" in normalized
+                or "cannot play this right now" in normalized
+                or "if you have the file on your computer" in normalized
+            ):
+                error_messages.append(original)
+        spotify_error = error_messages[0] if error_messages else None
+
+        stop = {
+            "play", "spotify", "song", "songs", "music", "track",
+            "please", "some", "the", "a", "an", "on", "put", "listen",
+        }
+        query_terms = [
+            token for token in norm(query).split()
+            if len(token) >= 3 and token not in stop
+        ]
+
+        query_evidence = []
+        now_candidates = []
+        try:
+            rect = self._physical_window_rect(int(hwnd))
+            width = max(1, int(rect.right - rect.left))
+            height = max(1, int(rect.bottom - rect.top))
+            right_threshold = int(rect.left + width * 0.76)
+            bottom_threshold = int(rect.top + height * 0.78)
+            ignored = {
+                "pause", "play", "next", "previous", "shuffle",
+                "repeat", "queue", "mute", "lyrics", "now playing view",
+            }
+            for item in elements:
+                item_rect = item.get("rect") or {}
+                left = int(item_rect.get("left", 0) or 0)
+                top = int(item_rect.get("top", 0) or 0)
+                item_width = int(item_rect.get("width", 0) or 0)
+                name = str(item.get("name") or "").strip()
+                normalized = norm(name)
+                if not name or normalized in ignored:
+                    continue
+                cx = left + max(0, item_width) / 2
+                in_now_playing_surface = cx >= right_threshold or top >= bottom_threshold
+                if not in_now_playing_surface:
+                    continue
+                if any(fragment in normalized for fragment in ("volume", "connect to", "full screen")):
+                    continue
+                if name not in now_candidates:
+                    now_candidates.append(name)
+                if query_terms and any(term in normalized for term in query_terms):
+                    if name not in query_evidence:
+                        query_evidence.append(name)
+        except Exception:
+            pass
+
+        query_match = bool(query_evidence) if query_terms else True
+        verified = bool(playing and query_match and not spotify_error)
+
+        return {
+            "verified": verified,
+            "playing": bool(playing),
+            "query_match": bool(query_match),
+            "spotify_error": spotify_error,
+            "error": None,
+            "query_evidence": query_evidence[:8],
+            "now_playing_candidates": now_candidates[:12],
+            "element_count": int(snapshot.get("element_count", 0) or 0),
+        }
+
+    @staticmethod
+    def _spotify_norm(value: str) -> str:
+        return " ".join(
+            str(value or "")
+            .strip()
+            .lower()
+            .replace("_", " ")
+            .replace("-", " ")
+            .split()
+        )
+
+    @classmethod
+    def _spotify_query_terms(cls, query: str) -> list[str]:
+        stop = {
+            "play", "spotify", "song", "songs", "music", "track",
+            "please", "some", "the", "a", "an", "on", "put", "listen",
+        }
+        return [
+            token for token in cls._spotify_norm(query).split()
+            if len(token) >= 3 and token not in stop
+        ]
+
+    def _spotify_semantic_snapshot(self, hwnd: int, *, max_elements: int = 300) -> dict:
+        from iras.device_bridge.visual_control import SemanticVisualController
+
+        if not self._force_foreground(int(hwnd)):
+            raise RuntimeError("Spotify lost foreground focus before semantic inspection.")
+        return SemanticVisualController(self).observe(
+            "spotify",
+            ensure_open=False,
+            max_elements=max_elements,
+            screenshot=False,
+        )
+
+    def _click_spotify_observed_element(
+        self,
+        hwnd: int,
+        element: dict,
+        *,
+        count: int = 1,
+    ) -> dict:
+        """Click only bounds returned by Windows UI Automation."""
+        if not self._force_foreground(int(hwnd)):
+            raise RuntimeError("Spotify lost foreground focus before semantic click.")
+        rect = element.get("rect") or {}
+        left = int(rect.get("left", 0) or 0)
+        top = int(rect.get("top", 0) or 0)
+        width = int(rect.get("width", 0) or 0)
+        height = int(rect.get("height", 0) or 0)
+        if width <= 0 or height <= 0:
+            raise RuntimeError("Spotify semantic element has no clickable bounds.")
+
+        win = self._physical_window_rect(int(hwnd))
+        x = left + width // 2
+        y = top + height // 2
+        if not (int(win.left) <= x <= int(win.right) and int(win.top) <= y <= int(win.bottom)):
+            raise RuntimeError("Spotify semantic element lies outside the verified window.")
+
+        cursor = self._set_physical_cursor(x, y)
+        user32 = self._user32()
+        for index in range(max(1, min(int(count), 2))):
+            user32.mouse_event(0x0002, 0, 0, 0, 0)
+            time.sleep(0.035)
+            user32.mouse_event(0x0004, 0, 0, 0, 0)
+            if index == 0 and count > 1:
+                time.sleep(0.10)
+        return {
+            "name": str(element.get("name") or ""),
+            "role": str(element.get("role") or ""),
+            "x": x,
+            "y": y,
+            "actual_x": cursor.get("actual_x"),
+            "actual_y": cursor.get("actual_y"),
+            "count": max(1, min(int(count), 2)),
+            "match_score": element.get("match_score"),
+        }
+
+    def _invoke_spotify_observed_element(self, hwnd: int, element: dict) -> dict:
+        """Invoke the exact observed Spotify element through the audited UIA layer."""
+        if not self._force_foreground(int(hwnd)):
+            raise RuntimeError("Spotify lost foreground focus before UI Automation invoke.")
+        from iras.device_bridge.visual_control import SemanticVisualController
+        return SemanticVisualController(self).invoke_observed_element(
+            "spotify",
+            element,
+            ensure_open=False,
+        )
+
+    def _spotify_quick_search_overlay_present(self, hwnd: int) -> bool:
+        try:
+            snapshot = self._spotify_semantic_snapshot(int(hwnd), max_elements=220)
+        except Exception:
+            return False
+        for item in snapshot.get("elements") or []:
+            name = self._spotify_norm(item.get("name") or "")
+            role = self._spotify_norm(item.get("role") or "")
+            if "what do you want to play" in name and role in {"edit", "text", "document"}:
+                return True
+        return False
+
+    def _dismiss_spotify_quick_search_overlay(self, hwnd: int) -> dict:
+        """Close Spotify Quick Search if it remained open after result selection."""
+        before = self._spotify_quick_search_overlay_present(int(hwnd))
+        if not before:
+            return {"present_before": False, "dismissed": True, "attempts": 0}
+
+        attempts = 0
+        for _ in range(2):
+            attempts += 1
+            if not self._force_foreground(int(hwnd)):
+                raise RuntimeError("Spotify lost foreground focus while closing Quick Search.")
+            self.press("esc")
+            time.sleep(0.45)
+            if not self._spotify_quick_search_overlay_present(int(hwnd)):
+                print(
+                    f"[IRAS SPOTIFY READY] phase=quick_search_dismissed attempts={attempts}",
+                    flush=True,
+                )
+                return {"present_before": True, "dismissed": True, "attempts": attempts}
+
+        return {"present_before": True, "dismissed": False, "attempts": attempts}
+
+    def _spotify_find_query_results(
+        self,
+        hwnd: int,
+        query: str,
+        *,
+        limit: int = 4,
+    ) -> list[dict]:
+        """Return ranked visible results related to the requested query."""
+        snapshot = self._spotify_semantic_snapshot(hwnd)
+        terms = self._spotify_query_terms(query)
+        phrase = self._spotify_norm(query)
+        if not terms:
+            return []
+
+        win = self._physical_window_rect(int(hwnd))
+        width = max(1, int(win.right - win.left))
+        height = max(1, int(win.bottom - win.top))
+        candidates = []
+        ignored = {
+            "what do you want to play", "search", "your library", "home",
+            "play", "pause", "next", "previous", "shuffle", "repeat",
+        }
+        for item in snapshot.get("elements") or []:
+            name = str(item.get("name") or "").strip()
+            normalized = self._spotify_norm(name)
+            if not name or normalized in ignored or not item.get("enabled", True):
+                continue
+            if not any(term in normalized for term in terms):
+                continue
+            rect = item.get("rect") or {}
+            left = int(rect.get("left", 0) or 0)
+            top = int(rect.get("top", 0) or 0)
+            item_width = int(rect.get("width", 0) or 0)
+            item_height = int(rect.get("height", 0) or 0)
+            if item_width <= 0 or item_height <= 0:
+                continue
+            cx = left + item_width / 2
+            cy = top + item_height / 2
+            rx = (cx - int(win.left)) / width
+            ry = (cy - int(win.top)) / height
+            if ry >= 0.82:
+                continue
+
+            score = 0.0
+            if normalized == phrase:
+                score += 12.0
+            if phrase and phrase in normalized:
+                score += 8.0
+            matched = sum(1 for term in terms if term in normalized)
+            score += matched * 3.5
+            if matched == len(terms):
+                score += 4.0
+            role = self._spotify_norm(item.get("role") or "")
+            if role in {"listitem", "dataitem", "hyperlink", "button", "text", "group"}:
+                score += 1.5
+            if 0.22 <= rx <= 0.97:
+                score += 2.0
+            elif rx < 0.22:
+                score -= 3.5
+            if 0.10 <= ry <= 0.76:
+                score += 2.0
+            if "library" in normalized or "recent" in normalized:
+                score -= 2.0
+            if score >= 6.0:
+                candidates.append((score, item))
+
+        candidates.sort(
+            key=lambda pair: (pair[0], -int(pair[1].get("index", 0) or 0)),
+            reverse=True,
+        )
+        results = []
+        seen = set()
+        for score, item in candidates:
+            key = self._spotify_norm(item.get("name") or "")
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            results.append({**item, "match_score": round(score, 3)})
+            if len(results) >= max(1, min(int(limit), 8)):
+                break
+        return results
+
+    def _spotify_find_query_result(self, hwnd: int, query: str) -> dict | None:
+        results = self._spotify_find_query_results(hwnd, query, limit=1)
+        return results[0] if results else None
+
+    def _spotify_find_content_play_button(
+        self,
+        hwnd: int,
+        *,
+        anchor_name: str | None = None,
+    ) -> dict | None:
+        """Find a content Play control, preferring one near the selected result title."""
+        snapshot = self._spotify_semantic_snapshot(hwnd)
+        win = self._physical_window_rect(int(hwnd))
+        width = max(1, int(win.right - win.left))
+        height = max(1, int(win.bottom - win.top))
+
+        anchor = None
+        wanted = self._spotify_norm(anchor_name or "")
+        if wanted:
+            for item in snapshot.get("elements") or []:
+                name = self._spotify_norm(item.get("name") or "")
+                rect = item.get("rect") or {}
+                if wanted and (name == wanted or wanted in name or name in wanted):
+                    w = int(rect.get("width", 0) or 0)
+                    h = int(rect.get("height", 0) or 0)
+                    if w > 0 and h > 0:
+                        anchor = (
+                            int(rect.get("left", 0) or 0) + w / 2,
+                            int(rect.get("top", 0) or 0) + h / 2,
+                        )
+                        break
+
+        choices = []
+        for item in snapshot.get("elements") or []:
+            name = self._spotify_norm(item.get("name") or "")
+            if not (name == "play" or name.startswith("play ") or " play " in f" {name} "):
+                continue
+            if name.startswith("playback"):
+                continue
+            rect = item.get("rect") or {}
+            left = int(rect.get("left", 0) or 0)
+            top = int(rect.get("top", 0) or 0)
+            item_width = int(rect.get("width", 0) or 0)
+            item_height = int(rect.get("height", 0) or 0)
+            if item_width <= 0 or item_height <= 0:
+                continue
+            cx = left + item_width / 2
+            cy = top + item_height / 2
+            rx = (cx - int(win.left)) / width
+            ry = (cy - int(win.top)) / height
+            if ry >= 0.80 or rx < 0.20:
+                continue
+            role = self._spotify_norm(item.get("role") or "")
+            score = 4.0
+            if role == "button":
+                score += 4.0
+            if name == "play":
+                score += 2.0
+            if 0.25 <= rx <= 0.90 and 0.12 <= ry <= 0.76:
+                score += 2.0
+            if anchor is not None:
+                dx = (cx - anchor[0]) / width
+                dy = (cy - anchor[1]) / height
+                distance = (dx * dx + dy * dy) ** 0.5
+                score += max(0.0, 6.0 - distance * 14.0)
+            choices.append((score, item))
+        if not choices:
+            return None
+        choices.sort(
+            key=lambda pair: (pair[0], -int(pair[1].get("index", 0) or 0)),
+            reverse=True,
+        )
+        score, item = choices[0]
+        return {**item, "match_score": round(score, 3)}
+
+    def _wait_for_spotify_playback(
+        self,
+        hwnd: int,
+        query: str,
+        *,
+        timeout: float = 5.0,
+    ) -> dict:
+        deadline = time.monotonic() + max(1.0, float(timeout))
+        last = None
+        while time.monotonic() < deadline:
+            last = self._verify_spotify_playback(int(hwnd), query)
+            if last.get("verified") or last.get("spotify_error"):
+                return last
+            time.sleep(0.35)
+        return last or self._verify_spotify_playback(int(hwnd), query)
+
     def spotify_play(
         self,
         query: str,
     ) -> dict:
-        query = " ".join(
-            str(query or "").strip().split()
+        query = " ".join(str(query or "").strip().split())
+        if not query:
+            raise ValueError("Spotify play requires a song or search query.")
+        if len(query) > 220:
+            raise PermissionError("Spotify query is too long.")
+
+        focused = self.focus_app("spotify", ensure_open=True)
+        hwnd = int(focused["window"])
+        startup_ready = self._wait_for_spotify_ui_ready(
+            hwnd,
+            minimum_wait=(1.50 if focused.get("launched") else 0.35),
+            timeout=(15.0 if focused.get("launched") else 6.0),
+            phase="startup",
         )
 
-        if not query:
-            raise ValueError(
-                "Spotify play requires a song or search query."
-            )
-
-        if len(query) > 220:
-            raise PermissionError(
-                "Spotify query is too long."
-            )
+        # A stale Quick Search overlay from a previous attempt can intercept all
+        # subsequent clicks. Clear it before opening a deterministic search page.
+        initial_overlay = self._dismiss_spotify_quick_search_overlay(hwnd)
 
         deep_link_opened = False
-        try:
-            deep_link_opened = self._open_spotify_search_uri(query)
-        except Exception:
-            deep_link_opened = False
+        search_ready = {}
+        search_mode = "uri_search_semantic"
 
-        if deep_link_opened:
-            time.sleep(1.25)
+        def open_search_surface() -> tuple[list[dict], dict, str, bool]:
+            nonlocal hwnd, focused
+            used_uri = self._open_spotify_search_uri(query)
+            if used_uri:
+                focused = self.focus_app("spotify", ensure_open=True)
+                hwnd = int(focused["window"])
+                ready = self._wait_for_spotify_ui_ready(
+                    hwnd,
+                    minimum_wait=1.10,
+                    timeout=8.0,
+                    phase="uri_search_results",
+                )
+                results = self._spotify_find_query_results(hwnd, query, limit=4)
+                if results:
+                    return results, ready, "uri_search_semantic", True
 
-        focused = self.focus_app(
-            "spotify",
-            ensure_open=True,
+            # Fallback for Spotify builds where the search URI is not handled.
+            if not self._force_foreground(int(hwnd)):
+                raise RuntimeError("Spotify lost foreground focus before search.")
+            self.hotkey(["ctrl", "k"])
+            time.sleep(0.20)
+            self.hotkey(["ctrl", "a"])
+            time.sleep(0.05)
+            self.type_text(query)
+            ready = self._wait_for_spotify_ui_ready(
+                hwnd,
+                minimum_wait=0.95,
+                timeout=6.0,
+                phase="quick_search_results",
+            )
+            results = self._spotify_find_query_results(hwnd, query, limit=4)
+            if not results:
+                self.press("enter")
+                ready = self._wait_for_spotify_ui_ready(
+                    hwnd,
+                    minimum_wait=0.90,
+                    timeout=5.0,
+                    phase="full_search_results",
+                )
+                results = self._spotify_find_query_results(hwnd, query, limit=4)
+            return results, ready, "quick_search_semantic", bool(used_uri)
+
+        results, search_ready, search_mode, deep_link_opened = open_search_surface()
+        if not results:
+            raise RuntimeError(
+                f"Spotify produced no visible semantic result related to {query!r}. "
+                "No blind Play, Space, or media-resume command was sent."
+            )
+
+        candidate_names = []
+        for item in results:
+            name = str(item.get("name") or "").strip()
+            if name and name not in candidate_names:
+                candidate_names.append(name)
+
+        attempt_log = []
+        success = None
+
+        for candidate_name in candidate_names[:4]:
+            # Reopen search before every candidate so stale UIA bounds from a
+            # previous navigation can never be reused on a different page.
+            results, search_ready, search_mode, used_uri = open_search_surface()
+            deep_link_opened = bool(deep_link_opened or used_uri)
+            candidate = None
+            wanted = self._spotify_norm(candidate_name)
+            for item in results:
+                if self._spotify_norm(item.get("name") or "") == wanted:
+                    candidate = item
+                    break
+            if candidate is None:
+                attempt_log.append({
+                    "candidate": candidate_name,
+                    "error": "candidate disappeared after search refresh",
+                })
+                continue
+
+            selection_method = "uia_invoke_result"
+            selected = None
+            selection_invoke = None
+            selection_click = None
+            try:
+                selection_invoke = self._invoke_spotify_observed_element(hwnd, candidate)
+                selected = {
+                    "name": candidate_name,
+                    "role": candidate.get("role"),
+                    "match_score": candidate.get("match_score"),
+                }
+            except Exception as exc:
+                selection_invoke = {"error": f"{type(exc).__name__}: {exc}"}
+                selection_method = "semantic_click_result"
+                try:
+                    selection_click = self._click_spotify_observed_element(hwnd, candidate, count=1)
+                    selected = selection_click
+                except Exception as click_exc:
+                    attempt_log.append({
+                        "candidate": candidate_name,
+                        "selection_method": selection_method,
+                        "error": f"selection failed: {type(click_exc).__name__}: {click_exc}",
+                    })
+                    continue
+
+            self._wait_for_spotify_ui_ready(
+                hwnd,
+                minimum_wait=0.75,
+                timeout=4.5,
+                phase="selected_result",
+            )
+
+            overlay = self._dismiss_spotify_quick_search_overlay(hwnd)
+            if overlay.get("present_before") and not overlay.get("dismissed"):
+                attempt_log.append({
+                    "candidate": candidate_name,
+                    "selection_method": selection_method,
+                    "error": "Quick Search overlay remained open",
+                })
+                continue
+            if overlay.get("present_before"):
+                self._wait_for_spotify_ui_ready(
+                    hwnd,
+                    minimum_wait=0.45,
+                    timeout=3.5,
+                    phase="after_quick_search_dismiss",
+                )
+
+            # Some Spotify result controls start playback as their default
+            # action. Verify before looking for a page-level Play control.
+            verification = self._wait_for_spotify_playback(hwnd, query, timeout=1.6)
+            if verification.get("verified"):
+                success = {
+                    "candidate": candidate_name,
+                    "selected": selected,
+                    "selection_method": selection_method,
+                    "selection_invoke": selection_invoke,
+                    "selection_click": selection_click,
+                    "overlay": overlay,
+                    "playback_method": selection_method,
+                    "play_invoke": None,
+                    "play_click": None,
+                    "verification": verification,
+                }
+                break
+            if verification.get("spotify_error"):
+                attempt_log.append({
+                    "candidate": candidate_name,
+                    "selection_method": selection_method,
+                    "spotify_error": verification.get("spotify_error"),
+                })
+                continue
+
+            play_button = self._spotify_find_content_play_button(
+                hwnd,
+                anchor_name=candidate_name,
+            )
+            if play_button is None:
+                attempt_log.append({
+                    "candidate": candidate_name,
+                    "selection_method": selection_method,
+                    "error": "no query-anchored content Play control was visible",
+                })
+                continue
+
+            play_invoke = None
+            play_click = None
+            play_method = "uia_invoke_content_play_button"
+            try:
+                play_invoke = self._invoke_spotify_observed_element(hwnd, play_button)
+                verification = self._wait_for_spotify_playback(hwnd, query, timeout=4.5)
+            except Exception as exc:
+                play_invoke = {"error": f"{type(exc).__name__}: {exc}"}
+                verification = self._verify_spotify_playback(hwnd, query)
+
+            if not verification.get("verified") and not verification.get("spotify_error"):
+                try:
+                    play_click = self._click_spotify_observed_element(hwnd, play_button, count=1)
+                    play_method = "semantic_content_play_button"
+                    verification = self._wait_for_spotify_playback(hwnd, query, timeout=4.5)
+                except Exception as exc:
+                    play_click = {"error": f"{type(exc).__name__}: {exc}"}
+
+            if verification.get("verified"):
+                success = {
+                    "candidate": candidate_name,
+                    "selected": selected,
+                    "selection_method": selection_method,
+                    "selection_invoke": selection_invoke,
+                    "selection_click": selection_click,
+                    "overlay": overlay,
+                    "playback_method": play_method,
+                    "play_invoke": play_invoke,
+                    "play_click": play_click,
+                    "verification": verification,
+                }
+                break
+
+            attempt_log.append({
+                "candidate": candidate_name,
+                "selection_method": selection_method,
+                "playback_method": play_method,
+                "spotify_error": verification.get("spotify_error"),
+                "playing": verification.get("playing"),
+                "query_match": verification.get("query_match"),
+                "now_playing_candidates": verification.get("now_playing_candidates", []),
+            })
+
+        if success is None:
+            last = attempt_log[-1] if attempt_log else {}
+            print(
+                "[IRAS SPOTIFY] "
+                f"query={query!r} launched={focused.get('launched', False)} "
+                f"startup_wait_ms={startup_ready.get('waited_ms')} "
+                f"search_mode={search_mode} verified=False attempts={len(attempt_log)} "
+                f"last_error={last.get('spotify_error') or last.get('error')!r}",
+                flush=True,
+            )
+            raise RuntimeError(
+                "Spotify search succeeded, but IRAS could not verify query-matched playback. "
+                "It rejected unrelated playback and Spotify error states instead of using global Space/media-resume fallbacks."
+            )
+
+        verification = success["verification"]
+        selected = success["selected"]
+        print(
+            "[IRAS SPOTIFY] "
+            f"query={query!r} launched={focused.get('launched', False)} "
+            f"startup_wait_ms={startup_ready.get('waited_ms')} "
+            f"search_mode={search_mode} selected={success.get('candidate')!r} "
+            f"method={success.get('playback_method')} verified={verification.get('verified')} "
+            f"playing={verification.get('playing')} query_match={verification.get('query_match')}",
+            flush=True,
         )
-
-        self.hotkey(["ctrl", "k"])
-        time.sleep(0.30)
-        self.hotkey(["ctrl", "a"])
-        time.sleep(0.06)
-        self.type_text(query)
-        time.sleep(1.05)
-
-        play_method = "quick_search_shift_enter"
-        quick_search_play = None
-        play_click = None
-        quick_search_error = ""
-
-        try:
-            quick_search_play = self._play_spotify_quick_search_result(
-                int(focused["window"])
-            )
-        except Exception as exc:
-            # Legacy compatibility only. Never send generic MEDIA_PLAY here.
-            quick_search_error = str(exc)
-            self.press("enter")
-            time.sleep(1.05)
-            play_click = self._click_spotify_play_button(
-                int(focused["window"])
-            )
-            play_method = "legacy_green_play_button"
-
-        if quick_search_play is not None:
-            print(
-                "[IRAS SPOTIFY] "
-                f"query={query!r} deep_link={deep_link_opened} "
-                f"foreground={focused.get('foreground_verified', False)} "
-                "method=quick_search_shift_enter shortcut=shift+enter",
-                flush=True,
-            )
-        else:
-            print(
-                "[IRAS SPOTIFY] "
-                f"query={query!r} deep_link={deep_link_opened} "
-                f"foreground={focused.get('foreground_verified', False)} "
-                "method=legacy_green_play_button "
-                f"quick_search_error={quick_search_error!r} "
-                f"play_click=({play_click['x']},{play_click['y']}) "
-                f"green_detected={play_click['detected']} "
-                f"green_pixels={play_click['green_pixels']} "
-                f"green_size=({play_click['component_width']}x"
-                f"{play_click['component_height']}) "
-                f"attempts={play_click['detection_attempts']} "
-                f"cursor_actual=({play_click['cursor_actual_x']},"
-                f"{play_click['cursor_actual_y']})",
-                flush=True,
-            )
 
         return {
             "app": "spotify",
             "query": query,
-            "launched": focused["launched"],
+            "launched": bool(focused.get("launched")),
             "deep_link_opened": deep_link_opened,
-            "foreground_verified": focused.get(
-                "foreground_verified",
-                False,
-            ),
+            "foreground_verified": focused.get("foreground_verified", False),
+            "startup_ready": startup_ready,
+            "search_ready": search_ready,
+            "search_mode": search_mode,
+            "selected_result": selected,
+            "selected_candidate": success.get("candidate"),
+            "selection_method": success.get("selection_method"),
             "search_input_sent": True,
-            "playback_method": play_method,
-            "quick_search_play_sent": quick_search_play is not None,
-            "quick_search_shortcut": (
-                "shift+enter" if quick_search_play is not None else None
-            ),
-            "play_button_clicked": play_click is not None,
-            "play_button_detected": bool(
-                play_click and play_click.get("detected")
-            ),
-            "play_click": (
-                {
-                    "x": play_click["x"],
-                    "y": play_click["y"],
-                    "actual_x": play_click["cursor_actual_x"],
-                    "actual_y": play_click["cursor_actual_y"],
-                }
-                if play_click else None
-            ),
+            "playback_method": success.get("playback_method"),
+            "initial_quick_search_overlay": initial_overlay,
+            "quick_search_overlay": success.get("overlay"),
+            "semantic_result_invoke": success.get("selection_invoke"),
+            "semantic_result_click": success.get("selection_click"),
+            "semantic_play_invoke": success.get("play_invoke"),
+            "semantic_play_click": success.get("play_click"),
+            "semantic_play_key": None,
+            "visual_green_play": None,
+            "quick_search_play_sent": False,
+            "quick_search_shortcut": None,
             "media_play_sent": False,
-            "play_button_detection_attempts": (
-                play_click["detection_attempts"] if play_click else 0
-            ),
             "command_sent": True,
-            "verified_playback": False,
+            "verified_playback": True,
+            "playback_verification": verification,
+            "now_playing_candidates": verification.get("now_playing_candidates", []),
+            "query_evidence": verification.get("query_evidence", []),
+            "candidate_attempts": attempt_log,
             "note": (
-                "Spotify Quick Search was focused, the requested query was "
-                "typed, and IRAS sent Spotify's own Shift+Enter Play shortcut "
-                "for the highlighted result. No generic MEDIA_PLAY command "
-                "was sent."
-                if quick_search_play is not None
-                else
-                "Spotify Quick Search playback could not be injected, so "
-                "IRAS used the existing detected green Play-button fallback. "
-                "No generic MEDIA_PLAY command was sent."
+                "IRAS opened Spotify's deterministic search surface, selected a query-matched result, "
+                "activated only controls tied to that result, rejected Spotify error toasts/unrelated playback, "
+                "and required query evidence in the now-playing surface before reporting success."
             ),
         }
+
 
     def _send_media_appcommand(
         self,

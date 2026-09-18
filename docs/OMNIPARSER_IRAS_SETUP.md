@@ -1,188 +1,137 @@
-# OmniParser for IRAS v3.7
+# OmniParser for IRAS v5.0 RC3
 
-IRAS v3.7 uses Windows UI Automation first and OmniParser for visual-only
-interfaces such as WebViews, Electron/custom-rendered controls, browser canvas
-surfaces, and UI that exposes little useful accessibility information.
+IRAS uses Windows UI Automation first and Microsoft OmniParser as the visual grounding layer for WebViews, Electron/custom-rendered controls, browser canvas surfaces, and interfaces that expose insufficient accessibility semantics.
 
-## Automatic start on demand
+## Managed by IRAS by default
 
-You no longer need to manually start OmniParser before every IRAS session.
-When `device_computer_observe` needs vision, IRAS performs this bounded sequence:
+OmniParser is now a first-class IRAS runtime service. On Windows, `install.ps1` provisions the managed runtime under:
 
 ```text
-UI Automation
-    -> foreground OmniParser grounding when UIA is insufficient
-    -> desktop OmniParser grounding only when auto-scope foreground grounding
-       produced no usable result
+%USERPROFILE%\.iras\OmniParser
 ```
 
-Before the first OmniParser parse request IRAS probes `/probe/`. If the endpoint
-is already ready, IRAS reuses it. If the endpoint is local and unavailable,
-IRAS can start a configured/discovered OmniParser process with `shell=False`,
-wait for `/probe/`, and then continue the original observation.
+The setup creates an isolated Python 3.12 environment, installs the Microsoft OmniParser dependencies used by the IRAS bridge, downloads the current V2 detector/caption weights, and writes the resulting root into `.env`.
+It also caches the Florence processor/code assets, waits for EasyOCR warmup, and performs one local full-parser smoke test so the first real visual task does not discover a missing model/dependency late.
 
-IRAS **does not install OmniParser or download model weights automatically**.
-The one-time OmniParser installation/weights setup is still explicit.
+Normal startup:
 
-Default local endpoint when autostart is enabled:
+```powershell
+.\run-iras.ps1
+```
+
+The launcher performs a bounded `--vision-start` before interactive IRAS begins. If the managed environment or weights are missing, it runs `setup-omniparser.ps1` once and retries. Direct `iras` startup also launches an in-process OmniParser supervisor, so the service remains self-healing even when the PowerShell launcher is bypassed.
+
+The default visual route is:
 
 ```text
-http://127.0.0.1:8010
+Windows UI Automation
+    -> accessibility/semantic grounding
+    -> EasyOCR ROI/text grounding
+    -> full OmniParser Florence/YOLO semantics when necessary
+    -> fresh semantic verification before state-changing input
 ```
 
-The runtime log is written to:
+OmniParser evidence never grants permission by itself. Existing ToolRegistry approval levels, Remote authorization, bridge roots, fresh-observation requirements, confidence thresholds, and the emergency stop remain authoritative.
+
+## Current Microsoft V2 layout
+
+IRAS provisions the detector and caption assets expected by current Microsoft OmniParser master:
 
 ```text
-%USERPROFILE%\.iras\omniparser\omniparser.log
+weights\icon_detect_v3\model.pt
+weights\icon_caption_florence\config.json
+weights\icon_caption_florence\generation_config.json
+weights\icon_caption_florence\model.safetensors
 ```
 
-## Recommended one-time configuration
+The detector is obtained from the Microsoft V2 model revision currently referenced by the upstream README. The caption files are downloaded from `microsoft/OmniParser-v2.0`.
 
-If your OmniParser checkout is in a standard project location such as
-`D:\Projects\OmniParser`, IRAS attempts to discover it automatically. Otherwise
-set the root once:
+## Windows stability hardening
 
-```powershell
-[Environment]::SetEnvironmentVariable(
-  "IRAS_OMNIPARSER_ROOT",
-  "D:\Projects\OmniParser",
-  "User"
-)
-```
-
-The local endpoint may also be set explicitly:
-
-```powershell
-[Environment]::SetEnvironmentVariable(
-  "IRAS_OMNIPARSER_URL",
-  "http://127.0.0.1:8010",
-  "User"
-)
-```
-
-IRAS looks for an OmniParser virtual-environment Python under the root before
-falling back to `python`/`python3` on PATH. On Windows, PaddleOCR 2.x and
-PyTorch can conflict if Paddle loads its DLLs before torch. The built-in
-autostart path therefore preloads `torch` in the child interpreter before
-running the OmniParser server module. This is automatic and does not weaken
-process isolation or use a shell.
-
-For the current Microsoft OmniParser code path, use the legacy PaddleOCR API
-that OmniParser calls directly:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install "paddleocr==2.10.0"
-```
-
-The default generated server command is conceptually equivalent to:
+Current upstream `util.utils` imports/constructs PaddleOCR at module import time, while current `Omniparser.parse` explicitly uses EasyOCR. That eager Paddle initialization can create avoidable native-library conflicts with PyTorch on Windows. The IRAS bridge therefore uses a fail-closed Paddle stub by default and runs EasyOCR for OCR grounding:
 
 ```text
-python -c "import runpy, torch, uvicorn; ns=runpy.run_module('omniparserserver', run_name='iras_omniparser_runtime', alter_sys=False); a=ns['args']; uvicorn.run(ns['app'], host=a.host, port=a.port, reload=False)" \
-  --caption_model_name florence2 \
-  --caption_model_path ../../weights/icon_caption_florence \
-  --device cpu \
-  --BOX_TRESHOLD 0.05 \
-  --host 127.0.0.1 \
-  --port 8010
+IRAS_OMNIPARSER_DISABLE_PADDLE=true
 ```
 
-For a nonstandard OmniParser installation, define the exact argument vector as
-JSON. It is executed directly with `shell=False`:
+If upstream ever attempts to invoke the stub, it raises instead of silently changing OCR behavior. Set the flag to `false` only when you intentionally maintain a compatible Paddle installation yourself.
 
-```powershell
-[Environment]::SetEnvironmentVariable(
-  "IRAS_OMNIPARSER_START_JSON",
-  '["D:\\OmniParser\\.venv\\Scripts\\python.exe","-m","omniparserserver","--caption_model_name","florence2","--caption_model_path","../../weights/icon_caption_florence","--device","cpu","--BOX_TRESHOLD","0.05","--host","127.0.0.1","--port","8010"]',
-  "User"
-)
-```
+## Runtime lifecycle
 
-Useful settings:
+Defaults:
 
 ```text
 IRAS_OMNIPARSER_AUTOSTART=true
-IRAS_OMNIPARSER_START_TIMEOUT=45
-IRAS_OMNIPARSER_TIMEOUT=120
-IRAS_OMNIPARSER_CACHE_TTL=180
-IRAS_OMNIPARSER_PROBE_TIMEOUT=4
-IRAS_OMNIPARSER_DEVICE=cpu
-IRAS_OMNIPARSER_BOX_THRESHOLD=0.05
-IRAS_COMPUTER_VISION_MAX_WIDTH=1600
-IRAS_COMPUTER_VISION_MAX_HEIGHT=1200
-IRAS_COMPUTER_OBSERVATION_TTL=30
-IRAS_VISUAL_ACTION_MIN_CONFIDENCE=0.72
+IRAS_OMNIPARSER_EAGER_START=true
+IRAS_OMNIPARSER_WATCHDOG=true
+IRAS_OMNIPARSER_WATCHDOG_SECONDS=20
+IRAS_OMNIPARSER_URL=http://127.0.0.1:8010
+IRAS_OMNIPARSER_BRIDGE=true
+IRAS_OMNIPARSER_DISABLE_PADDLE=true
+IRAS_OMNIPARSER_TEXT_PREWARM=true
 ```
 
-To disable process autostart while keeping support for an already-running
-server:
+The IRAS bridge binds to loopback. When IRAS creates the bridge it generates a random per-process control token, stores it in the local runtime state, and uses it for authenticated stop/restart. IRAS will never process-manage a remote OmniParser URL.
+
+Commands:
 
 ```powershell
-[Environment]::SetEnvironmentVariable(
-  "IRAS_OMNIPARSER_AUTOSTART",
-  "false",
-  "User"
-)
+iras --vision-status
+iras --vision-start
+iras --vision-restart
+iras --vision-stop
 ```
 
-## CLI diagnostics
-
-Inside the IRAS CLI:
+Interactive equivalents:
 
 ```text
 vision status
 vision start
+vision restart
+vision stop
 ```
 
-`vision start` performs the same bounded local startup path used automatically
-when visual grounding is first required. Runtime ownership metadata is persisted
-locally so `vision status` can report the IRAS-owned PID even after a new CLI
-instance attaches to the already-running service.
+Model-facing runtime tools are also registered so IRAS can inspect, start, and self-heal its own vision subsystem. Restart/stop remain SYSTEM_ACTION operations through the normal permission engine.
 
-## Safety behavior
-
-OmniParser output is evidence, not permission. v3.7 converts UIA and vision
-results into a unified scene graph with stable element IDs, confidence, and
-provenance. Mouse actions still require a fresh observed element ID. Low-
-confidence or ambiguous visual targets fail closed, raw model coordinates are
-not accepted, and one state-changing input consumes its observation binding so
-it cannot be replayed.
-
-## R4 IRAS bridge and ROI acceleration
-
-When IRAS starts a discovered local OmniParser installation, the default R4
-launcher uses `src/iras/vision/omniparser_bridge_server.py` with OmniParser's own
-Python environment. The bridge still provides `/probe/` and `/parse/`, but also
-adds `/parse_text/` for lightweight EasyOCR-only text grounding. Full
-Florence/YOLO models are initialized lazily on the first full parse instead of at
-server startup.
-
-This behavior is controlled by:
+## Logs and state
 
 ```text
-IRAS_OMNIPARSER_BRIDGE=true
-IRAS_OMNIPARSER_ROI_MAX_WIDTH=960
-IRAS_OMNIPARSER_ROI_MAX_HEIGHT=720
-IRAS_WHATSAPP_ROI_FASTPATH=true
+%USERPROFILE%\.iras\omniparser\omniparser.log
+%USERPROFILE%\.iras\omniparser\runtime.json
 ```
 
-Set `IRAS_OMNIPARSER_BRIDGE=false` only to force the older upstream-server
-bootstrap. If a manually started upstream server is already listening, IRAS
-reuses it; ROI text requests automatically fall back to `/parse/` if
-`/parse_text/` is not supported.
+`iras --doctor` reports three separate checks: installation completeness, configuration/management mode, and live service readiness.
 
-## R5 background text warmup
+## Full-model loading
 
-For the IRAS-managed bridge, EasyOCR can be initialized immediately after the
-bridge HTTP service starts instead of waiting for the first `/parse_text/` call.
-This is enabled by default:
+The local HTTP bridge starts eagerly, and EasyOCR can warm in the background. Florence/YOLO stays lazy until the first full visual parse. This avoids loading the heavy model into memory when UIA or text grounding already resolves the interface.
 
-```text
-IRAS_OMNIPARSER_TEXT_PREWARM=true
-IRAS_WHATSAPP_COLD_ROI_RETRIES=2
-IRAS_WHATSAPP_COLD_SETTLE_MS=220
+## Manual repair
+
+To repair/update only the managed OmniParser environment:
+
+```powershell
+.\setup-omniparser.ps1 -Repair
 ```
 
-`vision status` reports `text_model_state`, `text_model_loaded`, and
-`text_model_warmup_ms` when the active endpoint is the IRAS bridge. Prewarming is
-local model initialization only; it does not capture the screen or perform any
-input action. Set `IRAS_OMNIPARSER_TEXT_PREWARM=false` to disable it.
+To reprovision dependencies without re-downloading weights:
+
+```powershell
+.\setup-omniparser.ps1 -Repair -SkipWeights
+```
+
+For a constrained repair where you intentionally want to defer the one-time full Florence/YOLO smoke test:
+
+```powershell
+.\setup-omniparser.ps1 -Repair -SkipFullWarmup
+```
+
+## Opt-out / external server
+
+To disable all local process autostart:
+
+```powershell
+[Environment]::SetEnvironmentVariable("IRAS_OMNIPARSER_AUTOSTART", "false", "User")
+```
+
+IRAS can still consume a manually managed endpoint through `IRAS_OMNIPARSER_URL`. External/remote services are probed but never killed or restarted by IRAS.

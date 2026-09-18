@@ -136,6 +136,12 @@ class UniversalComputerController:
         self._vision_cache: dict[str, tuple[float, dict]] = {}
         self._vision_cache_order: list[str] = []
         self.omniparser = OmniParserRuntimeManager()
+        # OmniParser is an IRAS operating-layer service in v5 RC3. Start its
+        # bounded supervisor with the controller so local and remote computer
+        # use share the same eager-start/self-healing behavior without changing
+        # the protected device-bridge authorization/execution boundary.
+        if os.name == "nt":
+            self.omniparser.start_supervisor(eager=True)
 
     @staticmethod
     def _normalize(value: str) -> str:

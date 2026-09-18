@@ -938,7 +938,8 @@ def result_message(action: dict, result) -> str:
 
     if tool == "device_whatsapp_open_chat":
         contact = str(arguments.get("contact", "the requested contact"))
-        output = result.output if isinstance(result.output, dict) else {}
+        raw_output = getattr(result, "output", None)
+        output = raw_output if isinstance(raw_output, dict) else {}
         header = str(output.get("verified_header") or contact)
         if bool(output.get("verified")):
             return (
@@ -956,7 +957,16 @@ def result_message(action: dict, result) -> str:
 
     if tool == "device_spotify_play":
         query = str(arguments.get("query", "that track"))
-        return f"I searched Spotify and sent Play for “{query}”."
+        raw_output = getattr(result, "output", None)
+        if raw_output is None:
+            return f"I searched Spotify and sent Play for “{query}”."
+        output = raw_output if isinstance(raw_output, dict) else {}
+        if bool(output.get("verified_playback")):
+            candidates = [str(item).strip() for item in (output.get("now_playing_candidates") or []) if str(item).strip()]
+            if candidates:
+                return f"Verified Spotify playback for “{query}”. Now-playing UI shows: {candidates[0]}."
+            return f"Verified Spotify is playing a result related to “{query}”."
+        return f"I searched Spotify and sent Play for “{query}”, but I could not independently verify the playback result."
 
     if tool == "device_media_control":
         command = str(arguments.get("command", "media")).replace("_", " ")

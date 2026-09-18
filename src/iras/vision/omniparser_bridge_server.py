@@ -23,9 +23,11 @@ from pathlib import Path
 import sys
 import threading
 import time
+import hmac
+import types
 
 import torch  # preload first: important on Windows
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from PIL import Image
 from pydantic import BaseModel
 import uvicorn
@@ -44,12 +46,17 @@ def _truthy(value: str | None, *, default: bool = False) -> bool:
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="IRAS OmniParser bridge")
     parser.add_argument("--omniparser-root", required=True)
+    parser.add_argument("--som-model-path", default="")
     parser.add_argument("--caption-model-name", default="florence2")
     parser.add_argument("--caption-model-path", default="../../weights/icon_caption_florence")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--box-threshold", type=float, default=0.05)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8010)
+    parser.add_argument(
+        "--control-token",
+        default=os.getenv("IRAS_OMNIPARSER_CONTROL_TOKEN", ""),
+    )
     parser.add_argument(
         "--prewarm-text",
         action="store_true",
@@ -74,6 +81,11 @@ _easyocr_warmup_started_at: float | None = None
 _easyocr_thread: threading.Thread | None = None
 _full_parser = None
 _full_parser_lock = threading.Lock()
+_full_state_lock = threading.Lock()
+_full_model_state = "cold"
+_full_model_error = ""
+_full_model_warmup_ms: int | None = None
+_full_model_device = ""
 
 
 def _decode_image(value: str) -> Image.Image:
@@ -174,24 +186,200 @@ def _start_easyocr_prewarm() -> bool:
     return True
 
 
+def _set_full_model_state(
+    state: str,
+    *,
+    error: str = "",
+    warmup_ms: int | None = None,
+    device: str | None = None,
+) -> None:
+    global _full_model_state, _full_model_error, _full_model_warmup_ms, _full_model_device
+    with _full_state_lock:
+        _full_model_state = str(state)
+        _full_model_error = str(error or "")
+        if warmup_ms is not None:
+            _full_model_warmup_ms = int(warmup_ms)
+        if device is not None:
+            _full_model_device = str(device)
+
+
+def _full_model_status() -> dict:
+    with _full_state_lock:
+        return {
+            "full_model_state": _full_model_state,
+            "full_model_loaded": _full_parser is not None,
+            "full_model_error": _full_model_error or None,
+            "full_model_warmup_ms": _full_model_warmup_ms,
+            "full_model_device": _full_model_device or None,
+        }
+
+
+def _configured_full_device() -> str:
+    requested = str(ARGS.device or "cpu").strip().lower() or "cpu"
+    if requested == "auto":
+        requested = "cuda" if torch.cuda.is_available() else "cpu"
+    if requested.startswith("cuda"):
+        if not torch.cuda.is_available():
+            return "cpu"
+        # Maxwell-era adapters may still make torch.cuda.is_available() true
+        # even when the installed PyTorch/CUDA build no longer ships kernels
+        # for that compute capability. Fail over to CPU before model loading
+        # instead of surfacing a late no-kernel-image 500 from /parse/.
+        try:
+            major, _minor = torch.cuda.get_device_capability(0)
+            if int(major) < 6:
+                return "cpu"
+        except Exception:
+            return "cpu"
+    return requested
+
+
+def _install_paddle_stub() -> None:
+    if not _truthy(os.getenv("IRAS_OMNIPARSER_DISABLE_PADDLE"), default=True):
+        return
+    paddle = types.ModuleType("paddleocr")
+
+    class PaddleOCR:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def ocr(self, *args, **kwargs):
+            raise RuntimeError(
+                "PaddleOCR is disabled in the IRAS OmniParser bridge; "
+                "EasyOCR is the configured OCR backend."
+            )
+
+    paddle.PaddleOCR = PaddleOCR
+    sys.modules["paddleocr"] = paddle
+
+
+def _load_omniparser_utils():
+    # Upstream util.utils creates an EasyOCR Reader at module import. Reuse the
+    # reader IRAS already warmed instead of allocating a second OCR model.
+    _install_paddle_stub()
+    import easyocr
+
+    original_reader = easyocr.Reader
+    easyocr.Reader = lambda *args, **kwargs: _get_easyocr_reader()
+    try:
+        from util import utils as omni_utils
+    finally:
+        easyocr.Reader = original_reader
+    # If util.utils was imported before the shim, still force the shared reader.
+    try:
+        omni_utils.reader = _get_easyocr_reader()
+    except Exception:
+        pass
+    return omni_utils
+
+
+class _IRASFullOmniParser:
+    """Small upstream-compatible parser that honors IRAS's device setting."""
+
+    def __init__(self, config: dict):
+        self.config = dict(config)
+        self.device = _configured_full_device()
+        utils = _load_omniparser_utils()
+        self._utils = utils
+        self.som_model = utils.get_yolo_model(
+            model_path=self.config.get("som_model_path") or None,
+            device=self.device,
+        )
+        self.caption_model_processor = utils.get_caption_model_processor(
+            model_name=self.config["caption_model_name"],
+            model_name_or_path=self.config["caption_model_path"],
+            device=self.device,
+        )
+
+    def parse(self, image_base64: str):
+        image_bytes = base64.b64decode(image_base64)
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        image.load()
+        box_overlay_ratio = max(image.size) / 3200
+        draw_bbox_config = {
+            "text_scale": 0.8 * box_overlay_ratio,
+            "text_thickness": max(int(2 * box_overlay_ratio), 1),
+            "text_padding": max(int(3 * box_overlay_ratio), 1),
+            "thickness": max(int(3 * box_overlay_ratio), 1),
+        }
+        (text, ocr_bbox), _ = self._utils.check_ocr_box(
+            image,
+            display_img=False,
+            output_bb_format="xyxy",
+            easyocr_args={"text_threshold": 0.8},
+            use_paddleocr=False,
+        )
+        # Upstream master currently turns an empty OCR list into None and then
+        # immediately calls zip(ocr_bbox, ...), which raises TypeError on
+        # icon-only or low-text screenshots. Give it a 1-pixel sentinel box so
+        # full visual semantics still run, then remove the sentinel from output.
+        sentinel = "__IRAS_OCR_SENTINEL__"
+        used_sentinel = not bool(ocr_bbox)
+        if used_sentinel:
+            ocr_bbox = [[0, 0, 1, 1]]
+            text = [sentinel]
+        labeled, _coords, parsed = self._utils.get_som_labeled_img(
+            image,
+            self.som_model,
+            BOX_TRESHOLD=float(self.config["BOX_TRESHOLD"]),
+            output_coord_in_ratio=True,
+            ocr_bbox=ocr_bbox,
+            draw_bbox_config=draw_bbox_config,
+            caption_model_processor=self.caption_model_processor,
+            ocr_text=text,
+            use_local_semantics=True,
+            iou_threshold=0.7,
+            scale_img=False,
+            batch_size=32 if self.device == "cpu" else 128,
+        )
+        if used_sentinel:
+            parsed = [
+                item for item in parsed
+                if str((item or {}).get("content") or "") != sentinel
+            ]
+        return labeled, parsed
+
+
 def _get_full_parser():
     global _full_parser
     if _full_parser is not None:
         return _full_parser
     with _full_parser_lock:
-        if _full_parser is None:
-            from util.omniparser import Omniparser
-
-            _full_parser = Omniparser(
+        if _full_parser is not None:
+            return _full_parser
+        started = time.perf_counter()
+        device = _configured_full_device()
+        _set_full_model_state("warming", error="", device=device)
+        try:
+            parser = _IRASFullOmniParser(
                 {
-                    "som_model_path": None,
+                    "som_model_path": ARGS.som_model_path or None,
                     "caption_model_name": ARGS.caption_model_name,
                     "caption_model_path": ARGS.caption_model_path,
-                    "device": ARGS.device,
+                    "device": device,
                     "BOX_TRESHOLD": float(ARGS.box_threshold),
                 }
             )
-    return _full_parser
+        except Exception as exc:
+            elapsed = int((time.perf_counter() - started) * 1000)
+            _set_full_model_state(
+                "failed",
+                error=f"{type(exc).__name__}: {exc}",
+                warmup_ms=elapsed,
+                device=device,
+            )
+            raise
+        _full_parser = parser
+        elapsed = int((time.perf_counter() - started) * 1000)
+        _set_full_model_state("ready", error="", warmup_ms=elapsed, device=parser.device)
+        return _full_parser
+
+
+def _require_control_token(value: str | None) -> None:
+    expected = str(ARGS.control_token or "")
+    provided = str(value or "")
+    if not expected or not hmac.compare_digest(expected, provided):
+        raise HTTPException(status_code=403, detail="invalid IRAS control token")
 
 
 @app.on_event("startup")
@@ -205,10 +393,29 @@ def probe() -> dict:
         "message": "IRAS OmniParser bridge ready",
         "bridge": "iras-v3.7-r5",
         "capabilities": ["text_roi", "full_parse", "text_background_prewarm"],
-        "full_model_loaded": _full_parser is not None,
         "text_prewarm_enabled": bool(ARGS.prewarm_text),
         **_easyocr_status(),
+        **_full_model_status(),
     }
+
+
+@app.post("/control/stop")
+def control_stop(
+    x_iras_control_token: str | None = Header(
+        default=None,
+        alias="X-IRAS-Control-Token",
+    ),
+) -> dict:
+    _require_control_token(x_iras_control_token)
+
+    def _exit() -> None:
+        # Bound to loopback by the IRAS runtime and authenticated with a random
+        # per-process token. Exit after the response can be flushed.
+        time.sleep(0.15)
+        os._exit(0)
+
+    threading.Thread(target=_exit, name="iras-omniparser-stop", daemon=True).start()
+    return {"ok": True, "status": "stopping"}
 
 
 @app.post("/parse_text/")
@@ -281,13 +488,30 @@ def parse_text(request: ParseRequest) -> dict:
 @app.post("/parse/")
 def parse_full(request: ParseRequest) -> dict:
     started = time.perf_counter()
-    parser = _get_full_parser()
-    labeled, parsed = parser.parse(request.base64_image)
+    try:
+        parser = _get_full_parser()
+        labeled, parsed = parser.parse(request.base64_image)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - model/HTTP boundary
+        elapsed = int((time.perf_counter() - started) * 1000)
+        current = _full_model_status()
+        _set_full_model_state(
+            "failed",
+            error=f"{type(exc).__name__}: {exc}",
+            warmup_ms=elapsed,
+            device=str(current.get("full_model_device") or _configured_full_device()),
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=f"full model unavailable: {type(exc).__name__}: {exc}",
+        ) from exc
     return {
         "som_image_base64": labeled,
         "parsed_content_list": parsed,
         "latency": time.perf_counter() - started,
         "mode": "full",
+        **_full_model_status(),
     }
 
 

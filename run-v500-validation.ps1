@@ -22,7 +22,7 @@ function Invoke-IrasCleanup {
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "=== IRAS v5.0 RC2 MEGA-INTEGRATION VALIDATION ==="
+Write-Host "=== IRAS v5.0 RC3 COMPLETE OPERATING LAYER VALIDATION ==="
 Invoke-IrasCleanup
 try {
     python .\scripts\validate_v500_clean_tree.py
@@ -40,6 +40,6 @@ try {
     python -m pytest -q
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Write-Host ""
-    Write-Host "IRAS v5.0 RC2 VALIDATION RESULT: PASS"
+    Write-Host "IRAS v5.0 RC3 VALIDATION RESULT: PASS"
 }
 finally { Invoke-IrasCleanup }

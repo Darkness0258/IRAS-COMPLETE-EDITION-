@@ -21,6 +21,10 @@ services:
         value: "3"
       - key: IRAS_V5_SCHEDULER_ENABLED
         value: "true"
+      - key: IRAS_V5_SCHEDULER_WORKERS
+        value: "4"
+      - key: IRAS_V5_MONITOR_POLL_SECONDS
+        value: "15"
       - key: OPENROUTER_API_KEY
         sync: false
       - key: IRAS_API_TOKEN

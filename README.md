@@ -1,18 +1,20 @@
-# IRAS 5.0.0 RC2 — Autonomous Personal Operating Layer
+# IRAS 5.0.0 RC3 — Complete Autonomous Operating Layer
 
-IRAS v5 builds on the frozen v4.4 permissioned Windows/control core and adds a modular autonomous operating layer: persistent schedules, proactive monitoring, project knowledge, isolated coding workspaces, semantic memory, workflow learning, connectors, full-duplex voice coordination, mobile approvals, artifacts, encrypted secrets/sync, sandboxed capability learning, research/debate agents, rollback timelines, multi-user profiles, and long-term goal hierarchy.
+IRAS v5 builds on the frozen v4.4 permissioned Windows/control core and adds a modular autonomous operating layer with **33 validated feature families**: persistent schedules, proactive monitoring, managed multimodal vision, dedicated browser workflows, project knowledge, isolated coding workspaces, semantic memory, workflow recording/replay, lifecycle-managed connectors, full-duplex voice coordination, mobile/Android approvals, notifications, artifacts, encrypted secrets/sync, sandboxed capability learning, research/debate agents, resource-aware routing, rollback/audit, signed skills, home adapters, multi-user profiles, schema migrations, a Control Center, and deterministic release engineering.
 
-**Release status:** `5.0.0-rc2`. The remote protocol remains `1`; v5 does not weaken the v4.4 device bridge, Remote-session, local-policy, emergency-stop, or ToolRegistry boundaries.
+**Release status:** `5.0.0-rc3`. The remote protocol remains `1`; v5 does not weaken the v4.4 device bridge, Remote-session, local-policy, emergency-stop, or ToolRegistry boundaries.
 
-## v5.0 RC2 mega-integration
+## v5.0 RC3 complete operating layer
 
-- **Autonomy Control Center:** web UI exposes v5 subsystem status, schedules, monitors, goals, notifications, connectors, and audit summaries.
-- **Persistent autonomy:** v5 state uses PostgreSQL when `DATABASE_URL` is configured and SQLite locally.
-- **Agent-usable v5 tools:** goals, schedules, monitoring, semantic memory, knowledge graphs, notifications, connector status, rollback checkpoints, vault references, and audit summaries are available through the normal permissioned ToolRegistry.
-- **Safe extensibility:** generated capabilities require sandbox tests + explicit approval; signed marketplace skills require Ed25519 verification.
-- **No automatic merge / no secret exposure / no network scanning:** high-impact operations remain explicit and bounded.
+- **Complete control surface:** all 33 feature families are reachable through model-facing tools, API/UI status surfaces, or dedicated lifecycle commands; RC3 exposes 100+ v5 tools through the normal permissioned ToolRegistry.
+- **Autonomy Control Center:** web UI exposes the full feature matrix plus schedules, monitors, goals, notifications, artifacts, recovery, capabilities, home adapters, migrations, connectors, and audit summaries.
+- **Persistent autonomy:** v5 state uses PostgreSQL when `DATABASE_URL` is configured and SQLite locally; local schedule/research/debate workers run through a separate READ-capped ToolRegistry.
+- **Safe extensibility:** generated capabilities require sandbox tests + explicit approval; signed marketplace skills authenticate the manifest **and every package file hash** with Ed25519.
+- **Lifecycle-managed integrations:** connectors fail closed on missing authorization/expired credentials; Android RC3 registers, heartbeats, receives per-device events, acknowledges delivery and resolves approval prompts.
+- **Unified cloud workspace:** Windows (`iras-cloud-client`), web/PWA and Android share restart-safe cloud client presence, one active conversation, synchronized message history and non-secret preferences through the same authenticated Cloud API.
+- **No automatic merge / no secret exposure / no ambient network scanning:** high-impact operations remain explicit and bounded.
 
-See `docs/V5_0_RC2_NOTES.md` for the complete capability inventory.
+See `RC3-FEATURE-MATRIX.md` and `docs/V5_0_RC3_NOTES.md` for the complete capability inventory.
 
 ## v4.4 FINAL production hardening
 
@@ -169,7 +171,7 @@ scripts/                 validators, maintenance, Windows setup
 scripts/windows/         remote-access/install/update lifecycle
 docs/                    current architecture/deployment guides
 run-v420-validation.ps1  complete v4.2 multi-agent validation
-run-v400-validation.ps1  v4.0 production baseline validator
+run-v500-validation.ps1  v5.0 RC3 complete operating-layer validator
 run-v400-real-device-smoke.ps1
 setup-remote-windows.ps1 worldwide Windows bridge setup
 ```
@@ -179,15 +181,28 @@ setup-remote-windows.ps1 worldwide Windows bridge setup
 From the project root:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-.\install-v4-windows.ps1 -AllFeatures -InstallBrowser
-Copy-Item .env.example .env
-iras --doctor
+.\install.ps1
 ```
 
-The installer is intentionally code/dependency setup only. OmniParser dependencies/weights remain an explicit one-time setup because IRAS never silently downloads or installs computer-control models.
+`install.ps1` now provisions the complete local operating layer: it reuses an existing IRAS virtual environment when present, installs all RC3 extras and Playwright Chromium, and provisions an isolated Python 3.12 Microsoft OmniParser checkout with the V2 detector/caption weights. If `%USERPROFILE%\.iras\OmniParser` already contains an unmanaged/legacy installation, IRAS preserves it and creates a separate `OmniParser-iras-managed` checkout instead of overwriting it. The managed service is then started and probed before installation completes.
+
+Normal local/device-first startup is:
+
+```powershell
+.\run-iras.ps1
+```
+
+To join the same cloud conversation used by the web/PWA and Android clients from Windows:
+
+```powershell
+.\run-iras-cloud-client.ps1
+# or
+iras-cloud-client
+```
+
+Set `IRAS_CLOUD_URL` to the deployed HTTPS server and `IRAS_CLOUD_TOKEN` (or `IRAS_API_TOKEN`) to the Cloud access token. The Windows cloud client persists only its non-secret client/thread IDs under `~/.iras/cloud-client.json`; tokens remain in environment/private `.env` configuration.
+
+The launcher requires an IRAS-owned OmniParser bridge by default before entering chat. A reachable-but-unowned local service is treated as migration-needed, so `run-iras.ps1` invokes the idempotent provisioning/repair flow, preserves the legacy tree, selects a free managed port in `8010-8020`, updates `.env`, and starts the owned bridge. Set `IRAS_OMNIPARSER_ALLOW_EXTERNAL=true` only when you explicitly want to attach to an externally managed local OmniParser lifecycle; `IRAS_OMNIPARSER_AUTOSTART=false` disables managed startup.
 
 ## Provider configuration
 
@@ -211,6 +226,10 @@ iras                              # interactive agent
 iras --doctor                     # production health report
 iras --tools                      # registered capabilities
 iras --voice-test                 # TTS diagnostic
+iras --vision-status              # managed OmniParser state
+iras --vision-start               # start/attach managed vision runtime
+iras --vision-restart             # authenticated restart of IRAS-owned bridge
+iras --vision-stop                # authenticated stop of IRAS-owned bridge
 iras --remote-status              # local remote policy
 iras --remote-arm full --remote-persistent
 iras --remote-disarm              # remote-only local kill switch
@@ -270,6 +289,8 @@ known deterministic workflow
   -> model planning only where deterministic control cannot resolve the goal
 ```
 
+OmniParser is an IRAS-owned subsystem by default: eager startup, background EasyOCR warmup, a bounded health watchdog, authenticated stop/restart control, and automatic recovery are built in. Setup performs a real full-model Florence/YOLO smoke test, while normal runtime may still lazy-load the heavy model until a visual-only interface requires it. Reachable local services that IRAS does not own are rejected by default rather than silently weakening lifecycle guarantees.
+
 All state-changing universal computer actions bind to an observed element ID. Raw model-authored coordinates are not accepted as a substitute for fresh grounding.
 
 The WhatsApp “open named chat and verify header, do not send” workflow remains model-free, never touches the composer, never presses Enter, and requires fresh right-pane header proof. Full Florence/YOLO fallback is disabled by default for this text-semantic workflow.
@@ -289,7 +310,7 @@ Verified successful semantic procedures can be learned as app skills. Skill conf
 After all code changes run one complete gate:
 
 ```powershell
-.\run-v400-validation.ps1
+.\run-v500-validation.ps1
 ```
 
 Then run the read-only target-machine smoke test:
@@ -308,3 +329,10 @@ The real worldwide-network acceptance checklist is in `docs/REMOTE_ACCEPTANCE_CH
 - `docs/MULTIMODAL_GROUNDING_V3.7.0.md` — scene graph and visual grounding.
 - `docs/OMNIPARSER_IRAS_SETUP.md` — local OmniParser setup/lifecycle.
 - `docs/CLOUD_DEPLOY.md` / `RENDER_SUPABASE_DEPLOY.md` — hosted deployment.
+
+## RC3 risk-based approvals and reliable media control
+
+Local interactive use no longer asks for approval for bounded routine actions such as opening/focusing apps, Spotify search/play, media controls, opening a WhatsApp chat without sending, and bounded scrolling. Approval remains required for consequential operations such as generic click/type workflows that can submit actions, file mutation/deletion, shell or command execution, process/power control, external submissions/writes, connector authorization, home-control commands, installs, rollback, and other elevated operations. Remote-session action classification remains unchanged and continues to be enforced by the Remote authorization layer.
+
+Spotify playback now follows a deterministic sequence: open/focus Spotify, wait for the real window to become ready, enter the query, wait for the search UI to settle, then issue Spotify's own play action. URI navigation and the visually detected green Play button are compatibility fallbacks rather than startup-racing primary paths.
+

@@ -26,7 +26,8 @@ def test_streaming_authorization_gate_resumes_same_turn_once():
     continuation = text.split('if(completion&&completion.execution_mode==="authorization_required")', 1)[1]
     continuation = continuation.split('if(generation!==chatGeneration)return;', 1)[0]
     assert "sendText(" not in continuation
-    assert "streamReply(base,c,text,bubble,session,controller.signal)" in continuation
+    assert "streamReply(base,c,text,bubble,session,controller.signal,turnId)" in continuation
+    assert "const turnId=cloudTurnId();" in text
 
 
 def test_tasks_goal_retries_remote_403_after_explicit_consent():

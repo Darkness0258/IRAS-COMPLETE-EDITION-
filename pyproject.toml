@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "iras-agent"
-version = "5.0.0-rc2"
+version = "5.0.0-rc3"
 description = "IRAS - persistent permissioned autonomous personal operating layer"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -51,6 +51,7 @@ iras-api = "iras.api:main"
 iras-node = "iras.nodes.server:main"
 iras-scheduler = "iras.automations.scheduler:main"
 iras-cloud = "iras.cloud_api:main"
+iras-cloud-client = "iras.cloud_client:main"
 iras-remote = "iras.remote_desktop:main"
 iras-device = "iras.device_bridge.agent:main"
 

@@ -166,14 +166,31 @@ def run(settings):
 
     vision = OmniParserRuntimeManager().status()
     add(
-        "OmniParser configuration",
-        bool(vision.get("base_url")),
-        f"{vision.get('status')} @ {vision.get('base_url') or 'not configured'}",
+        "OmniParser installation",
+        bool(vision.get("installation_ready")),
+        vision.get("installation_root") or vision.get("installation_reason") or "not provisioned",
     )
     add(
+        "OmniParser configuration",
+        bool(vision.get("base_url")),
+        (
+            f"{vision.get('status')} @ {vision.get('base_url') or 'not configured'}; "
+            f"eager={vision.get('eager_start_enabled')} watchdog={vision.get('watchdog_enabled')}"
+        ),
+    )
+    full_state = str(vision.get("full_model_state") or "cold").strip().lower()
+    full_error = str(vision.get("full_model_error") or "").strip()
+    omni_ok = bool(vision.get("ready")) and full_state != "failed"
+    omni_detail = vision.get("reason")
+    if not omni_detail and full_state == "failed":
+        omni_detail = "full visual model failed: " + (full_error or "unknown full-model error")
+    if not omni_detail:
+        device = vision.get("full_model_device") or "not loaded yet"
+        omni_detail = f"ready; full_model_state={full_state} device={device}"
+    add(
         "OmniParser ready",
-        bool(vision.get("ready")),
-        vision.get("reason") or ("ready" if vision.get("ready") else "will auto-start on first visual need"),
+        omni_ok,
+        omni_detail,
     )
 
     remote = RemoteAccessPolicy().status()

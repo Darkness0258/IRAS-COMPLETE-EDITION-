@@ -1,33 +1,34 @@
-# IRAS Cloud v2 architecture
+# IRAS Cloud v5 RC3 architecture
 
 ```text
-                         OpenRouter
-                             ^
-                             |
-                       IRAS Cloud API
-                       FastAPI / HTTPS
-                             |
-                    +--------+--------+
-                    |                 |
-              PostgreSQL          Web/PWA
-             shared memory          client
-                    ^
-                    |
-          +---------+----------+
-          |                    |
-    Windows IRAS.exe      Android IRAS.apk
-      local TTS             native TTS
-      local device          mic + speech
+                       Cloud AI providers
+                              ^
+                              |
+                        IRAS Cloud API
+                        FastAPI / HTTPS
+                              |
+                     +--------+--------+
+                     |                 |
+             PostgreSQL state       Web/PWA
+       memory + cloud workspace       client
+                     ^                 |
+                     |                 |
+          +----------+----------+------+
+          |                     |
+ Windows IRAS cloud client     Android IRAS
+ shared thread/history         shared thread/history
+          |                     approvals/notifications
+          |
+ Windows IRAS device agent
+ local policy / ToolRegistry / emergency stop
+          |
+ local apps/files/browser/OmniParser/Ollama
 ```
 
-The public server intentionally does not expose shell, filesystem, process, or desktop-control tools.
+The public server intentionally does not register shell, filesystem, process, or unrestricted desktop-control tools. Those capabilities remain on authorized local IRAS nodes.
 
-Those capabilities belong to authorized local IRAS nodes. This prevents an internet-facing service from becoming a remote shell.
+Cloud chat can request a local action only through the authenticated Remote/device job path. The paired Windows node remains the final enforcement point.
 
-Future device-control architecture:
+The unified cloud workspace (`src/iras/cloud_state.py`) stores only non-secret collaboration state: client presence, thread metadata, transcript and preferences. API/device/Remote/connector secrets are not stored in that workspace.
 
-```text
-IRAS Cloud -> authenticated job -> local IRAS node -> permission engine -> device tool
-```
-
-The cloud brain may request a local action, but the local node remains the enforcement point.
+See `CLOUD_WORKSPACE_RC3.md` for the cross-client API and client behavior.

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import secrets
 import shlex
 import shutil
 import socket
@@ -46,16 +47,15 @@ class RuntimeProbe:
 
 
 class OmniParserRuntimeManager:
-    """Own the on-demand local OmniParser lifecycle used by IRAS vision.
+    """Own the local OmniParser lifecycle used by IRAS vision.
 
-    IRAS never downloads weights or installs dependencies. When visual grounding
-    is actually needed, the manager first probes the configured endpoint. If the
-    endpoint is loopback and unavailable, it may start a *configured/discovered*
-    OmniParser process with ``shell=False`` and wait for ``/probe/``.
+    RC3 treats OmniParser as an IRAS-managed operating-layer service. The
+    service can still be disabled explicitly, but the default is eager startup
+    plus a bounded watchdog. Full Florence/YOLO model loading remains lazy so
+    ordinary IRAS startup does not unnecessarily consume model memory.
 
-    This keeps OmniParser lazy (zero idle cost before vision is needed), avoids
-    duplicate servers, and removes the need to manually start it before every
-    WebView/custom-rendered task.
+    Process launch is always argument-vector based with ``shell=False``. Remote
+    OmniParser endpoints are never process-managed by IRAS.
     """
 
     _lock = threading.Lock()
@@ -65,10 +65,41 @@ class OmniParserRuntimeManager:
         self._started_by_iras = False
         self._last_start_error = ""
         self._last_start_attempt = 0.0
+        self._control_token = ""
+        self._supervisor_stop = threading.Event()
+        self._supervisor_thread: threading.Thread | None = None
+        self._supervisor_last_result: RuntimeProbe | None = None
 
     @staticmethod
     def autostart_enabled() -> bool:
         return _truthy("IRAS_OMNIPARSER_AUTOSTART", default=True)
+
+    @staticmethod
+    def allow_external_enabled() -> bool:
+        """Allow attaching to a reachable local OmniParser process IRAS does not own.
+
+        Managed ownership is the RC3 default so restart/watchdog semantics remain
+        truthful. Advanced users can explicitly opt into an externally managed
+        local service with IRAS_OMNIPARSER_ALLOW_EXTERNAL=true.
+        """
+        raw = os.getenv("IRAS_OMNIPARSER_ALLOW_EXTERNAL", "false").strip().lower()
+        return raw in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def eager_start_enabled() -> bool:
+        return _truthy("IRAS_OMNIPARSER_EAGER_START", default=True)
+
+    @staticmethod
+    def watchdog_enabled() -> bool:
+        return _truthy("IRAS_OMNIPARSER_WATCHDOG", default=True)
+
+    @staticmethod
+    def watchdog_interval() -> float:
+        try:
+            value = float(os.getenv("IRAS_OMNIPARSER_WATCHDOG_SECONDS", "20"))
+        except (TypeError, ValueError):
+            value = 20.0
+        return max(5.0, min(value, 300.0))
 
     @classmethod
     def base_url(cls) -> str:
@@ -159,13 +190,14 @@ class OmniParserRuntimeManager:
         return data if isinstance(data, dict) else {}
 
     @classmethod
-    def _write_runtime_state(cls, pid: int) -> None:
+    def _write_runtime_state(cls, pid: int, control_token: str = "") -> None:
         path = cls._runtime_state_path()
         payload = {
             "pid": int(pid),
             "base_url": cls.base_url(),
             "started_by_iras": True,
             "started_at": time.time(),
+            "control_token": str(control_token or ""),
         }
         temp = path.with_suffix(".tmp")
         try:
@@ -174,6 +206,10 @@ class OmniParserRuntimeManager:
                 encoding="utf-8",
             )
             temp.replace(path)
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
         except Exception:
             try:
                 temp.unlink(missing_ok=True)
@@ -204,12 +240,55 @@ class OmniParserRuntimeManager:
             return False
         if pid <= 0:
             return False
+
+        if os.name == "nt":
+            # os.kill(pid, 0) is not a reliable persisted-process probe on all
+            # supported Windows/Python builds. Query the process handle
+            # directly so a managed OmniParser started by one short-lived IRAS
+            # command remains recognizable by the next command/doctor process.
+            try:
+                import ctypes
+                from ctypes import wintypes
+
+                PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+                STILL_ACTIVE = 259
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                open_process = kernel32.OpenProcess
+                open_process.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+                open_process.restype = wintypes.HANDLE
+                get_exit_code = kernel32.GetExitCodeProcess
+                get_exit_code.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+                get_exit_code.restype = wintypes.BOOL
+                close_handle = kernel32.CloseHandle
+                close_handle.argtypes = [wintypes.HANDLE]
+                close_handle.restype = wintypes.BOOL
+
+                handle = open_process(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+                if not handle:
+                    # Access denied can still mean the process is alive.
+                    return ctypes.get_last_error() == 5
+                try:
+                    code = wintypes.DWORD(0)
+                    if not get_exit_code(handle, ctypes.byref(code)):
+                        return False
+                    return int(code.value) == STILL_ACTIVE
+                finally:
+                    close_handle(handle)
+            except Exception:
+                # Conservative compatibility fallback for unusual Windows
+                # environments where ctypes process querying is unavailable.
+                try:
+                    os.kill(pid, 0)
+                except PermissionError:
+                    return True
+                except Exception:
+                    return False
+                return True
+
         try:
             os.kill(pid, 0)
         except PermissionError:
-            # Windows can deny PROCESS_QUERY access for a live process. Treat
-            # access denied as live rather than discarding IRAS ownership.
-            return os.name == "nt"
+            return True
         except OSError:
             return False
         except Exception:
@@ -266,9 +345,22 @@ class OmniParserRuntimeManager:
             with httpx.Client(timeout=float(timeout_value)) as client:
                 response = client.get(probe, headers=self.headers())
                 response.raise_for_status()
+            if self._is_local_endpoint() and not started_by_iras and not self.allow_external_enabled():
+                return RuntimeProbe(
+                    ready=False,
+                    status="external_unmanaged",
+                    reason=(
+                        "A local OmniParser service is reachable, but IRAS does not own it. "
+                        "Run setup-omniparser.ps1 to migrate to the managed runtime, or set "
+                        "IRAS_OMNIPARSER_ALLOW_EXTERNAL=true to opt into external lifecycle management."
+                    ),
+                    pid=None,
+                    started_by_iras=False,
+                    base_url=base,
+                )
             return RuntimeProbe(
                 ready=True,
-                status="ready",
+                status="ready_external" if not started_by_iras else "ready",
                 pid=owned_pid,
                 started_by_iras=started_by_iras,
                 base_url=base,
@@ -390,6 +482,41 @@ class OmniParserRuntimeManager:
     def text_prewarm_enabled() -> bool:
         return _truthy("IRAS_OMNIPARSER_TEXT_PREWARM", default=True)
 
+    @classmethod
+    def installation_status(cls) -> dict:
+        roots = cls._candidate_roots()
+        if not roots:
+            return {
+                "ready": False,
+                "root": None,
+                "python": None,
+                "detector_ready": False,
+                "caption_ready": False,
+                "reason": "No local OmniParser checkout was discovered.",
+            }
+        root = roots[0]
+        python = cls._python_for_root(root)
+        detector = root / "weights" / "icon_detect_v3" / "model.pt"
+        caption = root / "weights" / "icon_caption_florence" / "model.safetensors"
+        detector_ready = detector.is_file()
+        caption_ready = caption.is_file()
+        ready = bool(python and detector_ready and caption_ready)
+        missing = []
+        if not python:
+            missing.append("OmniParser Python environment")
+        if not detector_ready:
+            missing.append("icon_detect_v3/model.pt")
+        if not caption_ready:
+            missing.append("icon_caption_florence/model.safetensors")
+        return {
+            "ready": ready,
+            "root": str(root),
+            "python": python,
+            "detector_ready": detector_ready,
+            "caption_ready": caption_ready,
+            "reason": None if ready else "Missing: " + ", ".join(missing),
+        }
+
     def _build_command(self) -> tuple[list[str], Path | None]:
         custom = self._custom_command()
         roots = self._candidate_roots()
@@ -436,10 +563,16 @@ class OmniParserRuntimeManager:
                 str(bridge_path),
                 "--omniparser-root",
                 str(root),
+                "--som-model-path",
+                str((root / "weights" / "icon_detect_v3" / "model.pt").resolve()),
                 "--caption-model-name",
                 caption_model,
                 "--caption-model-path",
-                caption_path,
+                str(
+                    (root / "weights" / "icon_caption_florence").resolve()
+                    if caption_path == "../../weights/icon_caption_florence"
+                    else Path(caption_path).expanduser().resolve()
+                ),
                 "--device",
                 device,
                 "--box-threshold",
@@ -496,6 +629,7 @@ class OmniParserRuntimeManager:
         return text[-max_chars:].strip()
 
     def _spawn(self) -> subprocess.Popen:
+        self._control_token = secrets.token_urlsafe(32)
         command, cwd = self._build_command()
         log_path = self._log_path()
         log_handle = open(log_path, "a", encoding="utf-8", errors="replace")
@@ -512,6 +646,10 @@ class OmniParserRuntimeManager:
             "stdout": log_handle,
             "stderr": subprocess.STDOUT,
             "shell": False,
+            "env": {
+                **os.environ,
+                "IRAS_OMNIPARSER_CONTROL_TOKEN": self._control_token,
+            },
         }
         if os.name == "nt":
             kwargs["creationflags"] = int(
@@ -574,7 +712,7 @@ class OmniParserRuntimeManager:
                     process = self._spawn()
                     self._process = process
                     self._started_by_iras = True
-                    self._write_runtime_state(process.pid)
+                    self._write_runtime_state(process.pid, self._control_token)
                     self._last_start_error = ""
                 except Exception as exc:
                     self._last_start_error = f"{type(exc).__name__}: {exc}"
@@ -632,6 +770,117 @@ class OmniParserRuntimeManager:
                 base_url=self.base_url(),
             )
 
+    def _control_url(self, action: str) -> str:
+        base = self.base_url().rstrip("/")
+        return f"{base}/control/{str(action).strip().lower()}" if base else ""
+
+    def stop(self, *, timeout: float = 8.0) -> RuntimeProbe:
+        """Stop only an IRAS-managed bridge; never kill an arbitrary service."""
+        state = self._read_runtime_state()
+        token = str(state.get("control_token") or self._control_token or "")
+        pid = self._process.pid if self._process is not None else None
+        if not pid:
+            try:
+                pid = int(state.get("pid") or 0) or None
+            except (TypeError, ValueError):
+                pid = None
+
+        if token and self._is_local_endpoint():
+            try:
+                with httpx.Client(timeout=max(1.0, min(float(timeout), 15.0))) as client:
+                    response = client.post(
+                        self._control_url("stop"),
+                        headers={"X-IRAS-Control-Token": token},
+                    )
+                    response.raise_for_status()
+            except Exception:
+                # Fall through to the current-process handle only. We do not
+                # terminate a persisted PID blindly because PID reuse could
+                # target an unrelated local process.
+                pass
+
+        if self._process is not None and self._process.poll() is None:
+            try:
+                self._process.terminate()
+                self._process.wait(timeout=max(1.0, min(float(timeout), 15.0)))
+            except Exception:
+                try:
+                    self._process.kill()
+                except Exception:
+                    pass
+
+        deadline = time.monotonic() + max(1.0, min(float(timeout), 15.0))
+        while time.monotonic() < deadline:
+            probe = self.probe(timeout=0.5)
+            if not probe.ready:
+                self._clear_runtime_state(pid=pid)
+                self._process = None
+                self._started_by_iras = False
+                self._control_token = ""
+                return RuntimeProbe(
+                    ready=False,
+                    status="stopped",
+                    reason="IRAS-managed OmniParser bridge is stopped.",
+                    pid=pid,
+                    started_by_iras=True,
+                    base_url=self.base_url(),
+                )
+            time.sleep(0.2)
+
+        return RuntimeProbe(
+            ready=True,
+            status="stop_timeout",
+            reason="OmniParser remained reachable after the bounded stop request.",
+            pid=pid,
+            started_by_iras=bool(state.get("started_by_iras")),
+            base_url=self.base_url(),
+        )
+
+    def restart(self) -> RuntimeProbe:
+        current = self.probe(timeout=0.75)
+        if current.ready and not current.started_by_iras:
+            return RuntimeProbe(
+                ready=True,
+                status="external_service",
+                reason="The active OmniParser endpoint is external; IRAS will not restart it.",
+                pid=current.pid,
+                started_by_iras=False,
+                base_url=current.base_url,
+            )
+        self.stop()
+        return self.ensure_ready(start=True)
+
+    def start_supervisor(self, *, eager: bool | None = None) -> None:
+        if self._supervisor_thread is not None and self._supervisor_thread.is_alive():
+            return
+        self._supervisor_stop.clear()
+        eager_start = self.eager_start_enabled() if eager is None else bool(eager)
+
+        def _loop() -> None:
+            if eager_start and self.autostart_enabled():
+                self._supervisor_last_result = self.ensure_ready(start=True)
+            while not self._supervisor_stop.wait(self.watchdog_interval()):
+                if not self.watchdog_enabled() or not self.autostart_enabled():
+                    continue
+                probe = self.probe(timeout=1.0)
+                self._supervisor_last_result = probe
+                if not probe.ready and self._is_local_endpoint():
+                    self._supervisor_last_result = self.ensure_ready(start=True)
+
+        self._supervisor_thread = threading.Thread(
+            target=_loop,
+            name="iras-omniparser-supervisor",
+            daemon=True,
+        )
+        self._supervisor_thread.start()
+
+    def stop_supervisor(self) -> None:
+        self._supervisor_stop.set()
+        thread = self._supervisor_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.5)
+        self._supervisor_thread = None
+
     def _probe_details(self, *, timeout: float = 1.0) -> dict:
         url = self.probe_url()
         if not url:
@@ -648,10 +897,21 @@ class OmniParserRuntimeManager:
     def status(self) -> dict:
         probe = self.probe(timeout=1.0)
         details = self._probe_details(timeout=1.0) if probe.ready else {}
+        installation = self.installation_status()
         data = probe.as_dict()
         data.update(
             {
                 "autostart_enabled": self.autostart_enabled(),
+                "eager_start_enabled": self.eager_start_enabled(),
+                "watchdog_enabled": self.watchdog_enabled(),
+                "watchdog_interval_seconds": self.watchdog_interval(),
+                "supervisor_running": bool(
+                    self._supervisor_thread is not None
+                    and self._supervisor_thread.is_alive()
+                ),
+                "installation_ready": bool(installation.get("ready")),
+                "installation_root": installation.get("root"),
+                "installation_reason": installation.get("reason"),
                 "local_endpoint": self._is_local_endpoint(),
                 "last_start_error": self._last_start_error or None,
                 "log_path": str(self._log_path()),
@@ -664,7 +924,11 @@ class OmniParserRuntimeManager:
                 "text_model_loaded": details.get("text_model_loaded"),
                 "text_model_warmup_ms": details.get("text_model_warmup_ms"),
                 "text_model_error": details.get("text_model_error"),
+                "full_model_state": details.get("full_model_state"),
                 "full_model_loaded": details.get("full_model_loaded"),
+                "full_model_warmup_ms": details.get("full_model_warmup_ms"),
+                "full_model_device": details.get("full_model_device"),
+                "full_model_error": details.get("full_model_error"),
             }
         )
         return data

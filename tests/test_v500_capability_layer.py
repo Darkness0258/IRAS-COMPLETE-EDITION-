@@ -65,8 +65,8 @@ def test_v5_feature_inventory(tmp_path, monkeypatch):
     monkeypatch.setenv("IRAS_VAULT_MASTER_KEY", EncryptedSync.new_key())
     rt = V5Runtime(tmp_path / "v5")
     status = rt.status()
-    assert status["version"] == "5.0.0-rc2"
-    assert status["feature_count"] == 27
+    assert status["version"] == "5.0.0-rc3"
+    assert status["feature_count"] == 33
     assert set(status["features"]) == set(FEATURES)
     assert status["persistent_backend"] == "sqlite"
 
@@ -167,7 +167,7 @@ def test_capability_learning_requires_test_and_approval(tmp_path):
 def test_connector_layer_has_first_class_services():
     reg = ConnectorRegistry(); ids = {x["connector_id"] for x in reg.list()}
     assert {"gmail","calendar","drive","github","supabase","discord","slack","notion"} <= ids
-    with pytest.raises(RuntimeError): reg.invoke("github", "repos.read")
+    with pytest.raises(PermissionError): reg.invoke("github", "repos.read")
 
 
 def test_full_duplex_voice_barge_in_and_analysis():
@@ -246,9 +246,10 @@ def test_signed_skill_marketplace(tmp_path):
     from cryptography.hazmat.primitives import serialization
     key=Ed25519PrivateKey.generate(); pub=key.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw)
     m=SkillManifest("demo","1.0","demo",["READ"],"skill.py","tester")
-    sig=key.sign(SkillMarketplace._payload(m))
+    files={"skill.py":"VALUE=1"}
+    sig=key.sign(SkillMarketplace._payload(m, files))
     market=SkillMarketplace(tmp_path)
-    target=market.install(m,{"skill.py":"VALUE=1"},signature_b64=base64.b64encode(sig).decode(),public_key_b64=base64.b64encode(pub).decode(),approved=True)
+    target=market.install(m,files,signature_b64=base64.b64encode(sig).decode(),public_key_b64=base64.b64encode(pub).decode(),approved=True)
     assert Path(target,"skill.py").exists()
 
 
