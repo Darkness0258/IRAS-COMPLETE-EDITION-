@@ -1545,34 +1545,34 @@ def make_tools(store):
         "device_run_command": "run_command",
     }
 
-    # Local interactive approval policy: routine, bounded desktop conveniences
-    # should not interrupt the user with approval prompts.  The remote/cloud
-    # action classification is intentionally left unchanged; paired-device
-    # sessions still carry the original action_permission() level to the
-    # remote authorization layer.  Generic clicking/typing, file mutation,
-    # commands, power/process control and other consequential operations keep
+    # User-facing approval policy: bounded routine conveniences should not
+    # interrupt the user merely because the request came through Cloud/Web/
+    # Android instead of the local CLI.  This changes only ToolRegistry prompt
+    # classification.  The device request still forwards the original
+    # action_permission() value to the Remote/device authorization layer, so
+    # local mode caps, Remote session scopes, emergency stop, and bridge-root
+    # restrictions remain authoritative.
+    #
+    # Keep this allowlist intentionally narrow. Generic click/type, arbitrary
+    # application interaction, file mutation, shell/process/power control,
+    # sends/submits, installs, rollback and other consequential operations keep
     # their stronger approval requirements.
-    routine_local_actions = {
+    routine_bounded_actions = {
         "whatsapp_open_chat",
         "spotify_search",
         "spotify_play",
         "media_control",
         "ui_scroll_until_text",
     }
-    local_in_process = (
-        store.__class__.__name__ == "LocalDeviceBridgeStore"
-        and store.__class__.__module__.endswith(".local_store")
-    )
 
     for tool in tools:
         action = action_by_tool.get(tool.name)
         if action:
-            def _resolver(args, _action=action, _local=local_in_process):
+            def _resolver(args, _action=action):
                 forwarded = {k: v for k, v in dict(args or {}).items() if k != "device_id"}
                 level = action_permission(_action, forwarded)
                 if (
-                    _local
-                    and _action in routine_local_actions
+                    _action in routine_bounded_actions
                     and level == PermissionLevel.SYSTEM_ACTION
                 ):
                     return PermissionLevel.SAFE_ACTION

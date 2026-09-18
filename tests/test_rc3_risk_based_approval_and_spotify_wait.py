@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from iras.device_bridge.local_store import LocalDeviceBridgeStore
 from iras.device_bridge.tools import make_tools
+from iras.device_bridge.remote_context import remote_command_context
 from iras.device_bridge.ui_control import WindowsUIController
 from iras.models import PermissionLevel
 
@@ -38,10 +39,29 @@ def test_local_routine_media_actions_do_not_prompt_but_risky_ui_still_does():
     assert tools["device_ui_click_text"].required_permission({"text": "Delete"}) == PermissionLevel.SYSTEM_ACTION
 
 
-def test_remote_like_store_keeps_original_remote_permission_classification():
-    tools = _tool_map(_RemoteLikeStore())
-    assert tools["device_spotify_play"].required_permission({"query": "naat"}) == PermissionLevel.SYSTEM_ACTION
-    assert tools["device_media_control"].required_permission({"command": "pause", "app": "spotify"}) == PermissionLevel.SYSTEM_ACTION
+def test_cloud_routine_media_actions_are_safe_but_remote_enforcement_stays_strict():
+    store = _RemoteLikeStore()
+    tools = _tool_map(store)
+
+    # Cloud/Web/Android should not prompt for bounded routine media actions.
+    assert tools["device_spotify_play"].required_permission({"query": "naat"}) == PermissionLevel.SAFE_ACTION
+    assert tools["device_media_control"].required_permission({"command": "pause", "app": "spotify"}) == PermissionLevel.SAFE_ACTION
+    assert tools["device_whatsapp_open_chat"].required_permission({"contact": "Alice"}) == PermissionLevel.SAFE_ACTION
+
+    # Risky generic UI remains approval-gated.
+    assert tools["device_ui_click_text"].required_permission({"text": "Delete"}) == PermissionLevel.SYSTEM_ACTION
+    assert tools["device_ui_type_text"].required_permission({"target": "Message", "text": "send this"}) == PermissionLevel.SYSTEM_ACTION
+
+    # The queue still carries the original Remote permission level. Lowering
+    # the prompt classification must not weaken the device authorization layer.
+    with remote_command_context({
+        "session_id": "session-test",
+        "device_id": "device-test",
+        "requester_device": "web-test",
+    }):
+        result = tools["device_spotify_play"].handler(query="naat")
+    assert result["remote_session_id"] == "session-test"
+    assert result["permission_level"] == int(PermissionLevel.SYSTEM_ACTION)
 
 
 class _SpotifySequenceController(WindowsUIController):

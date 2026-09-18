@@ -1,7 +1,7 @@
 {
   "product": "IRAS",
   "version": "5.0.0-rc3",
-  "release_name": "Complete Operating Layer - Unified Cloud + Render Health Hotfix",
+  "release_name": "Complete Operating Layer - Unified Cloud Risk-Based Approval",
   "baseline_commit": "c37d8a5",
   "remote_protocol": 1,
   "feature_count": 33,
@@ -110,5 +110,25 @@
     "root_head": true,
     "health_dependency_free": true,
     "detailed_readiness_endpoint": "/ready"
+  },
+  "cloud_risk_based_approval": {
+    "routine_without_prompt": [
+      "spotify_search",
+      "spotify_play",
+      "media_control",
+      "whatsapp_open_chat",
+      "ui_scroll_until_text"
+    ],
+    "risky_still_approval_gated": [
+      "generic_click_type",
+      "file_mutation",
+      "shell_command",
+      "process_power",
+      "external_send_submit",
+      "install",
+      "rollback"
+    ],
+    "remote_device_permission_forwarding": "original action_permission level preserved",
+    "protected_remote_access_policy_unchanged": true
   }
 }
