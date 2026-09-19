@@ -4,6 +4,10 @@ IRAS v5 builds on the frozen v4.4 permissioned Windows/control core and adds a m
 
 **Release status:** `5.0.0-rc3`. The remote protocol remains `1`; v5 does not weaken the v4.4 device bridge, Remote-session, local-policy, emergency-stop, or ToolRegistry boundaries.
 
+## Professional UI/UX & motion system
+
+RC3 now ships one visual language across Web/PWA, the native Windows desktop shell, and Android: a restrained dark command-center aesthetic, clear surface hierarchy, adaptive navigation, polished message/composer states, purposeful micro-interactions, and accessibility-aware motion. The web client honors `prefers-reduced-motion`; Android handles modern system-bar insets and accessibility labels; the desktop shell adds structured chat, custom approvals, and native motion feedback without adding a GUI framework dependency. See `docs/UI_UX_PROFESSIONAL_RC3.md`.
+
 ## v5.0 RC3 complete operating layer
 
 - **Complete control surface:** all 33 feature families are reachable through model-facing tools, API/UI status surfaces, or dedicated lifecycle commands; RC3 exposes 100+ v5 tools through the normal permissioned ToolRegistry.

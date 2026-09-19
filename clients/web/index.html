@@ -3,54 +3,171 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#11131a">
-  <title>IRAS</title>
+  <meta name="theme-color" content="#090b12">
+  <meta name="color-scheme" content="dark">
+  <title>IRAS · Intelligence Workspace</title>
   <link rel="manifest" href="/app/manifest.webmanifest">
   <style>
-    :root{font-family:Inter,Segoe UI,system-ui,sans-serif;color-scheme:dark}
+    :root{
+      color-scheme:dark;
+      font-family:"Segoe UI Variable","Segoe UI",Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
+      --bg:#070910;--bg-2:#0b0f18;--surface:rgba(15,20,31,.84);--surface-strong:#111725;
+      --surface-soft:rgba(22,29,44,.68);--line:rgba(148,163,184,.14);--line-strong:rgba(148,163,184,.24);
+      --text:#f7f9ff;--muted:#8e9ab1;--muted-2:#66728a;--primary:#8b9cff;--primary-2:#66e3ff;
+      --primary-soft:rgba(124,143,255,.14);--success:#5ee7a3;--warn:#ffd166;--danger:#ff718b;
+      --shadow:0 28px 80px rgba(0,0,0,.38);--shadow-soft:0 14px 36px rgba(0,0,0,.26);
+      --r-xl:28px;--r-lg:20px;--r-md:14px;--ease:cubic-bezier(.2,.8,.2,1);
+    }
     *{box-sizing:border-box}
-    body{margin:0;background:#0b0d12;color:#f5f7ff;min-height:100vh}
-    .app{max-width:900px;margin:auto;min-height:100vh;display:flex;flex-direction:column;padding:16px}
-    header{display:flex;align-items:center;justify-content:space-between;padding:6px 2px 14px}
-    h1{margin:0;font-size:22px}.sub{opacity:.6;font-size:12px}
-    #chat{flex:1;overflow:auto;display:flex;flex-direction:column;gap:10px;padding:10px 0 18px}
-    .m{max-width:84%;padding:11px 13px;border-radius:16px;line-height:1.42;white-space:pre-wrap}
-    .you{align-self:flex-end;background:#252a38}.iras{align-self:flex-start;background:#161a24;border:1px solid #292f40}
-    .bar{position:sticky;bottom:0;background:#0b0d12;padding-top:8px;display:flex;gap:8px}
-    input,textarea,button{border:1px solid #313749;background:#121621;color:#fff;border-radius:12px;padding:12px}
-    textarea{width:100%;min-height:110px;resize:vertical;font:13px ui-monospace,SFMono-Regular,Consolas,monospace}
-    pre{white-space:pre-wrap;word-break:break-word;background:#0a0c11;border:1px solid #292f40;border-radius:10px;padding:10px;max-height:40vh;overflow:auto}
-    #msg{flex:1;font-size:16px}button{cursor:pointer}
-    .primary{background:#eef2ff;color:#0b0d12;font-weight:700}
-    .active{border-color:#8fa5ff;background:#1e263e}
-    dialog{background:#11151f;color:#fff;border:1px solid #353c50;border-radius:14px;max-width:520px;width:calc(100% - 24px)}
-    dialog input{width:100%;margin:5px 0 12px}.row{display:flex;gap:8px;justify-content:flex-end}
-    .status{font-size:12px;opacity:.65;margin-top:8px}
-    .provider-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin:12px 0}
-    .provider-card{border:1px solid #313749;background:#0d1119;border-radius:12px;padding:11px}
-    .provider-head{display:flex;justify-content:space-between;gap:8px;font-weight:700}
-    .provider-state{font-size:11px;text-transform:uppercase;opacity:.8}
-    .provider-meta{font-size:12px;opacity:.72;line-height:1.45;margin-top:7px;word-break:break-word}
-    .cursor::after{content:"";display:inline-block;width:6px;height:1em;margin-left:3px;vertical-align:-2px;background:#fff;opacity:.65;animation:blink .8s steps(1) infinite}
+    html{background:var(--bg);scrollbar-color:#283249 transparent}
+    body{margin:0;min-height:100vh;color:var(--text);background:
+      radial-gradient(circle at 13% 8%,rgba(88,110,255,.13),transparent 28rem),
+      radial-gradient(circle at 88% 20%,rgba(53,207,255,.08),transparent 26rem),
+      linear-gradient(145deg,#070910 0%,#090c14 48%,#080a10 100%);overflow-x:hidden}
+    body::before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.24;background-image:linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);background-size:42px 42px;mask-image:linear-gradient(to bottom,black,transparent 82%)}
+    button,input,textarea{font:inherit}
+    button{cursor:pointer}
+    :focus-visible{outline:2px solid var(--primary-2);outline-offset:3px}
+
+    .ambient{position:fixed;border-radius:999px;filter:blur(90px);pointer-events:none;opacity:.18;z-index:-1;animation:ambientFloat 18s var(--ease) infinite alternate}
+    .ambient.a{width:360px;height:360px;left:-130px;top:12vh;background:#586cff}
+    .ambient.b{width:280px;height:280px;right:-90px;bottom:10vh;background:#00c8ff;animation-delay:-7s}
+    @keyframes ambientFloat{to{transform:translate3d(28px,-22px,0) scale(1.08)}}
+
+    .app-shell{width:min(1540px,100%);min-height:100vh;margin:auto;padding:18px;display:grid;grid-template-columns:248px minmax(0,1fr);gap:16px}
+    .sidebar,.workspace{border:1px solid var(--line);background:linear-gradient(180deg,rgba(15,20,31,.88),rgba(10,14,23,.78));box-shadow:var(--shadow-soft);backdrop-filter:blur(24px) saturate(120%);-webkit-backdrop-filter:blur(24px) saturate(120%)}
+    .sidebar{border-radius:var(--r-xl);padding:18px;display:flex;flex-direction:column;min-height:calc(100vh - 36px);position:sticky;top:18px;align-self:start;animation:panelIn .45s var(--ease) both}
+    .workspace{border-radius:var(--r-xl);min-height:calc(100vh - 36px);display:flex;flex-direction:column;overflow:hidden;animation:panelIn .5s .05s var(--ease) both}
+    @keyframes panelIn{from{opacity:0;transform:translateY(12px) scale(.992)}to{opacity:1;transform:none}}
+
+    .brand{display:flex;align-items:center;gap:12px;padding:4px 4px 18px}
+    .brand-orb{width:40px;height:40px;border-radius:14px;position:relative;display:grid;place-items:center;background:linear-gradient(145deg,#1a2240,#0e1425);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08),0 8px 28px rgba(85,106,255,.24)}
+    .brand-orb::before{content:"";position:absolute;inset:7px;border-radius:50%;background:conic-gradient(from 90deg,var(--primary),var(--primary-2),#aa7cff,var(--primary));animation:orbSpin 10s linear infinite}
+    .brand-orb::after{content:"";position:absolute;inset:11px;border-radius:50%;background:#0a0e18;box-shadow:0 0 18px rgba(103,219,255,.45)}
+    @keyframes orbSpin{to{transform:rotate(360deg)}}
+    .brand-copy strong{display:block;font-size:18px;letter-spacing:.08em}.brand-copy span{display:block;color:var(--muted);font-size:11px;margin-top:2px;letter-spacing:.04em}
+
+    .nav-label{font-size:10px;text-transform:uppercase;letter-spacing:.14em;color:var(--muted-2);padding:10px 10px 8px}
+    .nav{display:grid;gap:6px}
+    .nav button,.server-btn{width:100%;border:0;background:transparent;color:#cbd4e6;border-radius:13px;padding:11px 12px;display:flex;align-items:center;gap:11px;text-align:left;transition:background .18s var(--ease),transform .18s var(--ease),color .18s var(--ease),box-shadow .18s var(--ease)}
+    .nav button:hover,.server-btn:hover{background:rgba(130,148,255,.09);color:#fff;transform:translateX(2px)}
+    .nav button:active,.server-btn:active{transform:translateX(1px) scale(.985)}
+    .nav button.active{background:linear-gradient(135deg,rgba(126,144,255,.18),rgba(80,208,255,.08));color:#fff;box-shadow:inset 0 0 0 1px rgba(139,156,255,.20)}
+    .nav-icon{width:28px;height:28px;display:grid;place-items:center;border-radius:9px;background:rgba(255,255,255,.04);color:#b6c1da;font-size:14px;border:1px solid rgba(255,255,255,.04)}
+    .sidebar-spacer{flex:1}
+    .system-card{margin-top:18px;padding:13px;border:1px solid var(--line);background:rgba(6,9,16,.34);border-radius:16px}
+    .system-row{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted)}
+    .health{display:flex;align-items:center;gap:7px;color:#cbe9dc}.health-dot{width:8px;height:8px;border-radius:50%;background:var(--success);box-shadow:0 0 12px rgba(94,231,163,.7);animation:pulse 2s ease-in-out infinite}
+    @keyframes pulse{50%{opacity:.5;box-shadow:0 0 2px rgba(94,231,163,.2)}}
+    .server-btn{margin-top:8px;background:rgba(255,255,255,.03);border:1px solid var(--line)}
+
+    .topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:24px 28px 18px;border-bottom:1px solid var(--line)}
+    .eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#8290aa;margin-bottom:5px}.topbar h1{font-size:24px;line-height:1.2;margin:0;font-weight:650;letter-spacing:-.025em}.topbar p{margin:6px 0 0;color:var(--muted);font-size:13px}
+    .top-status{display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:999px;background:rgba(94,231,163,.07);border:1px solid rgba(94,231,163,.16);color:#bfe8d2;font-size:12px;white-space:nowrap}
+
+    .chat-stage{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
+    .welcome{padding:48px 32px 24px;max-width:860px;margin:auto auto 0;text-align:center;animation:heroIn .6s .12s var(--ease) both}
+    .welcome[hidden]{display:none}
+    @keyframes heroIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+    .welcome-mark{width:68px;height:68px;margin:0 auto 18px;border-radius:24px;background:linear-gradient(145deg,rgba(139,156,255,.20),rgba(102,227,255,.09));border:1px solid rgba(139,156,255,.22);display:grid;place-items:center;font-weight:700;font-size:22px;box-shadow:0 18px 48px rgba(76,95,224,.18)}
+    .welcome h2{margin:0;font-size:32px;font-weight:620;letter-spacing:-.045em}.welcome p{margin:12px auto 22px;color:var(--muted);font-size:14px;max-width:620px;line-height:1.65}
+    .prompt-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;max-width:760px;margin:auto}
+    .prompt-chip{border:1px solid var(--line);background:rgba(255,255,255,.028);color:#cfd7e8;padding:12px 13px;border-radius:14px;text-align:left;font-size:12px;line-height:1.35;transition:.18s var(--ease)}
+    .prompt-chip:hover{border-color:rgba(139,156,255,.28);background:rgba(139,156,255,.075);transform:translateY(-2px);color:#fff}
+
+    #chat{flex:1;overflow:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:14px;padding:28px clamp(18px,4vw,56px) 22px;scroll-behavior:smooth}
+    .m{position:relative;max-width:min(760px,86%);padding:18px 18px 26px;border-radius:20px;line-height:1.58;white-space:pre-wrap;word-break:break-word;font-size:14.5px;border:1px solid transparent;box-shadow:0 10px 30px rgba(0,0,0,.12);animation:messageIn .26s var(--ease) both;transform-origin:bottom}
+    @keyframes messageIn{from{opacity:0;transform:translateY(9px) scale(.985)}to{opacity:1;transform:none}}
+    .m::before{position:absolute;top:-18px;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted-2);font-weight:700}
+    .m::after{content:attr(data-time);position:absolute;bottom:8px;font-size:9px;color:var(--muted-2)}
+    .you{align-self:flex-end;background:linear-gradient(135deg,rgba(99,117,238,.22),rgba(77,90,189,.18));border-color:rgba(139,156,255,.18);border-bottom-right-radius:7px}.you::before{content:"You";right:5px}.you::after{right:14px}
+    .iras{align-self:flex-start;background:linear-gradient(145deg,rgba(18,24,37,.96),rgba(13,18,29,.95));border-color:var(--line);border-bottom-left-radius:7px}.iras::before{content:"IRAS";left:5px;color:#9eb0ff}.iras::after{left:14px}
+    .cursor::after{content:"";display:inline-block;position:static;width:6px;height:1em;margin-left:4px;vertical-align:-2px;background:var(--primary-2);opacity:.85;animation:blink .8s steps(1) infinite}
     @keyframes blink{50%{opacity:0}}
+
+    .composer-wrap{padding:12px 20px 18px;background:linear-gradient(180deg,rgba(8,11,18,0),rgba(8,11,18,.94) 22%);position:relative}
+    .bar{max-width:960px;margin:auto;display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--line-strong);background:rgba(16,22,34,.92);border-radius:20px;box-shadow:0 16px 46px rgba(0,0,0,.28),inset 0 1px rgba(255,255,255,.025);backdrop-filter:blur(20px)}
+    #msg{flex:1;min-width:0;border:0;background:transparent;color:var(--text);padding:12px 10px;font-size:15px;outline:none}#msg::placeholder{color:#66728a}
+    .icon-btn,.primary{height:42px;border-radius:13px;border:1px solid var(--line);transition:transform .16s var(--ease),background .16s var(--ease),box-shadow .16s var(--ease),border-color .16s var(--ease)}
+    .icon-btn{background:rgba(255,255,255,.035);color:#cdd6e8;padding:0 13px}.icon-btn:hover{background:rgba(139,156,255,.10);border-color:rgba(139,156,255,.24)}
+    .primary{background:linear-gradient(135deg,#a7b3ff,#6fe0ff);color:#08101c;border:0;font-weight:750;padding:0 18px;box-shadow:0 8px 28px rgba(104,155,255,.22)}.primary:hover{box-shadow:0 10px 34px rgba(104,155,255,.34);transform:translateY(-1px)}.primary:active,.icon-btn:active{transform:scale(.97)}
+    .status{max-width:960px;margin:8px auto 0;color:var(--muted-2);font-size:11px;min-height:16px;padding:0 6px;transition:color .2s var(--ease),opacity .2s var(--ease)}
+    .status.busy{color:#b9c7ff}.status.error{color:#ff9aad}.status.ok{color:#8ddfba}
+
+    input,textarea{border:1px solid var(--line-strong);background:#0d1320;color:#f7f9ff;border-radius:12px;padding:11px 12px;transition:border-color .18s var(--ease),box-shadow .18s var(--ease)}
+    input:focus,textarea:focus{border-color:rgba(139,156,255,.45);box-shadow:0 0 0 3px rgba(139,156,255,.08);outline:0}
+    textarea{width:100%;min-height:110px;resize:vertical;font:13px ui-monospace,SFMono-Regular,Consolas,monospace}
+    pre{white-space:pre-wrap;word-break:break-word;background:#080c14;border:1px solid var(--line);border-radius:14px;padding:13px;max-height:42vh;overflow:auto;color:#bdc7da}
+
+    dialog{background:linear-gradient(180deg,#111725,#0d121e);color:#fff;border:1px solid var(--line-strong);border-radius:22px;max-width:560px;width:calc(100% - 28px);padding:20px;box-shadow:var(--shadow);opacity:0;transform:translateY(12px) scale(.98)}
+    dialog[open]{animation:dialogIn .2s var(--ease) forwards}dialog::backdrop{background:rgba(3,6,12,.72);backdrop-filter:blur(8px);animation:backdropIn .18s ease-out both}
+    @keyframes dialogIn{to{opacity:1;transform:none}}@keyframes backdropIn{from{opacity:0}to{opacity:1}}
+    dialog h3{margin:0 0 14px;font-size:19px;font-weight:650;letter-spacing:-.02em}dialog label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-top:10px}dialog input{width:100%;margin:6px 0 10px}.row{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}.row button,dialog button{border:1px solid var(--line-strong);background:#151c2b;color:#eef2ff;border-radius:11px;padding:10px 12px;transition:.16s var(--ease)}.row button:hover,dialog button:hover{background:#1a2335;transform:translateY(-1px)}
+    .provider-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin:12px 0}.provider-card{border:1px solid var(--line);background:linear-gradient(145deg,rgba(16,22,35,.92),rgba(10,15,24,.92));border-radius:16px;padding:13px;transition:.18s var(--ease)}.provider-card:hover{border-color:rgba(139,156,255,.24);transform:translateY(-2px)}.provider-head{display:flex;justify-content:space-between;gap:8px;font-weight:700}.provider-state{font-size:10px;text-transform:uppercase;opacity:.8}.provider-meta{font-size:12px;color:var(--muted);line-height:1.5;margin-top:7px;word-break:break-word}.sub{color:var(--muted);font-size:12px;line-height:1.5}
+
+    @media(max-width:980px){
+      .app-shell{display:block;padding:0}.sidebar{position:sticky;top:0;z-index:20;min-height:auto;border-radius:0;border-width:0 0 1px;padding:9px 12px;display:block;background:rgba(8,12,20,.88)}
+      .brand{display:none}.nav-label,.system-card,.sidebar-spacer{display:none}.nav{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}.nav::-webkit-scrollbar{display:none}.nav button,.server-btn{width:auto;flex:0 0 auto;padding:9px 11px;font-size:12px}.nav-icon{width:24px;height:24px}
+      .workspace{min-height:calc(100vh - 62px);border:0;border-radius:0;box-shadow:none;background:transparent}.topbar{padding:20px 18px 14px}.topbar h1{font-size:20px}.topbar p{display:none}.top-status{font-size:10px;padding:7px 9px}
+      .welcome{padding:38px 20px 20px}.welcome h2{font-size:27px}.prompt-grid{grid-template-columns:1fr}.prompt-chip:nth-child(n+3){display:none}#chat{padding:24px 16px 18px}.m{max-width:92%}.composer-wrap{padding:9px 10px 12px}.bar{border-radius:17px}.icon-btn{padding:0 10px}
+    }
+    @media(max-width:600px){.topbar .eyebrow{display:none}.topbar{padding-top:14px}.top-status{max-width:140px;overflow:hidden;text-overflow:ellipsis}.welcome-mark{width:58px;height:58px;border-radius:20px}.welcome h2{font-size:24px}.m{font-size:14px;padding:15px 15px 24px}.icon-btn{font-size:0;width:42px;padding:0}#handsfree::before{content:"◉";font-size:15px}#mic::before{content:"⌁";font-size:16px}.primary{padding:0 15px}}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.001ms!important}.ambient{display:none}}
   </style>
 </head>
 <body>
-<div class="app">
-  <header>
-    <div><h1>IRAS</h1><div class="sub">Online assistant · continuous voice</div></div>
-    <div style="display:flex;gap:8px"><button id="screen">Screen</button><button id="direct">Direct</button><button id="tasks">Tasks</button><button id="providers">Providers</button><button id="v5control">Autonomy</button><button id="remote">Remote</button><button id="settings">Server</button></div>
-  </header>
+<div class="ambient a"></div><div class="ambient b"></div>
+<div class="app-shell">
+  <aside class="sidebar" aria-label="IRAS navigation">
+    <div class="brand"><div class="brand-orb" aria-hidden="true"></div><div class="brand-copy"><strong>IRAS</strong><span>INTELLIGENCE WORKSPACE</span></div></div>
+    <div class="nav-label">Workspace</div>
+    <nav class="nav">
+      <button class="active" type="button"><span class="nav-icon">✦</span><span>Chat</span></button>
+      <button id="screen" type="button"><span class="nav-icon">▣</span><span>Screen</span></button>
+      <button id="direct" type="button"><span class="nav-icon">⌁</span><span>Direct</span></button>
+      <button id="tasks" type="button"><span class="nav-icon">↗</span><span>Tasks</span></button>
+      <button id="providers" type="button"><span class="nav-icon">◫</span><span>Providers</span></button>
+      <button id="v5control" type="button"><span class="nav-icon">◎</span><span>Autonomy</span></button>
+      <button id="remote" type="button"><span class="nav-icon">◈</span><span>Remote</span></button>
+      <button id="settings" type="button"><span class="nav-icon">⚙</span><span>Settings</span></button>
+    </nav>
+    <div class="sidebar-spacer"></div>
+    <div class="system-card">
+      <div class="system-row"><span>Cloud workspace</span><span class="health"><i class="health-dot"></i>Online</span></div>
+      <div class="system-row" style="margin-top:8px"><span>Motion</span><span>Adaptive</span></div>
+    </div>
+  </aside>
 
-  <main id="chat"></main>
+  <section class="workspace">
+    <header class="topbar">
+      <div><div class="eyebrow">Unified intelligence</div><h1>Command Center</h1><p>One workspace for cloud, devices, voice, autonomy, and execution.</p></div>
+      <div class="top-status"><i class="health-dot"></i><span>IRAS online</span></div>
+    </header>
 
-  <div class="bar">
-    <button id="handsfree" title="Wake word: IRAS">Hands-free</button>
-    <button id="mic" title="One-shot speech input">Mic</button>
-    <input id="msg" placeholder="Talk to IRAS..." autocomplete="off">
-    <button class="primary" id="send">Send</button>
-  </div>
-  <div class="status" id="status">Ready</div>
+    <main class="chat-stage">
+      <section class="welcome" id="welcome">
+        <div class="welcome-mark">I</div>
+        <h2>What are we building today?</h2>
+        <p>Ask IRAS to reason, research, orchestrate tasks, control your authorized PC, or continue work from any connected device.</p>
+        <div class="prompt-grid">
+          <button class="prompt-chip" data-prompt="Give me a concise status of my IRAS system and anything that needs attention.">System status and priorities</button>
+          <button class="prompt-chip" data-prompt="Review my active projects and suggest the highest-value next task.">Review active projects</button>
+          <button class="prompt-chip" data-prompt="Show me what connected devices and cloud clients are currently available.">Connected devices</button>
+        </div>
+      </section>
+      <div id="chat" aria-live="polite" aria-label="Conversation"></div>
+    </main>
+
+    <footer class="composer-wrap">
+      <div class="bar">
+        <button class="icon-btn" id="handsfree" type="button" title="Wake word: IRAS">Hands-free</button>
+        <button class="icon-btn" id="mic" type="button" title="One-shot speech input" aria-label="Use microphone">Mic</button>
+        <input id="msg" placeholder="Message IRAS…" autocomplete="off" aria-label="Message IRAS">
+        <button class="primary" id="send" type="button">Send</button>
+      </div>
+      <div class="status" id="status" role="status">Ready</div>
+    </footer>
+  </section>
 </div>
 
 <dialog id="cfg">
@@ -126,7 +243,7 @@ Summarize the current project state"></textarea>
 
 <script>
 const $=s=>document.querySelector(s);
-const chat=$("#chat"),msg=$("#msg"),status=$("#status");
+const chat=$("#chat"),msg=$("#msg"),status=$("#status"),welcome=$("#welcome");
 const cfg=$("#cfg"),server=$("#server"),token=$("#token"),wake=$("#wake");
 const handsButton=$("#handsfree");
 const remoteButton=$("#remote"),screenButton=$("#screen"),directButton=$("#direct"),tasksButton=$("#tasks"),providersButton=$("#providers"),v5Button=$("#v5control");
@@ -156,7 +273,9 @@ handsFree=!!local.handsFree;
 function add(who,text){
   const d=document.createElement("div");
   d.className="m "+(who==="You"?"you":"iras");
+  d.dataset.time=new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
   d.textContent=text;
+  if(welcome)welcome.hidden=true;
   chat.appendChild(d);
   chat.scrollTop=chat.scrollHeight;
   return d;
@@ -226,6 +345,7 @@ async function syncCloudMessages(){
   if(active&&active!==cloudThreadId()){
     setCloudThreadId(active);
     chat.innerHTML="";
+    if(welcome)welcome.hidden=false;
     cloudRenderedMessageIds.clear();
   }
   for(const item of (data.messages||[])){
@@ -1539,6 +1659,24 @@ $("#mic").onclick=async()=>{
 
   r.start();
 };
+
+document.querySelectorAll(".prompt-chip").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    const prompt=btn.dataset.prompt||"";
+    if(!prompt)return;
+    msg.value=prompt;
+    msg.focus();
+  });
+});
+
+const statusObserver=new MutationObserver(()=>{
+  const value=(status.textContent||"").toLowerCase();
+  status.classList.remove("busy","error","ok");
+  if(/error|failed|unavailable|blocked|required/.test(value))status.classList.add("error");
+  else if(/thinking|working|starting|connecting|listening|processing|capturing|waiting/.test(value))status.classList.add("busy");
+  else if(/ready|synced|completed|updated|active/.test(value))status.classList.add("ok");
+});
+statusObserver.observe(status,{childList:true,characterData:true,subtree:true});
 
 updateHandsButton();
 

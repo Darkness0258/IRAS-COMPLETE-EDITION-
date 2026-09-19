@@ -5,12 +5,14 @@ import android.app.*;
 import android.content.*;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.media.MediaPlayer;
 import android.os.*;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.text.InputType;
 import android.view.*;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.*;
 
 import org.json.JSONObject;
@@ -31,6 +33,7 @@ public class MainActivity extends Activity {
     private static final String COMPANION_CHANNEL = "iras_companion";
 
     private LinearLayout chat;
+    private ScrollView chatScroll;
     private EditText input;
     private TextView status;
     private Button handsButton;
@@ -132,6 +135,41 @@ public class MainActivity extends Activity {
             : value;
     }
 
+    private int dp(float value) {
+        return Math.round(
+            value * getResources().getDisplayMetrics().density
+        );
+    }
+
+    private GradientDrawable rounded(
+        int color,
+        float radiusDp,
+        int strokeColor
+    ) {
+        GradientDrawable drawable =
+            new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(dp(radiusDp));
+        if (strokeColor != Color.TRANSPARENT) {
+            drawable.setStroke(dp(1), strokeColor);
+        }
+        return drawable;
+    }
+
+    private GradientDrawable gradient(
+        int start,
+        int end,
+        float radiusDp
+    ) {
+        GradientDrawable drawable =
+            new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{start, end}
+            );
+        drawable.setCornerRadius(dp(radiusDp));
+        return drawable;
+    }
+
     private TextView tv(
         String text,
         int size
@@ -140,54 +178,175 @@ public class MainActivity extends Activity {
             new TextView(this);
 
         v.setText(text);
-        v.setTextColor(Color.WHITE);
+        v.setTextColor(Color.rgb(241, 245, 255));
         v.setTextSize(size);
+        v.setLineSpacing(0f, 1.06f);
         v.setPadding(
-            16,
-            12,
-            16,
-            12
+            dp(14),
+            dp(10),
+            dp(14),
+            dp(10)
         );
 
         return v;
     }
 
+    private void styleButton(
+        Button button,
+        boolean primary
+    ) {
+        button.setAllCaps(false);
+        button.setTextSize(13);
+        button.setMinHeight(0);
+        button.setMinWidth(0);
+        button.setPadding(
+            dp(14),
+            dp(10),
+            dp(14),
+            dp(10)
+        );
+        button.setTextColor(
+            primary
+                ? Color.rgb(7, 14, 26)
+                : Color.rgb(218, 225, 240)
+        );
+        button.setBackground(
+            primary
+                ? gradient(
+                    Color.rgb(166, 180, 255),
+                    Color.rgb(102, 224, 255),
+                    14
+                )
+                : rounded(
+                    Color.rgb(18, 25, 39),
+                    14,
+                    Color.rgb(45, 56, 78)
+                )
+        );
+        if (Build.VERSION.SDK_INT >= 21) {
+            button.setElevation(dp(primary ? 5 : 1));
+            button.setStateListAnimator(null);
+        }
+        button.setOnTouchListener(
+            (v, event) -> {
+                if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                    v.animate()
+                        .scaleX(0.97f)
+                        .scaleY(0.97f)
+                        .setDuration(90)
+                        .start();
+                } else if (
+                    event.getAction() == MotionEvent.ACTION_UP
+                    || event.getAction() == MotionEvent.ACTION_CANCEL
+                ) {
+                    v.animate()
+                        .scaleX(1f)
+                        .scaleY(1f)
+                        .setDuration(150)
+                        .setInterpolator(new DecelerateInterpolator())
+                        .start();
+                }
+                return false;
+            }
+        );
+    }
+
+    private void animateIn(
+        View view,
+        long delay
+    ) {
+        view.setAlpha(0f);
+        view.setTranslationY(dp(8));
+        view.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setStartDelay(delay)
+            .setDuration(240)
+            .setInterpolator(new DecelerateInterpolator())
+            .start();
+    }
+
     private void buildUi() {
+        getWindow().setStatusBarColor(Color.rgb(7, 10, 17));
+        getWindow().setNavigationBarColor(Color.rgb(7, 10, 17));
+
         LinearLayout root =
             new LinearLayout(this);
 
-        root.setOrientation(
-            LinearLayout.VERTICAL
-        );
+        root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(
-            12,
-            12,
-            12,
-            12
+            dp(14),
+            dp(10),
+            dp(14),
+            dp(10)
         );
-        root.setBackgroundColor(
-            Color.rgb(
-                11,
-                13,
-                18
+        root.setBackground(
+            gradient(
+                Color.rgb(7, 10, 17),
+                Color.rgb(10, 14, 24),
+                0
             )
+        );
+        root.setOnApplyWindowInsetsListener(
+            (view, insets) -> {
+                view.setPadding(
+                    dp(14) + insets.getSystemWindowInsetLeft(),
+                    dp(10) + insets.getSystemWindowInsetTop(),
+                    dp(14) + insets.getSystemWindowInsetRight(),
+                    dp(10) + insets.getSystemWindowInsetBottom()
+                );
+                return insets;
+            }
         );
 
         LinearLayout top =
             new LinearLayout(this);
-
-        top.setGravity(
-            Gravity.CENTER_VERTICAL
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        top.setPadding(
+            dp(4),
+            dp(5),
+            dp(4),
+            dp(12)
         );
 
-        TextView title =
-            tv(
-                "IRAS",
-                22
+        TextView orb =
+            tv("●", 22);
+        orb.setGravity(Gravity.CENTER);
+        orb.setTextColor(Color.rgb(111, 224, 255));
+        orb.setBackground(
+            rounded(
+                Color.rgb(20, 28, 46),
+                15,
+                Color.rgb(48, 62, 94)
+            )
+        );
+        LinearLayout.LayoutParams orbParams =
+            new LinearLayout.LayoutParams(
+                dp(44),
+                dp(44)
             );
+        orbParams.setMargins(0, 0, dp(10), 0);
+        top.addView(orb, orbParams);
 
+        LinearLayout titleStack =
+            new LinearLayout(this);
+        titleStack.setOrientation(LinearLayout.VERTICAL);
+
+        TextView title =
+            tv("IRAS", 21);
+        title.setPadding(0, 0, 0, 0);
+        title.setLetterSpacing(0.08f);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+
+        TextView subtitle =
+            tv("Unified intelligence workspace", 11);
+        subtitle.setPadding(0, dp(2), 0, 0);
+        subtitle.setTextColor(Color.rgb(130, 143, 169));
+
+        titleStack.addView(title);
+        titleStack.addView(subtitle);
         top.addView(
-            title,
+            titleStack,
             new LinearLayout.LayoutParams(
                 0,
                 -2,
@@ -197,29 +356,65 @@ public class MainActivity extends Activity {
 
         Button settings =
             new Button(this);
-
-        settings.setText("Server");
+        settings.setText("Settings");
+        settings.setContentDescription("Open IRAS connection settings");
+        styleButton(settings, false);
         settings.setOnClickListener(
             v -> showSettings()
         );
-
         top.addView(settings);
         root.addView(top);
 
-        ScrollView scroll =
+        LinearLayout stateRow =
+            new LinearLayout(this);
+        stateRow.setGravity(Gravity.CENTER_VERTICAL);
+        stateRow.setPadding(
+            dp(12),
+            dp(8),
+            dp(12),
+            dp(8)
+        );
+        stateRow.setBackground(
+            rounded(
+                Color.rgb(13, 20, 32),
+                14,
+                Color.rgb(34, 46, 66)
+            )
+        );
+        TextView online =
+            tv("●  CLOUD ONLINE", 10);
+        online.setPadding(0, 0, 0, 0);
+        online.setTextColor(Color.rgb(115, 226, 170));
+        stateRow.addView(online);
+        TextView sync =
+            tv("PC · WEB · MOBILE", 10);
+        sync.setGravity(Gravity.END);
+        sync.setPadding(0, 0, 0, 0);
+        sync.setTextColor(Color.rgb(112, 126, 153));
+        stateRow.addView(
+            sync,
+            new LinearLayout.LayoutParams(
+                0,
+                -2,
+                1
+            )
+        );
+        root.addView(stateRow);
+
+        chatScroll =
             new ScrollView(this);
+        chatScroll.setFillViewport(true);
+        chatScroll.setClipToPadding(false);
+        chatScroll.setPadding(0, dp(8), 0, dp(8));
 
         chat =
             new LinearLayout(this);
-
-        chat.setOrientation(
-            LinearLayout.VERTICAL
-        );
-
-        scroll.addView(chat);
+        chat.setOrientation(LinearLayout.VERTICAL);
+        chat.setPadding(0, dp(6), 0, dp(8));
+        chatScroll.addView(chat);
 
         root.addView(
-            scroll,
+            chatScroll,
             new LinearLayout.LayoutParams(
                 -1,
                 0,
@@ -227,39 +422,64 @@ public class MainActivity extends Activity {
             )
         );
 
-        LinearLayout row =
+        LinearLayout composer =
             new LinearLayout(this);
+        composer.setGravity(Gravity.CENTER_VERTICAL);
+        composer.setPadding(
+            dp(7),
+            dp(7),
+            dp(7),
+            dp(7)
+        );
+        composer.setBackground(
+            rounded(
+                Color.rgb(15, 21, 34),
+                19,
+                Color.rgb(48, 59, 82)
+            )
+        );
 
         handsButton =
             new Button(this);
-
+        handsButton.setContentDescription("Toggle hands-free voice mode");
+        styleButton(handsButton, false);
         handsButton.setOnClickListener(
             v -> toggleHandsFree()
         );
-        row.addView(handsButton);
+        LinearLayout.LayoutParams smallButton =
+            new LinearLayout.LayoutParams(
+                -2,
+                -2
+            );
+        smallButton.setMargins(0, 0, dp(6), 0);
+        composer.addView(handsButton, smallButton);
 
         Button mic =
             new Button(this);
-
         mic.setText("Mic");
+        mic.setContentDescription("Start one-shot voice input");
+        styleButton(mic, false);
         mic.setOnClickListener(
             v -> listenOnce()
         );
-        row.addView(mic);
+        LinearLayout.LayoutParams micParams =
+            new LinearLayout.LayoutParams(
+                -2,
+                -2
+            );
+        micParams.setMargins(0, 0, dp(7), 0);
+        composer.addView(mic, micParams);
 
         input =
             new EditText(this);
-
-        input.setTextColor(
-            Color.WHITE
-        );
-        input.setHintTextColor(
-            Color.GRAY
-        );
-        input.setHint(
-            "Talk to IRAS..."
-        );
+        input.setTextColor(Color.rgb(244, 247, 255));
+        input.setHintTextColor(Color.rgb(103, 116, 141));
+        input.setHint("Message IRAS…");
+        input.setContentDescription("Message IRAS");
+        input.setTextSize(15);
         input.setSingleLine(true);
+        input.setPadding(dp(12), dp(10), dp(12), dp(10));
+        input.setBackgroundColor(Color.TRANSPARENT);
         input.setOnEditorActionListener(
             (v, actionId, event) -> {
                 send();
@@ -267,84 +487,118 @@ public class MainActivity extends Activity {
             }
         );
 
-        row.addView(
-            input,
+        LinearLayout.LayoutParams inputParams =
             new LinearLayout.LayoutParams(
                 0,
                 -2,
                 1
-            )
-        );
+            );
+        inputParams.setMargins(0, 0, dp(7), 0);
+        composer.addView(input, inputParams);
 
         Button send =
             new Button(this);
-
         send.setText("Send");
+        send.setContentDescription("Send message to IRAS");
+        styleButton(send, true);
         send.setOnClickListener(
             v -> send()
         );
-        row.addView(send);
+        composer.addView(send);
 
-        root.addView(row);
+        root.addView(composer);
 
         status =
             tv(
                 "Ready · continuous voice",
-                12
+                11
             );
-
-        status.setTextColor(
-            Color.GRAY
-        );
-
+        status.setTextColor(Color.rgb(105, 119, 145));
+        status.setPadding(dp(7), dp(7), dp(7), dp(2));
         root.addView(status);
 
         setContentView(root);
+        animateIn(top, 0);
+        animateIn(stateRow, 70);
+        animateIn(composer, 130);
     }
 
     private TextView addMessageView(
         String who,
         String text
     ) {
-        TextView v =
-            tv(
-                who + ": " + text,
-                16
-            );
+        boolean mine = who.equals("You");
 
-        v.setBackgroundColor(
-            who.equals("You")
-                ? Color.rgb(
-                    37,
-                    42,
-                    56
-                )
-                : Color.rgb(
-                    22,
-                    26,
-                    36
-                )
+        LinearLayout group =
+            new LinearLayout(this);
+        group.setOrientation(LinearLayout.VERTICAL);
+        group.setGravity(
+            mine
+                ? Gravity.END
+                : Gravity.START
         );
 
-        LinearLayout.LayoutParams p =
+        TextView meta =
+            tv(
+                mine ? "YOU" : "IRAS",
+                9
+            );
+        meta.setPadding(dp(7), 0, dp(7), dp(4));
+        meta.setTextColor(
+            mine
+                ? Color.rgb(143, 157, 196)
+                : Color.rgb(151, 173, 255)
+        );
+        meta.setLetterSpacing(0.10f);
+        group.addView(meta);
+
+        TextView bubble =
+            tv(text, 15);
+        bubble.setMaxWidth(dp(340));
+        bubble.setTextIsSelectable(true);
+        bubble.setBackground(
+            mine
+                ? gradient(
+                    Color.rgb(39, 48, 82),
+                    Color.rgb(29, 38, 65),
+                    18
+                )
+                : rounded(
+                    Color.rgb(17, 24, 37),
+                    18,
+                    Color.rgb(42, 53, 75)
+                )
+        );
+        bubble.setPadding(
+            dp(15),
+            dp(12),
+            dp(15),
+            dp(12)
+        );
+        group.addView(bubble);
+
+        LinearLayout.LayoutParams params =
             new LinearLayout.LayoutParams(
                 -1,
                 -2
             );
-
-        p.setMargins(
+        params.setMargins(
             0,
-            6,
+            dp(8),
             0,
-            6
+            dp(8)
         );
 
-        chat.addView(
-            v,
-            p
+        chat.addView(group, params);
+        animateIn(group, 0);
+        chatScroll.post(
+            () -> chatScroll.smoothScrollTo(
+                0,
+                chat.getBottom()
+            )
         );
 
-        return v;
+        return bubble;
     }
 
     private void appendStream(

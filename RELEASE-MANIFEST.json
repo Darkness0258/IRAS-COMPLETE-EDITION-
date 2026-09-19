@@ -1,7 +1,7 @@
 {
   "product": "IRAS",
   "version": "5.0.0-rc3",
-  "release_name": "Complete Operating Layer - Unified Cloud Risk-Based Approval",
+  "release_name": "Complete Operating Layer - Professional UI/UX + Unified Cloud",
   "baseline_commit": "c37d8a5",
   "remote_protocol": 1,
   "feature_count": 33,
@@ -9,7 +9,7 @@
   "build_mode": "build-first-local",
   "cloud_model_acceptance_used": false,
   "local_regression": {
-    "passed": 831,
+    "passed": 835,
     "failed": 0,
     "android_companion_compile": "static-contract-validated; Android SDK/Gradle build is host-side"
   },
@@ -81,7 +81,8 @@
     "cross_device_message_sync": "Web and Android poll the active cloud workspace and merge only unseen persisted message IDs."
   },
   "release_notes": [
-    "Unified cloud workspace shared across Windows, web and Android clients."
+    "Unified cloud workspace shared across Windows, web and Android clients.",
+    "Professional adaptive UI/UX and motion system across web/PWA, Windows desktop and Android."
   ],
   "unified_cloud_workspace": {
     "persistent_backend": "PostgreSQL when DATABASE_URL is configured; SQLite locally",
@@ -130,5 +131,14 @@
     ],
     "remote_device_permission_forwarding": "original action_permission level preserved",
     "protected_remote_access_policy_unchanged": true
+  },
+  "professional_uiux": {
+    "design_language": "Obsidian dark workspace with indigo/cyan semantic accents",
+    "web_pwa": "adaptive navigation rail, responsive command center, structured chat, prompt starters, animated dialogs/cards/composer",
+    "windows_desktop": "native command-center shell, structured chat bubbles, custom approval dialog, fade/pulse/hover feedback",
+    "android": "tonal dark surfaces, inset-aware layout, animated message groups, polished composer, accessible labels",
+    "motion": "functional micro-interactions, short natural easing, reduced-motion web fallback",
+    "external_ui_dependencies": false,
+    "security_boundaries_changed": false
   }
 }
