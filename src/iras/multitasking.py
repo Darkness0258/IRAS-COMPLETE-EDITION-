@@ -9,6 +9,8 @@ import time
 import uuid
 from typing import Any, Callable
 
+from iras.master_control import master_execution_limits_for_context
+
 
 TERMINAL_STATES = {"succeeded", "failed", "cancelled"}
 
@@ -213,9 +215,15 @@ class MultitaskManager:
         prompts = self._normalize_prompts(prompts)
         if len(prompts) < 2:
             raise ValueError("Multitasking requires at least two tasks.")
-        if len(prompts) > self.max_tasks_per_run:
+        effective_max_tasks = self.max_tasks_per_run
+        master_limits = master_execution_limits_for_context(context)
+        if master_limits.get("active"):
+            effective_max_tasks = max(
+                effective_max_tasks, int(master_limits.get("parallel_tasks") or 128)
+            )
+        if len(prompts) > effective_max_tasks:
             raise ValueError(
-                f"A multitask run supports at most {self.max_tasks_per_run} tasks."
+                f"A multitask run supports at most {effective_max_tasks} tasks."
             )
 
         run_id = uuid.uuid4().hex[:16]
@@ -239,10 +247,16 @@ class MultitaskManager:
                 if item.requester_device == run.requester_device
                 and not all(task.state in TERMINAL_STATES for task in item.tasks)
             )
-            if active >= self.max_active_runs_per_requester:
+            effective_active_runs = self.max_active_runs_per_requester
+            master_limits = master_execution_limits_for_context(base_context)
+            if master_limits.get("active"):
+                effective_active_runs = max(
+                    effective_active_runs, int(master_limits.get("active_runs") or 32)
+                )
+            if active >= effective_active_runs:
                 raise RuntimeError(
                     f"Too many active parallel runs for {run.requester_device!r}; "
-                    f"limit is {self.max_active_runs_per_requester}."
+                    f"limit is {effective_active_runs}."
                 )
             self._runs[run_id] = run
             self._prune_locked()

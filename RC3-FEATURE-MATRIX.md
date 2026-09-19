@@ -36,7 +36,7 @@ RC3 declares **34 operating-layer feature families**. A feature is counted here 
 | 30 | Schema migrations | Persistent migration ledger and indexed RC3 schema upgrades |
 | 31 | Control Center UI | Feature matrix plus autonomy/artifact/recovery/capability/home/migration status |
 | 32 | Unified cloud workspace | Restart-safe client presence, shared active thread/history/preferences across Windows cloud client, web/PWA and Android |
-| 33 | Master Control | Local owner-elevation with CRITICAL registered-tool authority, shell/power opt-in, cloud/web/mobile attachment only after local arming, emergency-stop/audit preservation |
+| 33 | Master Control | Local owner-elevation with CRITICAL registered-tool authority, Emergency Adaptive high-capacity execution, shell/power opt-in, cloud/web/mobile attachment only after local arming, emergency-stop/audit preservation |
 | 34 | Release engineering | Clean-tree/integrated validators, deterministic package builder and release manifest |
 
 ## Preserved enforcement boundary

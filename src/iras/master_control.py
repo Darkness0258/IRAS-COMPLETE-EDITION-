@@ -16,6 +16,69 @@ from iras.security.permissions import PermissionDenied, PermissionEngine
 MASTER_CONTROL_PATH = Path.home() / ".iras" / "master_control.json"
 
 
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+def emergency_execution_limits() -> dict[str, int | str | bool]:
+    """High-capacity execution profile used only while local Master Control is armed.
+
+    The profile intentionally removes ordinary small workflow budgets without
+    creating a truly infinite loop. A large owner-configurable watchdog remains
+    so a broken provider/tool cannot consume CPU, quota, or disk forever.
+    """
+    return {
+        "mode": "emergency_adaptive",
+        "agent_steps": _env_int("IRAS_MASTER_AGENT_STEPS", 256, 32, 4096),
+        "runtime_watchdog_seconds": _env_int("IRAS_MASTER_RUNTIME_SECONDS", 21600, 300, 86400),
+        "parallel_tasks": _env_int("IRAS_MASTER_PARALLEL_TASKS", 128, 12, 512),
+        "orchestration_tasks": _env_int("IRAS_MASTER_ORCHESTRATION_TASKS", 128, 20, 512),
+        "active_runs": _env_int("IRAS_MASTER_ACTIVE_RUNS", 32, 4, 128),
+        "provider_wait_seconds": _env_int("IRAS_MASTER_PROVIDER_WAIT_SECONDS", 86400, 900, 86400),
+        "recovery_attempts": _env_int("IRAS_MASTER_RECOVERY_ATTEMPTS", 24, 4, 128),
+        "ordinary_refusal_policy": "no_ordinary_refusal_continue_until_complete_or_concrete_blocker",
+    }
+
+
+def active_master_execution_limits() -> dict[str, int | str | bool]:
+    """Return the emergency profile only for a locally armed autonomous Master session."""
+    try:
+        status = MasterControl().status()
+    except Exception:
+        status = {}
+    limits = emergency_execution_limits()
+    limits["active"] = bool(status.get("enabled") and status.get("autonomous"))
+    return limits
+
+
+def is_master_remote_session(session: dict[str, Any] | None) -> bool:
+    if not isinstance(session, dict):
+        return False
+    scopes = {str(item).strip().lower() for item in (session.get("scopes") or [])}
+    try:
+        level = int(session.get("max_permission") or 0)
+    except (TypeError, ValueError):
+        level = 0
+    return "master" in scopes and level >= int(PermissionLevel.CRITICAL)
+
+
+def master_execution_limits_for_context(context: dict[str, Any] | None = None) -> dict[str, int | str | bool]:
+    limits = active_master_execution_limits()
+    if limits.get("active"):
+        return limits
+    context = context if isinstance(context, dict) else {}
+    if is_master_remote_session(context.get("remote_session")):
+        limits = emergency_execution_limits()
+        limits["active"] = True
+        limits["source"] = "verified_remote_master_session"
+        return limits
+    return limits
+
+
 @dataclass(slots=True)
 class MasterState:
     enabled: bool = False
@@ -151,6 +214,11 @@ class MasterControl:
             "remote_enabled": bool(remote.get("enabled")),
             "emergency_stop": bool(self.emergency_stop.tripped()),
             "filesystem_roots": roots,
+            "execution_profile": (
+                emergency_execution_limits()
+                if state.enabled and state.autonomous
+                else {"mode": "normal", "active": False}
+            ),
             "path": str(self.path),
         }
 

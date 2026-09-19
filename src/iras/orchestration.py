@@ -12,6 +12,8 @@ import time
 import uuid
 from typing import Any, Callable
 
+from iras.master_control import master_execution_limits_for_context
+
 
 TERMINAL_TASK_STATES = {"succeeded", "failed", "cancelled", "blocked", "interrupted"}
 RUN_TERMINAL_STATES = {"succeeded", "partial_failure", "failed", "cancelled", "interrupted"}
@@ -528,15 +530,31 @@ class OrchestrationManager:
         if len(run.events) > 240:
             del run.events[:-240]
 
+    def _effective_max_tasks(self, context: dict[str, Any] | None = None) -> int:
+        limit = self.max_tasks_per_run
+        master_limits = master_execution_limits_for_context(context)
+        if master_limits.get("active"):
+            limit = max(limit, int(master_limits.get("orchestration_tasks") or 128))
+        return limit
+
+    def _effective_active_runs(self, context: dict[str, Any] | None = None) -> int:
+        limit = self.max_active_runs_per_requester
+        master_limits = master_execution_limits_for_context(context)
+        if master_limits.get("active"):
+            limit = max(limit, int(master_limits.get("active_runs") or 32))
+        return limit
+
     def _normalize_specs(
         self,
         tasks: list[dict[str, Any]],
         *,
         add_coordinator: bool,
         objective: str,
+        context: dict[str, Any] | None = None,
     ) -> list[GraphTaskSpec]:
         specs = [GraphTaskSpec.from_mapping(raw, index + 1) for index, raw in enumerate(tasks)]
-        self.validate_specs(specs, self.max_tasks_per_run)
+        effective_max_tasks = self._effective_max_tasks(context)
+        self.validate_specs(specs, effective_max_tasks)
         if add_coordinator:
             coordinator_id = "final-coordinator"
             suffix = 1
@@ -559,23 +577,24 @@ class OrchestrationManager:
                     continue_on_failure=True,
                 )
             )
-            if len(specs) > self.max_tasks_per_run + 1:
+            if len(specs) > effective_max_tasks + 1:
                 raise ValueError(
-                    f"The planned graph plus coordinator exceeds the {self.max_tasks_per_run + 1}-task limit."
+                    f"The planned graph plus coordinator exceeds the {effective_max_tasks + 1}-task limit."
                 )
         return specs
 
-    def _ensure_capacity_locked(self, requester_device: str) -> None:
+    def _ensure_capacity_locked(self, requester_device: str, context: dict[str, Any] | None = None) -> None:
         requester = str(requester_device or "cloud-agent")[:128]
         active = sum(
             1
             for run in self._runs.values()
             if run.requester_device == requester and run.state not in RUN_TERMINAL_STATES
         )
-        if active >= self.max_active_runs_per_requester:
+        effective_limit = self._effective_active_runs(context)
+        if active >= effective_limit:
             raise RuntimeError(
                 f"Too many active multi-agent runs for {requester!r}; "
-                f"limit is {self.max_active_runs_per_requester}. Finish/cancel a run first."
+                f"limit is {effective_limit}. Finish/cancel a run first."
             )
 
     def _load_journal_history(self) -> None:
@@ -691,7 +710,7 @@ class OrchestrationManager:
             state="planning",
         )
         with self._condition:
-            self._ensure_capacity_locked(run.requester_device)
+            self._ensure_capacity_locked(run.requester_device, run.context)
             self._runs[run.run_id] = run
             self._event_locked(run, "run_created", "Autonomous job created; planner is building the dependency graph.")
             self._prune_locked()
@@ -716,6 +735,7 @@ class OrchestrationManager:
             tasks,
             add_coordinator=add_coordinator,
             objective=objective,
+            context=context,
         )
         run = OrchestrationRun(
             run_id=uuid.uuid4().hex[:16],
@@ -727,7 +747,7 @@ class OrchestrationManager:
             tasks={spec.task_id: GraphTaskRecord(spec=spec) for spec in specs},
         )
         with self._condition:
-            self._ensure_capacity_locked(run.requester_device)
+            self._ensure_capacity_locked(run.requester_device, run.context)
             self._runs[run.run_id] = run
             self._event_locked(run, "run_started", "Autonomous job graph accepted and queued for execution.")
             self._prune_locked()
@@ -748,6 +768,7 @@ class OrchestrationManager:
                 raw,
                 add_coordinator=True,
                 objective=objective,
+                context=context,
             )
         except Exception as exc:
             with self._condition:

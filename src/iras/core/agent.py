@@ -51,6 +51,7 @@ from iras.device_bridge.verification_replanning import (
 from iras.device_bridge.replan_guard import materially_different_replan_message
 from iras.device_bridge.recovery_learning import RecoveryRoutePerformanceStore
 from iras.device_bridge.workflow_memory import CrossAppWorkflowMemory
+from iras.master_control import active_master_execution_limits, emergency_execution_limits
 from iras.social_style import (
     empty_reply_fallback,
     is_social_turn,
@@ -83,6 +84,10 @@ class IRASAgent:
         self.memory = memory
         self.audit = audit
         self.max_steps = max_steps
+        # A verified cloud/web/mobile Master session can temporarily set this
+        # while the global cloud agent lock is held. Local Master Control is
+        # still discovered dynamically from the owner-controlled state file.
+        self.master_execution_override = False
         self.system_prompt = (
             system_prompt
         )
@@ -111,6 +116,7 @@ class IRASAgent:
         self.context_messages_override = None
         self.last_metrics = {}
         self._last_device_action = None
+        self._last_quick_code = None
         self.recovery_performance_store = recovery_performance_store
         self.autonomy = AutonomySupervisor()
         self.workflow_memory = CrossAppWorkflowMemory()
@@ -383,6 +389,31 @@ class IRASAgent:
             return {
                 deterministic["tool"]
             }
+
+        quick_code_request = bool(
+            cls._contains_any(
+                q,
+                (
+                    "vs code", "vscode", "visual studio code",
+                    "python", "javascript", "typescript", "html", "java",
+                    "c++", "c#", "code", "script", "program",
+                ),
+            )
+            and cls._contains_any(
+                q,
+                (
+                    "write ", "create ", "make ", "program ", "script ",
+                    "open a python", "open python",
+                ),
+            )
+            and (
+                cls._contains_any(q, ("vs code", "vscode", "visual studio code"))
+                or cls._contains_any(q, ("open a python", "open python"))
+                or cls._contains_any(q, ("on my pc", "on my computer", "on my laptop"))
+            )
+        )
+        if quick_code_request:
+            return {"device_quick_code"}
 
         # Explicit read-only observation requests must never expose generic
         # state-changing computer actions merely because they mention a window
@@ -980,6 +1011,37 @@ class IRASAgent:
                 }
             return None
 
+        q = " ".join(str(user_text or "").lower().split())
+        quick_code_followup = bool(
+            self._last_quick_code
+            and self._contains_any(
+                q,
+                (
+                    "try this in vs code",
+                    "try it in vs code",
+                    "run this in vs code",
+                    "run it in vs code",
+                    "execute this in vs code",
+                    "execute it in vs code",
+                    "test this in vs code",
+                    "test it in vs code",
+                    "run that in vs code",
+                    "try that in vs code",
+                ),
+            )
+        )
+        if quick_code_followup:
+            last = dict(self._last_quick_code or {})
+            return {
+                "tool": "device_quick_code_run_in_vscode",
+                "arguments": {
+                    "path": last.get("path", ""),
+                    "language": last.get("language", ""),
+                    "sample_input": "5",
+                },
+                "kind": "quick_code_run_in_vscode",
+            }
+
         contextual = self.autonomy.contextual_direct_action(
             user_text
         )
@@ -1050,10 +1112,22 @@ class IRASAgent:
             "kind": action.get("kind", ""),
         }
 
-        final = device_result_message(
-            action,
-            result,
-        )
+        if action.get("kind") == "quick_code_run_in_vscode":
+            if result.ok:
+                output = result.output if isinstance(result.output, dict) else {}
+                last_name = str((self._last_quick_code or {}).get("filename") or "")
+                name = str(output.get("filename") or last_name or "the code")
+                final = f"Done — I ran {name} in VS Code's integrated terminal."
+            else:
+                final = (
+                    "I couldn't run the last Quick Code file inside VS Code: "
+                    + str(result.error or "the VS Code terminal action failed")
+                )
+        else:
+            final = device_result_message(
+                action,
+                result,
+            )
 
         self.memory.add_message(
             "assistant",
@@ -1369,6 +1443,33 @@ class IRASAgent:
             else self.max_steps
         )
 
+        master_limits = active_master_execution_limits()
+        master_execution = bool(master_limits.get("active") or self.master_execution_override)
+        if self.master_execution_override and not master_limits.get("active"):
+            master_limits = emergency_execution_limits()
+            master_limits["active"] = True
+        master_deadline = None
+        if master_execution:
+            step_budget = max(step_budget, int(master_limits.get("agent_steps") or 256))
+            master_deadline = time.perf_counter() + int(
+                master_limits.get("runtime_watchdog_seconds") or 21600
+            )
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "MASTER CONTROL OWNER-INTENT POLICY: Master Control is locally armed. "
+                        "Do not stop, refuse, or hand the task back merely because it is long, "
+                        "complex, repetitive, costly, or requires many tool calls. Continue using "
+                        "authorized tools, re-plan after recoverable failures, and work until the "
+                        "user's goal is verified complete or there is a concrete blocker such as an "
+                        "unavailable capability, authentication/OS boundary, emergency stop, or an "
+                        "applicable safety/security restriction. Never fabricate success. Ordinary "
+                        "small tool-step budgets are replaced by the Emergency Master adaptive budget."
+                    ),
+                }
+            )
+
         required_tool_turn = bool(
             tool_names
         )
@@ -1394,10 +1495,19 @@ class IRASAgent:
         final = ""
         model_ms = 0
         tool_rounds = 0
+        terminal_device_result = ""
 
         for step in range(
             step_budget
         ):
+            if master_deadline is not None and time.perf_counter() >= master_deadline:
+                final = (
+                    "Emergency Master execution reached its runtime watchdog before the goal "
+                    "was verified complete. The watchdog prevents a broken tool/provider loop "
+                    "from running forever; the completed work remains available to continue."
+                )
+                break
+
             model_started = (
                 time.perf_counter()
             )
@@ -2224,12 +2334,38 @@ class IRASAgent:
                             }
                         )
 
+                if call.name == "device_quick_code" and payload.get("ok"):
+                    output = payload.get("output") if isinstance(payload.get("output"), dict) else {}
+                    path = str(output.get("path") or output.get("filename") or "the requested source file")
+                    self._last_quick_code = {
+                        "path": str(output.get("path") or ""),
+                        "workspace": str(output.get("workspace") or ""),
+                        "filename": str(output.get("filename") or ""),
+                        "language": str(output.get("language") or call.arguments.get("language") or ""),
+                        "content": str(call.arguments.get("content") or ""),
+                    }
+                    editor = " and opened it in VS Code" if output.get("vscode_opened") else ""
+                    terminal_device_result = (
+                        f"Done — I created and verified {path}{editor}."
+                    )
+
+            if terminal_device_result:
+                final = terminal_device_result
+                break
+
         else:
-            final = (
-                "I reached the maximum "
-                "tool-step limit before "
-                "completing the task."
-            )
+            if master_execution:
+                final = (
+                    "Emergency Master exhausted its high-capacity adaptive execution budget "
+                    "without verified completion. I will not claim success; continue the task "
+                    "from the verified state or increase IRAS_MASTER_AGENT_STEPS locally."
+                )
+            else:
+                final = (
+                    "I reached the maximum "
+                    "tool-step limit before "
+                    "completing the task."
+                )
 
         if task_tracker is not None:
             self.audit.record(

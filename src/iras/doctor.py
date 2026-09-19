@@ -203,7 +203,9 @@ def run(settings):
             f"permission={master.get('permission_level') or 'normal'} "
             f"remaining={master.get('remaining_seconds')} "
             f"shell={master.get('allow_shell')} power={master.get('allow_power')} "
-            f"autonomous={master.get('autonomous')}"
+            f"autonomous={master.get('autonomous')} "
+            f"execution={((master.get('execution_profile') or {}).get('mode') or 'normal')} "
+            f"steps={((master.get('execution_profile') or {}).get('agent_steps') or 'normal')}"
         ),
     )
 

@@ -53,6 +53,8 @@
     "omniparser_optional_cleanup": "PowerShell 5.1 stderr warnings from optional pip-uninstall cleanup no longer abort setup; native exit code is handled explicitly",
     "omniparser_ownership": "Windows persisted PID probing hardened for cross-process managed ownership",
     "omniparser_repair_weights": "repair reuses live detector/Florence assets in place instead of deleting memory-mapped model.safetensors",
+    "quick_code_deterministic_execution": "Simple VS Code/code-generation requests use one specialized verified file workflow: choose an allowed workspace, write source directly, read it back byte-for-byte, open VS Code, and terminate without generic GUI planner loops.",
+    "quick_code_vscode_followup": "Quick Code remembers the most recently verified source artifact so follow-ups such as 'try this in VS Code' run that exact file in VS Code's integrated terminal without another model/planner loop; Python scripts that clearly request input receive a bounded sample value for the try/run action.",
     "risk_based_local_approvals": "routine local Spotify/media/WhatsApp-open/scroll actions auto-run at SAFE_ACTION; consequential actions retain approval; remote classification unchanged",
     "spotify_error_toast_rejection": "Spotify can't-play-this-right-now/local-file toast is detected as a hard failure and IRAS retries another query-matched candidate instead of accepting Pause state.",
     "spotify_fastpath": "device_spotify_play local CLI path no longer raises unexpected remote_session_id TypeError",
@@ -69,7 +71,7 @@
   "local_regression": {
     "android_companion_compile": "static-contract-validated; Android SDK/Gradle build is host-side",
     "failed": 0,
-    "passed": 845
+    "passed": 855
   },
   "managed_omniparser": {
     "authenticated_lifecycle": true,
@@ -95,10 +97,22 @@
     "audit_preserved": true,
     "cloud_attach_requires_local_master": true,
     "critical_tool_authority": true,
+    "default_active_runs": 32,
+    "default_agent_steps": 256,
     "default_minutes": 30,
+    "default_orchestration_tasks": 128,
+    "default_parallel_tasks": 128,
+    "default_provider_wait_seconds": 86400,
+    "default_recovery_attempts": 24,
+    "default_runtime_watchdog_seconds": 21600,
     "emergency_stop_preserved": true,
+    "execution_profile": "emergency_adaptive",
+    "literal_infinite_loop_disabled": true,
     "local_owner_activation": true,
+    "ordinary_small_step_caps_replaced": true,
+    "owner_intent_policy": "no ordinary refusal for complexity/length/cost; continue until verified completion or concrete blocker",
     "shell_power_opt_in": true,
+    "verified_remote_master_scope_inherits_profile": true,
     "windows_uac_not_bypassed": true
   },
   "model_facing_v5_tool_count": 104,
@@ -132,7 +146,7 @@
     "src/iras/device_bridge/agent.py"
   ],
   "release_date": "2026-09-20",
-  "release_name": "Complete Operating Layer - Professional UI/UX + Master Control",
+  "release_name": "Complete Operating Layer - Professional UI/UX + Emergency Master Control",
   "release_notes": [
     "Unified cloud workspace shared across Windows, web and Android clients.",
     "Professional adaptive UI/UX and motion system across web/PWA, Windows desktop and Android.",
@@ -142,7 +156,11 @@
     "Full PC + Cloud + Web + Android operating guide is packaged at docs/RUN_IRAS_FULL_STACK.md.",
     "Owner-controlled Master Control provides bounded CRITICAL registered-tool authority with local-only activation and emergency-stop/audit preservation.",
     "Web, Android and the Windows cloud client can attach ephemeral FULL Master Remote sessions only after the PC is locally armed.",
-    "Master-enabled local multi-agent workers can use the full registered tool surface; normal background workers remain READ-capped."
+    "Master-enabled local multi-agent workers can use the full registered tool surface; normal background workers remain READ-capped.",
+    "Emergency Master execution replaces ordinary small workflow/task budgets with a high-capacity adaptive profile while local Master Control or a verified master Remote session is active.",
+    "Master owner-intent policy does not stop merely for complexity, length, cost, repetition or recoverable tool failures; it continues until verified completion or a concrete blocker.",
+    "A configurable runaway watchdog remains so a broken provider/tool loop cannot execute forever; emergency stop, authentication, OS/UAC and safety/security boundaries remain non-bypassable.",
+    "Quick Code follow-up context remembers the last verified source file and can run it directly inside VS Code's integrated terminal."
   ],
   "remote_protocol": 1,
   "render_health_hotfix": {

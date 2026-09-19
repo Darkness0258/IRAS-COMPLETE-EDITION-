@@ -5,7 +5,7 @@ from iras.config import Settings
 from iras.models import PermissionLevel
 from iras.security.audit import AuditLogger
 from iras.security.permissions import PermissionEngine
-from iras.master_control import MasterControl, MasterPermissionEngine
+from iras.master_control import MasterControl, MasterPermissionEngine, emergency_execution_limits
 from iras.memory.store import MemoryStore
 from iras.tools.registry import ToolRegistry
 from iras.tools.filesystem import TOOLS as FILES
@@ -121,7 +121,10 @@ def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.
         worker_prompt = role + "\n\nTask: " + str(prompt)
         if deps:
             worker_prompt += "\n\nDependency results:\n" + json.dumps(deps, ensure_ascii=False, default=str)[:20000]
-        worker_agent = IRASAgent(worker_provider, worker_reg, memory, audit, s.max_agent_steps, system_prompt=build_system_prompt(s.voice_profile), personality=personality, voice_profile=s.voice_profile)
+        worker_steps = s.max_agent_steps
+        if master_autonomy:
+            worker_steps = max(worker_steps, int(emergency_execution_limits()["agent_steps"]))
+        worker_agent = IRASAgent(worker_provider, worker_reg, memory, audit, worker_steps, system_prompt=build_system_prompt(s.voice_profile), personality=personality, voice_profile=s.voice_profile)
         try:
             return {
                 "result": worker_agent.handle(worker_prompt),

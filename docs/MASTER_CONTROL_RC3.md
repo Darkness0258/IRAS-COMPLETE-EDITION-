@@ -101,3 +101,15 @@ IRAS_REMOTE_SESSION_MAX_PERMISSION_LEVEL=3
 ```
 
 The provided Render blueprint already uses `3`. The local Windows Master state remains the final owner-controlled gate for shell/power execution.
+
+## Deterministic Quick Code path
+
+Master Control no longer sends simple coding requests such as **“open VS Code and write a Python hello-world/triangle program”** through the generic GUI planner. IRAS exposes a specialized `device_quick_code` tool that generates the requested source, creates the file inside an allowed bridge root, reads the file back to verify the exact contents, opens the workspace in VS Code, and terminates the turn immediately with a verified result. This avoids tool-step exhaustion and editor-typing races while preserving the same filesystem and Remote permission enforcement.
+
+## Emergency Adaptive execution profile
+
+Master Control now replaces ordinary small execution budgets with the Emergency Adaptive profile documented in `EMERGENCY_MASTER_EXECUTION.md`.
+
+Default high-capacity values are 256 agent steps, 128 parallel/orchestration tasks, 32 active runs, 24 recovery attempts, 24-hour provider wait, and a 6-hour runaway watchdog. Verified Web/Android/Cloud Master sessions inherit the same profile through the `master` Remote-session scope.
+
+The owner-intent rule is **no ordinary refusal**: IRAS does not stop simply because an authorized task is long, complex, repetitive, expensive, or needs many tool calls. It continues/replans until verified completion or a concrete blocker. This is not an instruction to bypass emergency stop, authentication, Windows/UAC/account controls, configured device/filesystem boundaries, audit/verification requirements, or applicable safety/security restrictions.

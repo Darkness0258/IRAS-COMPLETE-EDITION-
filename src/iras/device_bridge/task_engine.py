@@ -10,6 +10,7 @@ from iras.device_bridge.skills import (
     PersistentSkillStore,
 )
 from iras.device_bridge.workflow_memory import CrossAppWorkflowMemory
+from iras.master_control import active_master_execution_limits
 
 
 STATE_CHANGING_DEVICE_TOOLS = {
@@ -252,7 +253,11 @@ class TaskTracker:
         # avoid coupling the task tracker to recovery route selection at module load.
         from iras.device_bridge.recovery_runtime import MAX_AUTOMATIC_RECOVERY_STEPS
 
-        return self.automatic_recovery_steps < MAX_AUTOMATIC_RECOVERY_STEPS
+        limit = MAX_AUTOMATIC_RECOVERY_STEPS
+        master_limits = active_master_execution_limits()
+        if master_limits.get("active"):
+            limit = max(limit, int(master_limits.get("recovery_attempts") or 24))
+        return self.automatic_recovery_steps < limit
 
     def automatic_recovery_guard(self, directive: dict[str, Any]) -> dict[str, Any]:
         from iras.device_bridge.replan_guard import recovery_route_cycle_guard

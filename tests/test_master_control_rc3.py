@@ -149,3 +149,81 @@ def test_web_and_android_cannot_remotely_enable_local_master():
     assert "Master Control is OFF on the PC" in android
     assert "/v1/master/enable" not in web
     assert "/v1/master/enable" not in android
+
+
+def test_emergency_master_profile_is_high_capacity_but_not_runaway(monkeypatch):
+    from iras.master_control import emergency_execution_limits
+
+    monkeypatch.delenv("IRAS_MASTER_AGENT_STEPS", raising=False)
+    monkeypatch.delenv("IRAS_MASTER_RUNTIME_SECONDS", raising=False)
+    limits = emergency_execution_limits()
+    assert limits["mode"] == "emergency_adaptive"
+    assert limits["agent_steps"] >= 256
+    assert limits["parallel_tasks"] >= 128
+    assert limits["orchestration_tasks"] >= 128
+    assert limits["recovery_attempts"] >= 24
+    # There is deliberately still a runaway watchdog rather than a literal infinite loop.
+    assert 300 <= limits["runtime_watchdog_seconds"] <= 86400
+    assert "no_ordinary_refusal" in limits["ordinary_refusal_policy"]
+
+
+def test_verified_remote_master_session_enables_emergency_profile():
+    from iras.master_control import is_master_remote_session, master_execution_limits_for_context
+
+    session = {
+        "max_permission": int(PermissionLevel.CRITICAL),
+        "scopes": ["windows", "master"],
+    }
+    assert is_master_remote_session(session) is True
+    limits = master_execution_limits_for_context({"remote_session": session})
+    assert limits["active"] is True
+    assert limits["agent_steps"] >= 256
+
+    ordinary = {
+        "max_permission": int(PermissionLevel.CRITICAL),
+        "scopes": ["windows"],
+    }
+    assert is_master_remote_session(ordinary) is False
+
+
+def test_master_status_exposes_emergency_execution_profile(tmp_path):
+    m = master(tmp_path)
+    status = m.enable(minutes=30, autonomous=True)
+    profile = status["execution_profile"]
+    assert profile["mode"] == "emergency_adaptive"
+    assert profile["agent_steps"] >= 256
+    assert profile["ordinary_refusal_policy"].startswith("no_ordinary_refusal")
+
+
+def test_multitask_master_context_raises_normal_task_cap():
+    from iras.multitasking import MultitaskManager
+
+    session = {
+        "max_permission": int(PermissionLevel.CRITICAL),
+        "scopes": ["windows", "master"],
+    }
+    manager = MultitaskManager(
+        lambda prompt, _context: {"result": prompt, "metrics": {}},
+        max_workers=2,
+        max_tasks_per_run=12,
+    )
+    try:
+        run = manager.submit(
+            [f"task-{i}" for i in range(13)],
+            context={"remote_session": session},
+            requester_device="master-test",
+        )
+        assert len(run["tasks"]) == 13
+    finally:
+        manager.close()
+
+
+def test_master_owner_intent_policy_is_present_in_agent_and_keeps_hard_boundaries():
+    root = Path(__file__).resolve().parents[1]
+    agent = (root / "src/iras/core/agent.py").read_text(encoding="utf-8")
+    docs = (root / "docs/EMERGENCY_MASTER_EXECUTION.md").read_text(encoding="utf-8")
+    assert "MASTER CONTROL OWNER-INTENT POLICY" in agent
+    assert "Do not stop, refuse, or hand the task back merely because" in agent
+    assert "applicable safety/security restriction" in agent
+    assert "emergency stop" in docs.lower()
+    assert "unconditional" in docs.lower() and "never refuse anything" in docs.lower()

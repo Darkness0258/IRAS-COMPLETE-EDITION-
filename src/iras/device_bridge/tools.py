@@ -9,6 +9,7 @@ from iras.tools.base import (
 from iras.remote_access import action_permission
 from iras.device_bridge.remote_context import current_remote_command_context
 from pathlib import PureWindowsPath
+import re
 
 
 def _windows_path_within(path: PureWindowsPath, root: PureWindowsPath) -> bool:
@@ -499,6 +500,231 @@ def make_tools(store):
 
     def device_write_text(path, content, append=False, device_id=None):
         return request("write_text", {"path": path, "content": content, "append": append}, device_id)
+
+    def _quick_code_workspace(info):
+        roots = [str(item).strip() for item in (info.get("allowed_roots") or []) if str(item).strip()]
+        user = str(info.get("user") or "").strip()
+        folded = [item.casefold() for item in roots]
+
+        # Prefer a normal project location when the paired machine exposes it.
+        for root, lower in zip(roots, folded):
+            if lower.rstrip("\\") == "d:\\projects":
+                return str(PureWindowsPath(root) / "IRAS-QuickCode")
+        for root, lower in zip(roots, folded):
+            if lower.rstrip("\\") == "d:":
+                return str(PureWindowsPath(root) / "Projects" / "IRAS-QuickCode")
+        for root, lower in zip(roots, folded):
+            if "\\users\\" in lower:
+                return str(PureWindowsPath(root) / "Documents" / "IRAS-QuickCode")
+        for root, lower in zip(roots, folded):
+            if lower.rstrip("\\") == "c:" and user:
+                return str(PureWindowsPath(root) / "Users" / user / "Documents" / "IRAS-QuickCode")
+        if roots:
+            return str(PureWindowsPath(roots[0]) / "IRAS-QuickCode")
+        raise RuntimeError("The paired PC did not report an allowed filesystem root.")
+
+    def _quick_code_filename(filename, language):
+        raw = PureWindowsPath(str(filename or "").strip()).name
+        ext_by_language = {
+            "python": ".py", "py": ".py",
+            "javascript": ".js", "js": ".js",
+            "typescript": ".ts", "ts": ".ts",
+            "html": ".html", "css": ".css",
+            "java": ".java", "c": ".c", "cpp": ".cpp", "c++": ".cpp",
+            "csharp": ".cs", "c#": ".cs", "rust": ".rs", "go": ".go",
+        }
+        if not raw:
+            raw = "main" + ext_by_language.get(str(language or "python").casefold(), ".txt")
+        raw = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", raw).strip(" .")[:120]
+        if not raw:
+            raw = "main.py"
+        if "." not in PureWindowsPath(raw).name:
+            raw += ext_by_language.get(str(language or "python").casefold(), ".txt")
+        return raw
+
+    def device_quick_code(content, filename="", language="python", open_in_vscode=True, device_id=None):
+        """Create one verified source file and open its workspace in VS Code.
+
+        This deliberately composes existing bridge actions instead of adding a
+        new privileged Windows executor command. Every filesystem operation is
+        still checked against the configured bridge roots and every remote
+        action keeps its existing permission classification.
+        """
+        text = str(content or "")
+        if not text.strip():
+            raise ValueError("Quick Code requires non-empty source content.")
+        if len(text) > 20_000:
+            raise ValueError("Quick Code source is limited to 20,000 characters.")
+
+        info = request("system_info", {}, device_id)
+        if not isinstance(info, dict):
+            raise RuntimeError("The paired PC did not return system information.")
+        workspace = _quick_code_workspace(info)
+        name = _quick_code_filename(filename, language)
+        path = str(PureWindowsPath(workspace) / name)
+
+        request("make_directory", {"path": workspace}, device_id)
+        write_result = request("write_text", {"path": path, "content": text, "append": False}, device_id)
+        verify_result = request("read_text", {"path": path, "max_chars": 20_000}, device_id)
+        verified_text = ""
+        if isinstance(verify_result, dict):
+            verified_text = str(verify_result.get("content") or verify_result.get("text") or "")
+        elif isinstance(verify_result, str):
+            verified_text = verify_result
+        if verified_text != text:
+            raise RuntimeError("Quick Code wrote the file but read-back verification did not match exactly.")
+
+        opened = None
+        focused_file = False
+        if bool(open_in_vscode):
+            opened = request("open_project", {"path": workspace}, device_id, timeout=45)
+            # Open the freshly verified file through VS Code Quick Open. Failure
+            # here does not invalidate the file creation itself; the result says
+            # whether editor focusing also completed.
+            try:
+                focus = request(
+                    "interact_app",
+                    {
+                        "app": "code",
+                        "ensure_open": True,
+                        "actions": [
+                            {"action": "wait", "seconds": 0.5},
+                            {"action": "hotkey", "keys": ["ctrl", "p"]},
+                            {"action": "type", "text": name},
+                            {"action": "press", "key": "enter"},
+                        ],
+                    },
+                    device_id,
+                    timeout=50,
+                )
+                focused_file = bool(focus)
+            except Exception:
+                focused_file = False
+
+        return {
+            "created": True,
+            "verified": True,
+            "path": path,
+            "workspace": workspace,
+            "filename": name,
+            "language": str(language or ""),
+            "bytes": len(text.encode("utf-8")),
+            "vscode_opened": bool(opened),
+            "file_focused": focused_file,
+            "write_result": write_result,
+        }
+
+    def device_quick_code_run_in_vscode(path, language="", sample_input="5", device_id=None):
+        """Run one previously created Quick Code file inside VS Code's integrated terminal.
+
+        The file must already exist inside the paired device's allowed roots. This
+        composes existing read/open/interact/observe bridge operations and does not
+        add a new privileged Windows executor command.
+        """
+        raw_path = str(path or "").strip()
+        if not raw_path:
+            raise ValueError("Quick Code VS Code run requires a file path.")
+
+        verified = request("read_text", {"path": raw_path, "max_chars": 20_000}, device_id)
+        if isinstance(verified, dict):
+            source = str(verified.get("content") or verified.get("text") or "")
+        else:
+            source = str(verified or "")
+        if not source.strip():
+            raise RuntimeError("Quick Code file is empty or could not be verified before execution.")
+
+        win_path = PureWindowsPath(raw_path)
+        workspace = str(win_path.parent)
+        filename = win_path.name
+        ext = win_path.suffix.casefold()
+        lang = str(language or "").strip().casefold()
+        if not lang:
+            lang = {
+                ".py": "python", ".js": "javascript", ".ts": "typescript",
+                ".java": "java", ".c": "c", ".cpp": "cpp", ".cs": "csharp",
+                ".rs": "rust", ".go": "go", ".html": "html",
+            }.get(ext, "")
+
+        request("open_project", {"path": workspace}, device_id, timeout=45)
+        focus = request(
+            "interact_app",
+            {
+                "app": "code",
+                "ensure_open": True,
+                "actions": [
+                    {"action": "wait", "seconds": 0.4},
+                    {"action": "hotkey", "keys": ["ctrl", "p"]},
+                    {"action": "type", "text": filename},
+                    {"action": "press", "key": "enter"},
+                ],
+            },
+            device_id,
+            timeout=50,
+        )
+
+        quoted = '"' + filename.replace('"', '') + '"'
+        if lang in {"python", "py"} or ext == ".py":
+            command = f"python {quoted}"
+        elif lang in {"javascript", "js"} or ext == ".js":
+            command = f"node {quoted}"
+        elif lang in {"typescript", "ts"} or ext == ".ts":
+            command = f"npx tsx {quoted}"
+        else:
+            raise ValueError(
+                "Quick Code VS Code execution currently supports Python, JavaScript, and TypeScript files."
+            )
+
+        actions = [
+            {"action": "hotkey", "keys": ["ctrl", "shift", "p"]},
+            {"action": "type", "text": "Terminal: Create New Terminal"},
+            {"action": "press", "key": "enter"},
+            {"action": "wait", "seconds": 0.8},
+            {"action": "type", "text": command},
+            {"action": "press", "key": "enter"},
+            {"action": "wait", "seconds": 0.8},
+        ]
+
+        input_sent = False
+        if (lang in {"python", "py"} or ext == ".py") and "input(" in source:
+            value = str(sample_input or "5").replace("\r", " ").replace("\n", " ")[:120]
+            if value:
+                actions.extend([
+                    {"action": "type", "text": value},
+                    {"action": "press", "key": "enter"},
+                    {"action": "wait", "seconds": 0.8},
+                ])
+                input_sent = True
+
+        run_result = request(
+            "interact_app",
+            {"app": "code", "ensure_open": True, "actions": actions},
+            device_id,
+            timeout=60,
+        )
+
+        observation = None
+        try:
+            observation = request(
+                "observe_ui",
+                {"app": "code", "ensure_open": True, "max_elements": 180, "screenshot": False},
+                device_id,
+                timeout=45,
+            )
+        except Exception:
+            observation = None
+
+        return {
+            "executed": True,
+            "path": raw_path,
+            "workspace": workspace,
+            "filename": filename,
+            "language": lang,
+            "command": command,
+            "input_sent": input_sent,
+            "file_focused": bool(focus),
+            "terminal_action": run_result,
+            "observation": observation,
+        }
 
     def device_replace_text(path, old_text, new_text, count=1, device_id=None):
         return request(
@@ -1387,6 +1613,48 @@ def make_tools(store):
             PermissionLevel.SYSTEM_ACTION,
         ),
         Tool(
+            "device_quick_code",
+            (
+                "Create one source-code file directly on the paired PC, verify the exact file contents by reading them back, "
+                "and open the containing workspace in VS Code. Use this for simple requests such as 'open VS Code and write "
+                "a Python hello world/triangle program'. Generate the complete requested source in the content argument. "
+                "Prefer this over typing code through GUI automation."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "minLength": 1, "maxLength": 20000},
+                    "filename": {"type": "string", "maxLength": 120},
+                    "language": {"type": "string", "maxLength": 40},
+                    "open_in_vscode": {"type": "boolean"},
+                    **optional_device,
+                },
+                "required": ["content"],
+            },
+            device_quick_code,
+            PermissionLevel.SYSTEM_ACTION,
+        ),
+        Tool(
+            "device_quick_code_run_in_vscode",
+            (
+                "Run a previously created Quick Code source file inside VS Code's integrated terminal. "
+                "Use this for follow-ups such as 'try this in VS Code' or 'run that code in VS Code'. "
+                "The path must refer to an already-created file inside the paired PC's allowed roots."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "language": {"type": "string", "maxLength": 40},
+                    "sample_input": {"type": "string", "maxLength": 120},
+                    **optional_device,
+                },
+                "required": ["path"],
+            },
+            device_quick_code_run_in_vscode,
+            PermissionLevel.SYSTEM_ACTION,
+        ),
+        Tool(
             "device_write_text",
             "Create, overwrite, or append a UTF-8 text file inside the laptop's explicitly allowed roots.",
             {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}, "append": {"type": "boolean"}, **optional_device}, "required": ["path", "content"]},
@@ -1529,6 +1797,7 @@ def make_tools(store):
         "device_spotify_search": "spotify_search", "device_spotify_play": "spotify_play",
         "device_media_control": "media_control", "device_open_url": "open_url",
         "device_open_project": "open_project", "device_list_files": "list_directory",
+        "device_quick_code_run_in_vscode": "interact_app",
         "device_read_text": "read_text", "device_read_text_range": "read_text_range",
         "device_search_text": "search_text", "device_file_info": "file_info",
         "device_find_projects": "find_projects", "device_git_status": "git_status", "device_git_diff": "git_diff", "device_git_log": "git_log",

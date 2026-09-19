@@ -37,6 +37,12 @@ import uvicorn
 
 from iras import __version__
 from iras.models import PermissionLevel
+from iras.master_control import (
+    active_master_execution_limits,
+    emergency_execution_limits,
+    is_master_remote_session,
+    master_execution_limits_for_context,
+)
 from iras.remote_protocol import IRAS_CLOUD_SERVICE_ID, REMOTE_PROTOCOL_VERSION
 from iras.remote_access import action_permission, level_for_mode
 from iras.device_bridge.remote_context import remote_command_context
@@ -385,6 +391,22 @@ def _remote_permission_scope(session: dict | None, permissions=None, *, project_
         permissions.always_confirm_critical = old_confirm
 
 
+@contextmanager
+def _master_agent_execution_scope(session: dict | None, agent):
+    """Temporarily enable Emergency Master execution for a verified master Remote session."""
+    old_steps = agent.max_steps
+    old_override = bool(getattr(agent, "master_execution_override", False))
+    try:
+        if is_master_remote_session(session):
+            limits = emergency_execution_limits()
+            agent.max_steps = max(agent.max_steps, int(limits.get("agent_steps") or 256))
+            agent.master_execution_override = True
+        yield
+    finally:
+        agent.max_steps = old_steps
+        agent.master_execution_override = old_override
+
+
 def _deterministic_device_request(
     context: dict[str, Any],
     action: str,
@@ -501,12 +523,16 @@ _ORCHESTRATION_ROLE_TOOLS = {
 
 
 
-def _orchestration_agent_step_budget() -> int:
+def _orchestration_agent_step_budget(context: dict[str, Any] | None = None) -> int:
     try:
         value = int(os.getenv("IRAS_ORCHESTRATION_AGENT_MAX_STEPS", "14"))
     except ValueError:
         value = 14
-    return max(8, min(value, 24))
+    normal = max(8, min(value, 24))
+    master_limits = master_execution_limits_for_context(context)
+    if master_limits.get("active"):
+        return max(normal, int(master_limits.get("agent_steps") or 256))
+    return normal
 
 
 def _multitask_worker(prompt: str, context: dict[str, Any]) -> dict[str, Any]:
@@ -586,7 +612,9 @@ def _multitask_worker(prompt: str, context: dict[str, Any]) -> dict[str, Any]:
         worker.agent.provider = hybrid
     orchestration_run_id = str(context.get("orchestration_run_id") or "")
     if orchestration_run_id:
-        worker.agent.max_steps = max(worker.agent.max_steps, _orchestration_agent_step_budget())
+        worker.agent.max_steps = max(worker.agent.max_steps, _orchestration_agent_step_budget(context))
+        if master_execution_limits_for_context(context).get("active"):
+            worker.agent.master_execution_override = True
         role_tools = _ORCHESTRATION_ROLE_TOOLS.get(role)
         if role_tools is not None:
             worker.agent.tool_allowlist = set(role_tools)
@@ -1924,7 +1952,8 @@ def chat(
                 with agent_lock:
                     with _cloud_thread_scope(cloud_thread_id):
                         with _remote_permission_scope(remote_session):
-                            response = runtime.agent.handle(body.message)
+                            with _master_agent_execution_scope(remote_session, runtime.agent):
+                                response = runtime.agent.handle(body.message)
                 metrics = runtime.agent.last_metrics or {}
 
     except Exception as exc:
@@ -2510,7 +2539,8 @@ def chat_stream(
                 try:
                     with _cloud_thread_scope(cloud_thread_id):
                         with _remote_permission_scope(remote_session):
-                            tool_text = runtime.agent.handle(body.message)
+                            with _master_agent_execution_scope(remote_session, runtime.agent):
+                                tool_text = runtime.agent.handle(body.message)
                     metrics = dict(
                         runtime.agent.last_metrics
                         or {}
@@ -2533,13 +2563,14 @@ def chat_stream(
                 try:
                     with _cloud_thread_scope(cloud_thread_id):
                         with _remote_permission_scope(remote_session):
-                            for text in runtime.agent.handle_stream(body.message):
-                                yield _sse(
-                                "token",
-                                {
-                                    "text": text,
-                                },
-                            )
+                            with _master_agent_execution_scope(remote_session, runtime.agent):
+                                for text in runtime.agent.handle_stream(body.message):
+                                    yield _sse(
+                                        "token",
+                                        {
+                                            "text": text,
+                                        },
+                                    )
                 finally:
                     if acquired:
                         agent_lock.release()
