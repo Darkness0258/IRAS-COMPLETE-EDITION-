@@ -1,6 +1,18 @@
 {
   "baseline_commit": "c37d8a5",
   "build_mode": "build-first-local",
+  "cloud_ai_agent": {
+    "agent_mode": "cloud_tool_agent",
+    "cloud_provider_pool_first": true,
+    "device_ollama_last_resort": "paired Windows PC via local_llm_complete",
+    "remote_permission_enforcement_unchanged": true,
+    "request_scoped_device_ollama_fallback": true,
+    "spotify_false_positive_guard": "requires visible Pause plus query evidence in now-playing region",
+    "spotify_visual_second_opinion": "computer_observe + OmniParser for unverified/legacy bridge results",
+    "status_endpoint": "/v1/agent/status",
+    "streaming_device_ollama_fallback": true,
+    "windows_client_status_command": "/agent"
+  },
   "cloud_ci_hotfix": {
     "android_ci": "sdkmanager command-line-tools; no setup-android@v3",
     "windows_cloud_client": "IRAS_CLOUD_URL/--server only; production Render default; preflight URL diagnostics",
@@ -71,7 +83,7 @@
   "local_regression": {
     "android_companion_compile": "static-contract-validated; Android SDK/Gradle build is host-side",
     "failed": 0,
-    "passed": 855
+    "passed": 859
   },
   "managed_omniparser": {
     "authenticated_lifecycle": true,
@@ -146,7 +158,7 @@
     "src/iras/device_bridge/agent.py"
   ],
   "release_date": "2026-09-20",
-  "release_name": "Complete Operating Layer - Professional UI/UX + Emergency Master Control",
+  "release_name": "Complete Operating Layer - Cloud AI Agent + Emergency Master Control",
   "release_notes": [
     "Unified cloud workspace shared across Windows, web and Android clients.",
     "Professional adaptive UI/UX and motion system across web/PWA, Windows desktop and Android.",
@@ -160,7 +172,10 @@
     "Emergency Master execution replaces ordinary small workflow/task budgets with a high-capacity adaptive profile while local Master Control or a verified master Remote session is active.",
     "Master owner-intent policy does not stop merely for complexity, length, cost, repetition or recoverable tool failures; it continues until verified completion or a concrete blocker.",
     "A configurable runaway watchdog remains so a broken provider/tool loop cannot execute forever; emergency stop, authentication, OS/UAC and safety/security boundaries remain non-bypassable.",
-    "Quick Code follow-up context remembers the last verified source file and can run it directly inside VS Code's integrated terminal."
+    "Quick Code follow-up context remembers the last verified source file and can run it directly inside VS Code's integrated terminal.",
+    "Cloud AI Agent now extends provider failover to the paired Windows PC's Ollama after the configured cloud provider pool is exhausted or rate-limited.",
+    "Cloud Spotify execution takes an OmniParser-backed second visual observation when a legacy/unverified bridge response lacks playback proof, and rejects unrelated playback.",
+    "Windows cloud client exposes /agent status for cloud-agent routing, device Ollama fallback readiness and deterministic executor visibility."
   ],
   "remote_protocol": 1,
   "render_health_hotfix": {

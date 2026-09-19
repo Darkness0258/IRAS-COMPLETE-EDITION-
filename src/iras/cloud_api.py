@@ -391,6 +391,62 @@ def _remote_permission_scope(session: dict | None, permissions=None, *, project_
         permissions.always_confirm_critical = old_confirm
 
 
+def _truthy_env(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    return raw.strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
+@contextmanager
+def _cloud_agent_provider_scope(
+    remote_session: dict | None,
+    requester_device: str,
+    agent,
+):
+    """Extend the cloud provider pool to the paired PC's Ollama.
+
+    The cloud pool is always tried first.  Device Ollama is invoked only after
+    all configured cloud providers are unavailable/rate-limited, so ordinary
+    requests pay no local-device latency.  The local LLM action is READ-level
+    and therefore remains usable without Master Control; any state-changing
+    tool call it proposes still goes through the normal Remote permission path.
+    """
+    enabled = _truthy_env("IRAS_DEVICE_OLLAMA_FALLBACK", True)
+    if not enabled:
+        yield
+        return
+
+    previous = agent.provider
+    context = {
+        "remote_session": dict(remote_session) if remote_session else None,
+        "requester_device": str(requester_device or "cloud-agent")[:128],
+    }
+    try:
+        timeout = max(20, min(int(os.getenv("IRAS_DEVICE_OLLAMA_TIMEOUT", "120")), 180))
+    except ValueError:
+        timeout = 120
+    local_provider = DeviceOllamaProvider(
+        lambda action, arguments, wait: _deterministic_device_request(
+            context, action, arguments, wait
+        ),
+        model=os.getenv("IRAS_DEVICE_OLLAMA_MODEL", "").strip(),
+        timeout=timeout,
+    )
+    hybrid = MultiProvider(
+        [
+            ProviderSlot("cloud-pool", previous),
+            ProviderSlot("device-ollama", local_provider),
+        ],
+        cooldown_seconds=30,
+    )
+    agent.provider = hybrid
+    try:
+        yield
+    finally:
+        agent.provider = previous
+
+
 @contextmanager
 def _master_agent_execution_scope(session: dict | None, agent):
     """Temporarily enable Emergency Master execution for a verified master Remote session."""
@@ -1403,6 +1459,37 @@ def provider_status(
     }
 
 
+@app.get("/v1/agent/status")
+def agent_status(
+    authorization: str | None = Header(default=None),
+):
+    _authorized(authorization)
+    provider = runtime.agent.provider
+    route_order = []
+    if callable(getattr(provider, "route_order", None)):
+        try:
+            route_order = [str(item) for item in provider.route_order()]
+        except Exception:
+            route_order = []
+    local = _device_ollama_provider_row(requester_device="agent-status")
+    return {
+        "ok": True,
+        "agent_mode": "cloud_tool_agent",
+        "provider_route": route_order,
+        "device_ollama_fallback_enabled": _truthy_env("IRAS_DEVICE_OLLAMA_FALLBACK", True),
+        "device_ollama": local,
+        "deterministic_executors": [
+            "quick_code",
+            "exact_file",
+            "spotify_semantic_verify",
+            "browser_workflows",
+            "remote_device_tools",
+        ],
+        "master_control_supported": True,
+        "remote_protocol": REMOTE_PROTOCOL_VERSION,
+    }
+
+
 @app.get("/ready")
 def readiness():
     """Detailed runtime status for diagnostics; not used as Render's health gate."""
@@ -1953,7 +2040,8 @@ def chat(
                     with _cloud_thread_scope(cloud_thread_id):
                         with _remote_permission_scope(remote_session):
                             with _master_agent_execution_scope(remote_session, runtime.agent):
-                                response = runtime.agent.handle(body.message)
+                                with _cloud_agent_provider_scope(remote_session, device_id, runtime.agent):
+                                    response = runtime.agent.handle(body.message)
                 metrics = runtime.agent.last_metrics or {}
 
     except Exception as exc:
@@ -2540,7 +2628,8 @@ def chat_stream(
                     with _cloud_thread_scope(cloud_thread_id):
                         with _remote_permission_scope(remote_session):
                             with _master_agent_execution_scope(remote_session, runtime.agent):
-                                tool_text = runtime.agent.handle(body.message)
+                                with _cloud_agent_provider_scope(remote_session, device_id, runtime.agent):
+                                    tool_text = runtime.agent.handle(body.message)
                     metrics = dict(
                         runtime.agent.last_metrics
                         or {}
@@ -2564,13 +2653,14 @@ def chat_stream(
                     with _cloud_thread_scope(cloud_thread_id):
                         with _remote_permission_scope(remote_session):
                             with _master_agent_execution_scope(remote_session, runtime.agent):
-                                for text in runtime.agent.handle_stream(body.message):
-                                    yield _sse(
-                                        "token",
-                                        {
-                                            "text": text,
-                                        },
-                                    )
+                                with _cloud_agent_provider_scope(remote_session, device_id, runtime.agent):
+                                    for text in runtime.agent.handle_stream(body.message):
+                                        yield _sse(
+                                            "token",
+                                            {
+                                                "text": text,
+                                            },
+                                        )
                 finally:
                     if acquired:
                         agent_lock.release()

@@ -279,5 +279,21 @@ class DeviceOllamaProvider(Provider):
             ]
         return ProviderReply(content, calls, assistant_message)
 
+    def stream_text(self, messages, tools):
+        """Fallback streaming shim for cloud chat.
+
+        Device Ollama is reached through the paired-PC bridge, so it naturally
+        returns one completed response.  Exposing it as a one-chunk stream lets
+        MultiProvider fail over cleanly for ordinary streaming chat when every
+        cloud provider is unavailable before the first token.
+        """
+        reply = self.complete(messages, tools)
+        if reply.tool_calls:
+            raise RuntimeError(
+                "DEVICE_OLLAMA_UNAVAILABLE: local streaming fallback produced tool calls."
+            )
+        if reply.text:
+            yield reply.text
+
     def close(self) -> None:
         return None

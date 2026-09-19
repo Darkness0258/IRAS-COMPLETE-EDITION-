@@ -18,6 +18,68 @@ def _windows_path_within(path: PureWindowsPath, root: PureWindowsPath) -> bool:
     return len(path_parts) >= len(root_parts) and path_parts[:len(root_parts)] == root_parts
 
 
+def _spotify_cloud_terms(query: str) -> list[str]:
+    normalized = re.sub(r"[^a-z0-9]+", " ", str(query or "").casefold()).strip()
+    stop = {
+        "play", "spotify", "song", "songs", "music", "track", "tracks",
+        "please", "open", "and", "the", "a", "an", "on", "my",
+    }
+    return [part for part in normalized.split() if len(part) >= 2 and part not in stop]
+
+
+def _spotify_cloud_visual_verification(query: str, observation) -> dict:
+    """Conservative second-opinion verification from computer_observe output.
+
+    This is deliberately stricter than simply finding query text anywhere in
+    Spotify.  It requires a visible Pause state plus query evidence in a likely
+    now-playing region (bottom transport area or right-side detail panel).
+    """
+    data = observation if isinstance(observation, dict) else {}
+    foreground = data.get("foreground") if isinstance(data.get("foreground"), dict) else {}
+    title = str(foreground.get("title") or "")
+    elements = list(data.get("elements") or [])
+    rect = foreground.get("rect") if isinstance(foreground.get("rect"), dict) else {}
+    left = float(rect.get("left") or 0)
+    top = float(rect.get("top") or 0)
+    width = max(1.0, float(rect.get("width") or 1))
+    height = max(1.0, float(rect.get("height") or 1))
+    terms = _spotify_cloud_terms(query)
+    playing = False
+    evidence = []
+
+    for item in elements:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or item.get("name") or "").strip()
+        norm = re.sub(r"[^a-z0-9]+", " ", label.casefold()).strip()
+        if not norm:
+            continue
+        if norm == "pause" or norm.startswith("pause ") or " pause " in f" {norm} ":
+            playing = True
+        item_rect = item.get("rect") if isinstance(item.get("rect"), dict) else {}
+        cx = float(item_rect.get("left") or 0) + float(item_rect.get("width") or 0) / 2
+        cy = float(item_rect.get("top") or 0) + float(item_rect.get("height") or 0) / 2
+        rx = (cx - left) / width
+        ry = (cy - top) / height
+        in_now_playing_region = ry >= 0.74 or rx >= 0.72
+        if in_now_playing_region and terms and any(term in norm for term in terms):
+            if label not in evidence:
+                evidence.append(label)
+
+    verified = bool("spotify" in title.casefold() and playing and evidence)
+    return {
+        "verified": verified,
+        "playing": playing,
+        "query_match": bool(evidence),
+        "query_evidence": evidence[:8],
+        "foreground_title": title,
+        "source": "cloud_agent_computer_observe",
+        "vision_status": data.get("vision_status"),
+        "vision_available": bool(data.get("vision_available")),
+        "vision_element_count": int(data.get("vision_element_count") or 0),
+    }
+
+
 def _bind_project_arguments(action: str, arguments: dict, project_root: str) -> dict:
     """Bind project-scoped device tools to the preflight-verified Windows root.
 
@@ -328,14 +390,81 @@ def make_tools(store):
         query,
         device_id=None,
     ):
-        return request(
-            "spotify_play",
-            {
+        primary_error = None
+        try:
+            output = request(
+                "spotify_play",
+                {
+                    "query": query,
+                },
+                device_id,
+                timeout=55,
+            )
+        except RuntimeError as exc:
+            # A current bridge already fails closed when semantic playback
+            # cannot be verified.  A stale bridge may still have performed the
+            # action, so take one fresh OmniParser-backed observation before
+            # deciding whether the operation really failed.
+            primary_error = exc
+            output = {}
+
+        if isinstance(output, dict) and output.get("verified_playback"):
+            return output
+
+        # The second-opinion observation exists for cloud/remote bridge
+        # compatibility.  The in-process LocalDeviceBridgeStore already runs
+        # the current semantic Spotify controller directly and must keep its
+        # single-action fast path.
+        if store.__class__.__name__ == "LocalDeviceBridgeStore":
+            if primary_error is not None:
+                raise primary_error
+            return output
+
+        try:
+            observation = request(
+                "computer_observe",
+                {
+                    "vision": "always",
+                    "scope": "foreground",
+                    "max_elements": 260,
+                },
+                device_id,
+                timeout=150,
+            )
+            fallback = _spotify_cloud_visual_verification(query, observation)
+        except Exception as observe_exc:
+            fallback = {
+                "verified": False,
+                "source": "cloud_agent_computer_observe",
+                "error": f"{type(observe_exc).__name__}: {observe_exc}",
+            }
+
+        if fallback.get("verified"):
+            merged = dict(output) if isinstance(output, dict) else {}
+            merged.update({
+                "app": "spotify",
                 "query": query,
-            },
-            device_id,
-            timeout=45,
-        )
+                "verified_playback": True,
+                "playback_verification": fallback,
+                "now_playing_candidates": list(fallback.get("query_evidence") or []),
+                "query_evidence": list(fallback.get("query_evidence") or []),
+                "verification_source": fallback.get("source"),
+            })
+            if primary_error is not None:
+                merged["primary_bridge_error"] = str(primary_error)[:500]
+            return merged
+
+        if primary_error is not None:
+            raise RuntimeError(
+                f"{primary_error} Cloud visual verification also failed: "
+                f"playing={fallback.get('playing')} query_match={fallback.get('query_match')} "
+                f"evidence={fallback.get('query_evidence', [])}"
+            ) from primary_error
+
+        if isinstance(output, dict):
+            output = dict(output)
+            output["cloud_visual_verification"] = fallback
+        return output
 
     def device_media_control(
         command,

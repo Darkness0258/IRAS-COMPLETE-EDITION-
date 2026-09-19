@@ -208,7 +208,7 @@ def main() -> None:
                 f"[bold]IRAS Cloud Client {__version__}[/bold]\n"
                 f"Server: {server}\n"
                 f"Thread: {thread_id}\n"
-                "Shared with web + Android. Commands: /new, /history, /master, /master on, /master off, /exit"
+                "Shared with web + Android. Commands: /new, /history, /agent, /master, /master on, /master off, /exit"
             )
         )
 
@@ -234,6 +234,15 @@ def main() -> None:
                 state["thread_id"] = thread_id
                 _save_state(state)
                 console.print(f"[dim]New shared thread: {thread_id}[/dim]")
+                continue
+            if text.lower() in {"/agent", "/agent status"}:
+                try:
+                    status = _request(
+                        client, "GET", "/v1/agent/status", token=token
+                    ).json()
+                    console.print_json(data=status)
+                except Exception as exc:
+                    console.print(f"[bold red]Agent status failed:[/bold red] {exc}")
                 continue
             if text.lower() in {"/master", "/master status"}:
                 local_status = master.status()
