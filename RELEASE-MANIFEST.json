@@ -1,129 +1,15 @@
 {
-  "product": "IRAS",
-  "version": "5.0.0-rc3",
-  "release_name": "Complete Operating Layer - Professional UI/UX + Viewport/Markdown/Branding",
   "baseline_commit": "c37d8a5",
-  "remote_protocol": 1,
-  "feature_count": 33,
-  "model_facing_v5_tool_count": 104,
   "build_mode": "build-first-local",
-  "cloud_model_acceptance_used": false,
-  "local_regression": {
-    "passed": 838,
-    "failed": 0,
-    "android_companion_compile": "static-contract-validated; Android SDK/Gradle build is host-side"
-  },
-  "managed_omniparser": {
-    "default_autostart": true,
-    "default_eager_start": true,
-    "default_external_attachment": false,
-    "watchdog": true,
-    "authenticated_lifecycle": true,
-    "preserves_unmanaged_legacy_tree": true,
-    "dedicated_managed_checkout": true,
-    "dynamic_local_port_range": "8010-8020",
-    "easyocr_prewarm": true,
-    "full_model_smoke_test_on_setup": true,
-    "microsoft_v2_weights": true,
-    "configured_device_default": "cpu",
-    "configured_device_honored_by_full_parser": true,
-    "maxwell_cuda_safe_fallback": true,
-    "full_model_error_telemetry": true,
-    "empty_ocr_full_parse_guard": true,
-    "florence_base_ft_code_precached": true,
-    "minimal_upstream_openai_import_dependency": "openai==1.3.5; import compatibility only, no cloud model call required"
-  },
-  "completion_hardening": {
-    "connectors": "authorization/expiry fail-closed with fixed-host vault-backed adapters",
-    "signed_skills": "manifest plus every package file hash is Ed25519 authenticated",
-    "android_companion": "register/heartbeat/events/per-device-ack/approval-resolution",
-    "local_orchestration": "separate READ-capped worker registry",
-    "schema_migrations": "persistent migration ledger",
-    "control_surfaces": "complete model-facing v5 tool surface plus web status matrix",
-    "unified_cloud_workspace": "shared restart-safe client presence, active thread, transcript and non-secret preferences across Windows/web/Android"
-  },
-  "protected_boundaries_preserved": [
-    "src/iras/tools/registry.py",
-    "src/iras/remote_protocol.py",
-    "src/iras/safety_runtime.py",
-    "src/iras/remote_access.py",
-    "src/iras/device_bridge/executor.py",
-    "src/iras/device_bridge/agent.py"
-  ],
-  "release_date": "2026-09-18",
-  "hotfixes": {
-    "local_device_bridge_contract": "shared request metadata accepted locally; remote-session provenance remains rejected",
-    "spotify_fastpath": "device_spotify_play local CLI path no longer raises unexpected remote_session_id TypeError",
-    "omniparser_dependencies": "headless runtime excludes conflicting demo/cloud/dev packages",
-    "omniparser_ownership": "Windows persisted PID probing hardened for cross-process managed ownership",
-    "risk_based_local_approvals": "routine local Spotify/media/WhatsApp-open/scroll actions auto-run at SAFE_ACTION; consequential actions retain approval; remote classification unchanged",
-    "spotify_startup_sequencing": "Spotify play now uses open/focus -> visual readiness -> search -> search readiness -> play with URI/green-button fallbacks",
-    "omniparser_repair_weights": "repair reuses live detector/Florence assets in place instead of deleting memory-mapped model.safetensors",
-    "approval_input": "interactive risky-action prompts accept common affirmative forms such as yes/yep/okay/approve",
-    "omniparser_optional_cleanup": "PowerShell 5.1 stderr warnings from optional pip-uninstall cleanup no longer abort setup; native exit code is handled explicitly",
-    "omniparser_extras_filter": "headless dependency filter now excludes extras forms such as anthropic[bedrock,vertex] as well as bare package names",
-    "omniparser_full_device_control": "IRAS full parser now constructs YOLO/Florence on the configured device instead of upstream auto-CUDA selection; unsupported legacy CUDA capability falls back to CPU",
-    "omniparser_empty_ocr_guard": "full visual parse survives icon-only/low-text screenshots affected by upstream empty-OCR None iteration",
-    "omniparser_full_diagnostics": "vision status exposes full model state/device/warmup/error and setup prints HTTP failure detail",
-    "florence_remote_code_cache": "setup pre-caches microsoft/Florence-2-base-ft remote implementation used by the icon-caption model config",
-    "spotify_semantic_verification": "after Play, IRAS reads Spotify UIA state and only marks playback verified when Pause state and query-related evidence are visible",
-    "spotify_semantic_result_selection": "Spotify no longer treats Shift+Enter as playback proof; it selects a query-matched UIA result, uses semantic/content Play with visual fallback, and requires visible playing state before success.",
-    "spotify_pause_truth": "A connected Spotify device or successful shortcut is not considered playback; IRAS fails closed when the visible transport remains Play/paused.",
-    "omniparser_openai_import": "Managed OmniParser retains the minimal openai==1.3.5 package required by upstream imports while excluding cloud/demo stacks and making no cloud model calls.",
-    "spotify_quick_search_overlay": "After selecting a semantic result, IRAS detects and dismisses Spotify Quick Search before touching content playback controls so the Chromium overlay cannot intercept the Play action.",
-    "spotify_uia_invoke": "Content Play prefers the existing audited Windows UI Automation InvokePattern/LegacyIAccessible default action, then scoped mouse/Space fallbacks, with visible playing-state verification after every attempt.",
-    "spotify_query_bound_playback": "Query playback uses Spotify search URI first, ranks multiple semantic results, retries candidates, and activates only result-bound UIA/content Play controls; global Space/media-resume and unanchored green-button fallbacks are forbidden.",
-    "spotify_now_playing_truth": "Playback verification scopes query evidence to the right now-playing panel/bottom transport metadata so library/search text cannot validate an unrelated active track.",
-    "spotify_error_toast_rejection": "Spotify can't-play-this-right-now/local-file toast is detected as a hard failure and IRAS retries another query-matched candidate instead of accepting Pause state.",
-    "unified_cloud_workspace": "Windows cloud client, web/PWA and Android share persistent cloud thread/history/client presence without moving local device-control enforcement into the public server.",
-    "cloud_turn_retry_deduplication": "Web Remote-authorization continuation reuses one turn_id so retrying the same user turn cannot duplicate cloud transcript entries.",
-    "cloud_thread_context": "Direct cloud chat uses request-scoped cloud thread history instead of leaking recent messages from another cloud thread.",
-    "cross_device_message_sync": "Web and Android poll the active cloud workspace and merge only unseen persisted message IDs."
-  },
-  "release_notes": [
-    "Unified cloud workspace shared across Windows, web and Android clients.",
-    "Professional adaptive UI/UX and motion system across web/PWA, Windows desktop and Android.",
-    "Viewport-locked chat workspace keeps the composer visible while history scrolls internally.",
-    "Safe local Markdown renderer adds professional headings, lists, inline code and collapsible/copyable code blocks without external UI libraries.",
-    "User-supplied IRAS logo is packaged across web/PWA, Windows desktop and Android branding.",
-    "Full PC + Cloud + Web + Android operating guide is packaged at docs/RUN_IRAS_FULL_STACK.md."
-  ],
-  "unified_cloud_workspace": {
-    "persistent_backend": "PostgreSQL when DATABASE_URL is configured; SQLite locally",
-    "clients": [
-      "windows-cloud-client",
-      "web-pwa",
-      "android"
-    ],
-    "shared_active_thread": true,
-    "shared_message_history": true,
-    "stable_client_ids": true,
-    "retry_deduplication": "client turn_id",
-    "cross_device_poll_sync": true,
-    "thread_scoped_direct_chat_context": true,
-    "secrets_stored_in_workspace": false,
-    "remote_enforcement_unchanged": true
-  },
   "cloud_ci_hotfix": {
-    "windows_parallel_test": "synchronization-based, no wall-clock threshold",
     "android_ci": "sdkmanager command-line-tools; no setup-android@v3",
-    "windows_cloud_client": "IRAS_CLOUD_URL/--server only; production Render default; preflight URL diagnostics"
+    "windows_cloud_client": "IRAS_CLOUD_URL/--server only; production Render default; preflight URL diagnostics",
+    "windows_parallel_test": "synchronization-based, no wall-clock threshold"
   },
-  "render_health_hotfix": {
-    "health_get": true,
-    "health_head": true,
-    "root_head": true,
-    "health_dependency_free": true,
-    "detailed_readiness_endpoint": "/ready"
-  },
+  "cloud_model_acceptance_used": false,
   "cloud_risk_based_approval": {
-    "routine_without_prompt": [
-      "spotify_search",
-      "spotify_play",
-      "media_control",
-      "whatsapp_open_chat",
-      "ui_scroll_until_text"
-    ],
+    "protected_remote_access_policy_unchanged": true,
+    "remote_device_permission_forwarding": "original action_permission level preserved",
     "risky_still_approval_gated": [
       "generic_click_type",
       "file_mutation",
@@ -133,27 +19,154 @@
       "install",
       "rollback"
     ],
-    "remote_device_permission_forwarding": "original action_permission level preserved",
-    "protected_remote_access_policy_unchanged": true
+    "routine_without_prompt": [
+      "spotify_search",
+      "spotify_play",
+      "media_control",
+      "whatsapp_open_chat",
+      "ui_scroll_until_text"
+    ]
   },
+  "completion_hardening": {
+    "android_companion": "register/heartbeat/events/per-device-ack/approval-resolution",
+    "connectors": "authorization/expiry fail-closed with fixed-host vault-backed adapters",
+    "control_surfaces": "complete model-facing v5 tool surface plus web status matrix",
+    "local_orchestration": "separate READ-capped worker registry",
+    "schema_migrations": "persistent migration ledger",
+    "signed_skills": "manifest plus every package file hash is Ed25519 authenticated",
+    "unified_cloud_workspace": "shared restart-safe client presence, active thread, transcript and non-secret preferences across Windows/web/Android"
+  },
+  "feature_count": 34,
+  "hotfixes": {
+    "approval_input": "interactive risky-action prompts accept common affirmative forms such as yes/yep/okay/approve",
+    "cloud_thread_context": "Direct cloud chat uses request-scoped cloud thread history instead of leaking recent messages from another cloud thread.",
+    "cloud_turn_retry_deduplication": "Web Remote-authorization continuation reuses one turn_id so retrying the same user turn cannot duplicate cloud transcript entries.",
+    "cross_device_message_sync": "Web and Android poll the active cloud workspace and merge only unseen persisted message IDs.",
+    "florence_remote_code_cache": "setup pre-caches microsoft/Florence-2-base-ft remote implementation used by the icon-caption model config",
+    "local_device_bridge_contract": "shared request metadata accepted locally; remote-session provenance remains rejected",
+    "omniparser_dependencies": "headless runtime excludes conflicting demo/cloud/dev packages",
+    "omniparser_empty_ocr_guard": "full visual parse survives icon-only/low-text screenshots affected by upstream empty-OCR None iteration",
+    "omniparser_extras_filter": "headless dependency filter now excludes extras forms such as anthropic[bedrock,vertex] as well as bare package names",
+    "omniparser_full_device_control": "IRAS full parser now constructs YOLO/Florence on the configured device instead of upstream auto-CUDA selection; unsupported legacy CUDA capability falls back to CPU",
+    "omniparser_full_diagnostics": "vision status exposes full model state/device/warmup/error and setup prints HTTP failure detail",
+    "omniparser_openai_import": "Managed OmniParser retains the minimal openai==1.3.5 package required by upstream imports while excluding cloud/demo stacks and making no cloud model calls.",
+    "omniparser_optional_cleanup": "PowerShell 5.1 stderr warnings from optional pip-uninstall cleanup no longer abort setup; native exit code is handled explicitly",
+    "omniparser_ownership": "Windows persisted PID probing hardened for cross-process managed ownership",
+    "omniparser_repair_weights": "repair reuses live detector/Florence assets in place instead of deleting memory-mapped model.safetensors",
+    "risk_based_local_approvals": "routine local Spotify/media/WhatsApp-open/scroll actions auto-run at SAFE_ACTION; consequential actions retain approval; remote classification unchanged",
+    "spotify_error_toast_rejection": "Spotify can't-play-this-right-now/local-file toast is detected as a hard failure and IRAS retries another query-matched candidate instead of accepting Pause state.",
+    "spotify_fastpath": "device_spotify_play local CLI path no longer raises unexpected remote_session_id TypeError",
+    "spotify_now_playing_truth": "Playback verification scopes query evidence to the right now-playing panel/bottom transport metadata so library/search text cannot validate an unrelated active track.",
+    "spotify_pause_truth": "A connected Spotify device or successful shortcut is not considered playback; IRAS fails closed when the visible transport remains Play/paused.",
+    "spotify_query_bound_playback": "Query playback uses Spotify search URI first, ranks multiple semantic results, retries candidates, and activates only result-bound UIA/content Play controls; global Space/media-resume and unanchored green-button fallbacks are forbidden.",
+    "spotify_quick_search_overlay": "After selecting a semantic result, IRAS detects and dismisses Spotify Quick Search before touching content playback controls so the Chromium overlay cannot intercept the Play action.",
+    "spotify_semantic_result_selection": "Spotify no longer treats Shift+Enter as playback proof; it selects a query-matched UIA result, uses semantic/content Play with visual fallback, and requires visible playing state before success.",
+    "spotify_semantic_verification": "after Play, IRAS reads Spotify UIA state and only marks playback verified when Pause state and query-related evidence are visible",
+    "spotify_startup_sequencing": "Spotify play now uses open/focus -> visual readiness -> search -> search readiness -> play with URI/green-button fallbacks",
+    "spotify_uia_invoke": "Content Play prefers the existing audited Windows UI Automation InvokePattern/LegacyIAccessible default action, then scoped mouse/Space fallbacks, with visible playing-state verification after every attempt.",
+    "unified_cloud_workspace": "Windows cloud client, web/PWA and Android share persistent cloud thread/history/client presence without moving local device-control enforcement into the public server."
+  },
+  "local_regression": {
+    "android_companion_compile": "static-contract-validated; Android SDK/Gradle build is host-side",
+    "failed": 0,
+    "passed": 845
+  },
+  "managed_omniparser": {
+    "authenticated_lifecycle": true,
+    "configured_device_default": "cpu",
+    "configured_device_honored_by_full_parser": true,
+    "dedicated_managed_checkout": true,
+    "default_autostart": true,
+    "default_eager_start": true,
+    "default_external_attachment": false,
+    "dynamic_local_port_range": "8010-8020",
+    "easyocr_prewarm": true,
+    "empty_ocr_full_parse_guard": true,
+    "florence_base_ft_code_precached": true,
+    "full_model_error_telemetry": true,
+    "full_model_smoke_test_on_setup": true,
+    "maxwell_cuda_safe_fallback": true,
+    "microsoft_v2_weights": true,
+    "minimal_upstream_openai_import_dependency": "openai==1.3.5; import compatibility only, no cloud model call required",
+    "preserves_unmanaged_legacy_tree": true,
+    "watchdog": true
+  },
+  "master_control": {
+    "audit_preserved": true,
+    "cloud_attach_requires_local_master": true,
+    "critical_tool_authority": true,
+    "default_minutes": 30,
+    "emergency_stop_preserved": true,
+    "local_owner_activation": true,
+    "shell_power_opt_in": true,
+    "windows_uac_not_bypassed": true
+  },
+  "model_facing_v5_tool_count": 104,
+  "product": "IRAS",
   "professional_uiux": {
-    "design_language": "Obsidian dark workspace with indigo/cyan semantic accents",
-    "web_pwa": "adaptive navigation rail, responsive command center, structured chat, prompt starters, animated dialogs/cards/composer",
-    "windows_desktop": "native command-center shell, structured chat bubbles, custom approval dialog, fade/pulse/hover feedback",
     "android": "tonal dark surfaces, inset-aware layout, animated message groups, polished composer, accessible labels",
-    "motion": "functional micro-interactions, short natural easing, reduced-motion web fallback",
-    "external_ui_dependencies": false,
-    "security_boundaries_changed": false,
-    "viewport_locked_chat": true,
-    "markdown_messages": true,
-    "collapsible_code_blocks": true,
     "code_copy_actions": true,
+    "collapsible_code_blocks": true,
+    "design_language": "Obsidian dark workspace with indigo/cyan semantic accents",
+    "external_ui_dependencies": false,
     "fresh_cloud_thread_action": true,
+    "full_stack_run_guide": "docs/RUN_IRAS_FULL_STACK.md",
+    "markdown_messages": true,
+    "motion": "functional micro-interactions, short natural easing, reduced-motion web fallback",
     "official_user_supplied_logo_packaged": [
       "web-pwa",
       "windows-desktop",
       "android"
     ],
-    "full_stack_run_guide": "docs/RUN_IRAS_FULL_STACK.md"
-  }
+    "security_boundaries_changed": false,
+    "viewport_locked_chat": true,
+    "web_pwa": "adaptive navigation rail, responsive command center, structured chat, prompt starters, animated dialogs/cards/composer",
+    "windows_desktop": "native command-center shell, structured chat bubbles, custom approval dialog, fade/pulse/hover feedback"
+  },
+  "protected_boundaries_preserved": [
+    "src/iras/tools/registry.py",
+    "src/iras/remote_protocol.py",
+    "src/iras/safety_runtime.py",
+    "src/iras/remote_access.py",
+    "src/iras/device_bridge/executor.py",
+    "src/iras/device_bridge/agent.py"
+  ],
+  "release_date": "2026-09-20",
+  "release_name": "Complete Operating Layer - Professional UI/UX + Master Control",
+  "release_notes": [
+    "Unified cloud workspace shared across Windows, web and Android clients.",
+    "Professional adaptive UI/UX and motion system across web/PWA, Windows desktop and Android.",
+    "Viewport-locked chat workspace keeps the composer visible while history scrolls internally.",
+    "Safe local Markdown renderer adds professional headings, lists, inline code and collapsible/copyable code blocks without external UI libraries.",
+    "User-supplied IRAS logo is packaged across web/PWA, Windows desktop and Android branding.",
+    "Full PC + Cloud + Web + Android operating guide is packaged at docs/RUN_IRAS_FULL_STACK.md.",
+    "Owner-controlled Master Control provides bounded CRITICAL registered-tool authority with local-only activation and emergency-stop/audit preservation.",
+    "Web, Android and the Windows cloud client can attach ephemeral FULL Master Remote sessions only after the PC is locally armed.",
+    "Master-enabled local multi-agent workers can use the full registered tool surface; normal background workers remain READ-capped."
+  ],
+  "remote_protocol": 1,
+  "render_health_hotfix": {
+    "detailed_readiness_endpoint": "/ready",
+    "health_dependency_free": true,
+    "health_get": true,
+    "health_head": true,
+    "root_head": true
+  },
+  "unified_cloud_workspace": {
+    "clients": [
+      "windows-cloud-client",
+      "web-pwa",
+      "android"
+    ],
+    "cross_device_poll_sync": true,
+    "persistent_backend": "PostgreSQL when DATABASE_URL is configured; SQLite locally",
+    "remote_enforcement_unchanged": true,
+    "retry_deduplication": "client turn_id",
+    "secrets_stored_in_workspace": false,
+    "shared_active_thread": true,
+    "shared_message_history": true,
+    "stable_client_ids": true,
+    "thread_scoped_direct_chat_context": true
+  },
+  "version": "5.0.0-rc3"
 }

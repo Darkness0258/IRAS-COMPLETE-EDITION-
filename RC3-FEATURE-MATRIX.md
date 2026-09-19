@@ -1,6 +1,6 @@
 # IRAS v5.0.0 RC3 — Complete Feature Matrix
 
-RC3 declares **33 operating-layer feature families**. A feature is counted here only when the implementation is present, reachable through an IRAS control surface, protected by the existing permission/security model where state can change, and covered by local contract/regression tests.
+RC3 declares **34 operating-layer feature families**. A feature is counted here only when the implementation is present, reachable through an IRAS control surface, protected by the existing permission/security model where state can change, and covered by local contract/regression tests.
 
 | # | Feature | Operational surface |
 |---:|---|---|
@@ -36,7 +36,8 @@ RC3 declares **33 operating-layer feature families**. A feature is counted here 
 | 30 | Schema migrations | Persistent migration ledger and indexed RC3 schema upgrades |
 | 31 | Control Center UI | Feature matrix plus autonomy/artifact/recovery/capability/home/migration status |
 | 32 | Unified cloud workspace | Restart-safe client presence, shared active thread/history/preferences across Windows cloud client, web/PWA and Android |
-| 33 | Release engineering | Clean-tree/integrated validators, deterministic package builder and release manifest |
+| 33 | Master Control | Local owner-elevation with CRITICAL registered-tool authority, shell/power opt-in, cloud/web/mobile attachment only after local arming, emergency-stop/audit preservation |
+| 34 | Release engineering | Clean-tree/integrated validators, deterministic package builder and release manifest |
 
 ## Preserved enforcement boundary
 

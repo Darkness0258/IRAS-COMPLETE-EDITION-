@@ -12,6 +12,7 @@ from rich.panel import Panel
 
 from iras import __version__
 from iras.config import Settings
+from iras.master_control import MasterControl
 
 
 def _state_path() -> Path:
@@ -83,6 +84,8 @@ def main() -> None:
 
     state = _load_state()
     client_id = str(state.get("client_id") or f"pc_{uuid.uuid4().hex}")
+    master = MasterControl()
+    remote_session: dict | None = None
 
     with httpx.Client(base_url=server, timeout=120.0) as client:
         console.print(f"[dim]IRAS Cloud: {server}[/dim]")
@@ -129,6 +132,66 @@ def main() -> None:
         state.update({"client_id": client_id, "thread_id": thread_id, "server": server})
         _save_state(state)
 
+        def revoke_master_session() -> None:
+            nonlocal remote_session
+            if not remote_session:
+                return
+            try:
+                _request(
+                    client, "DELETE",
+                    f"/v1/remote/sessions/{remote_session.get('session_id')}",
+                    token=token,
+                )
+            except Exception:
+                pass
+            remote_session = None
+
+        def enable_master_session(minutes: int = 30) -> dict:
+            nonlocal remote_session
+            current = master.status()
+            if not current.get("enabled"):
+                console.print(
+                    Panel(
+                        "Master Control grants CRITICAL registered-tool authority, shell/power Remote capability, "
+                        "and suppresses per-action approval prompts for the bounded session.\n\n"
+                        "Emergency stop, audit, filesystem roots, Remote authentication and Windows/UAC remain enforced.",
+                        title="IRAS Master Control",
+                        border_style="red",
+                    )
+                )
+                phrase = console.input("[bold red]Type ENABLE MASTER CONTROL: [/bold red]").strip()
+                if phrase != "ENABLE MASTER CONTROL":
+                    raise RuntimeError("Master Control was not enabled.")
+                current = master.enable(
+                    minutes=minutes, allow_power=True, allow_shell=True, autonomous=True,
+                    source="cloud_client_local",
+                )
+
+            devices = _request(client, "GET", "/v1/devices", token=token).json().get("devices", [])
+            machine = os.getenv("COMPUTERNAME", "").strip().casefold()
+            device = next(
+                (d for d in devices if d.get("online") and str(d.get("display_name") or "").strip().casefold() == machine),
+                None,
+            ) or next(
+                (d for d in devices if d.get("online") and "windows" in str(d.get("platform") or "").lower()),
+                None,
+            )
+            if not device:
+                raise RuntimeError("No paired Windows device is online for Master Control.")
+            remaining = current.get("remaining_seconds")
+            ttl = max(60, min(12 * 60 * 60, int(remaining or minutes * 60)))
+            remote_session = _request(
+                client, "POST", "/v1/remote/sessions", token=token,
+                headers={"X-Device-ID": client_id},
+                json={
+                    "device_id": device.get("device_id"),
+                    "mode": "full",
+                    "ttl_seconds": ttl,
+                    "scopes": ["windows", "master"],
+                },
+            ).json()
+            return remote_session
+
         if args.history:
             history = _request(
                 client,
@@ -145,7 +208,7 @@ def main() -> None:
                 f"[bold]IRAS Cloud Client {__version__}[/bold]\n"
                 f"Server: {server}\n"
                 f"Thread: {thread_id}\n"
-                "Shared with web + Android. Commands: /new, /history, /exit"
+                "Shared with web + Android. Commands: /new, /history, /master, /master on, /master off, /exit"
             )
         )
 
@@ -172,6 +235,37 @@ def main() -> None:
                 _save_state(state)
                 console.print(f"[dim]New shared thread: {thread_id}[/dim]")
                 continue
+            if text.lower() in {"/master", "/master status"}:
+                local_status = master.status()
+                console.print_json(data={
+                    "local_master": local_status,
+                    "cloud_master_session": {
+                        "active": bool(remote_session),
+                        "session_id": (remote_session or {}).get("session_id"),
+                        "expires_at": (remote_session or {}).get("expires_at"),
+                    },
+                })
+                continue
+            if text.lower().startswith("/master on"):
+                minutes = 30
+                parts = text.split()
+                for item in parts:
+                    if item.isdigit():
+                        minutes = int(item)
+                        break
+                try:
+                    session = enable_master_session(minutes)
+                    console.print(
+                        f"[bold red]MASTER CONTROL ACTIVE[/bold red] · "
+                        f"{session.get('max_permission')} · session {str(session.get('session_id') or '')[:12]}"
+                    )
+                except Exception as exc:
+                    console.print(f"[bold red]Master Control failed:[/bold red] {exc}")
+                continue
+            if text.lower() in {"/master off", "/master disable"}:
+                revoke_master_session()
+                console.print_json(data=master.disable(source="cloud_client_local"))
+                continue
             if text.lower() == "/history":
                 history = _request(
                     client,
@@ -190,7 +284,13 @@ def main() -> None:
                     "POST",
                     "/v1/chat",
                     token=token,
-                    headers={"X-Device-ID": client_id},
+                    headers={
+                        "X-Device-ID": client_id,
+                        **({
+                            "X-IRAS-Remote-Session-ID": str(remote_session.get("session_id") or ""),
+                            "X-IRAS-Remote-Token": str(remote_session.get("session_token") or ""),
+                        } if remote_session else {}),
+                    },
                     json={
                         "message": text,
                         "device_id": client_id,
@@ -205,6 +305,8 @@ def main() -> None:
                 console.print(f"[bold magenta]IRAS > [/bold magenta]{response.get('response','')}")
             except Exception as exc:
                 console.print(f"[bold red]Cloud error:[/bold red] {exc}")
+
+        revoke_master_session()
 
 
 if __name__ == "__main__":

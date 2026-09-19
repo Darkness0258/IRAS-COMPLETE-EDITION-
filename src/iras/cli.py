@@ -19,6 +19,7 @@ from iras.persona import build_system_prompt
 from iras.vision.omniparser_runtime import OmniParserRuntimeManager
 from iras.remote_access import RemoteAccessPolicy
 from iras.safety_runtime import EmergencyStop
+from iras.master_control import MasterControl
 
 
 def _voice_intent(text: str):
@@ -95,6 +96,13 @@ def main():
     ap.add_argument('--remote-disarm', action='store_true', help='disarm laptop-side remote access')
     ap.add_argument('--emergency-stop', action='store_true', help='trip the controller-level emergency stop')
     ap.add_argument('--emergency-clear', action='store_true', help='clear the emergency stop locally')
+    ap.add_argument('--master-status', action='store_true', help='show local owner Master Control status')
+    ap.add_argument('--master-enable', nargs='?', const=30, type=int, metavar='MINUTES', help='enable local Master Control for a bounded number of minutes (default 30)')
+    ap.add_argument('--master-persistent', action='store_true', help='keep Master Control active until explicitly disabled')
+    ap.add_argument('--master-no-power', action='store_true', help='keep restart/shutdown disabled while Master Control is active')
+    ap.add_argument('--master-no-shell', action='store_true', help='keep remote command execution disabled while Master Control is active')
+    ap.add_argument('--master-no-autonomy', action='store_true', help='keep background multi-agent workers read-only while Master Control is active')
+    ap.add_argument('--master-disable', action='store_true', help='disable Master Control and restore the previous remote policy')
     ap.add_argument('--vision-status', action='store_true', help='show OmniParser managed-runtime status')
     ap.add_argument('--vision-start', action='store_true', help='start/attach to the managed OmniParser runtime')
     ap.add_argument('--vision-restart', action='store_true', help='restart the IRAS-managed OmniParser runtime')
@@ -107,6 +115,35 @@ def main():
     vision_runtime = OmniParserRuntimeManager()
     remote_policy = RemoteAccessPolicy()
     emergency_stop = EmergencyStop()
+    master_control = MasterControl(remote_policy=remote_policy, emergency_stop=emergency_stop)
+
+    if args.master_status:
+        c.print_json(data=master_control.status())
+        return
+    if args.master_disable:
+        c.print_json(data=master_control.disable(source="cli"))
+        return
+    if args.master_enable is not None:
+        c.print(Panel(
+            "Master Control gives IRAS CRITICAL registered-tool authority for this PC, "
+            "suppresses per-action approval prompts, and can arm shell/power Remote capabilities.\n\n"
+            "Emergency stop, audit logging, configured filesystem roots, Remote authentication, "
+            "and Windows/UAC boundaries remain enforced.",
+            title="IRAS Master Control", border_style="red"
+        ))
+        phrase = c.input('[bold red]Type ENABLE MASTER CONTROL to continue: [/bold red]').strip()
+        if phrase != "ENABLE MASTER CONTROL":
+            c.print('[yellow]Master Control was not enabled.[/yellow]')
+            return
+        c.print_json(data=master_control.enable(
+            minutes=args.master_enable,
+            persistent=args.master_persistent,
+            allow_power=not args.master_no_power,
+            allow_shell=not args.master_no_shell,
+            autonomous=not args.master_no_autonomy,
+            source="cli",
+        ))
+        return
 
     if args.emergency_stop:
         remote_policy.disarm(kill_switch=True)
@@ -197,7 +234,8 @@ def main():
             f'Vision: UIA + OmniParser ({"managed eager-start + watchdog" if vision_runtime.autostart_enabled() and vision_runtime.eager_start_enabled() else "manual/external"})\n'
             f'Remote Windows: {remote_policy.status().get("mode")} ({"armed" if remote_policy.status().get("enabled") else "disarmed"})\n'
             f'Emergency stop: {"ACTIVE" if emergency_stop.tripped() else "clear"}\n'
-            'Commands: voice, listen, vision status/start/restart/stop, remote status, remote arm full, remote disarm, emergency stop, personality status, /exit.'
+            f'Master Control: {"ON" if rt.master.status().get("enabled") else "off"}\n'
+            'Commands: master status/enable/disable, voice, listen, vision status/start/restart/stop, remote status, remote arm full, remote disarm, emergency stop, personality status, /exit.'
         )
     )
     voice = s.voice_replies
@@ -217,6 +255,31 @@ def main():
             break
 
         pq = ' '.join(q.lower().strip().split())
+
+        if pq in {'master status', '/master status', 'master'}:
+            c.print_json(data=rt.master.status())
+            continue
+        if pq in {'master disable', '/master disable', 'master off', '/master off'}:
+            c.print_json(data=rt.master.disable(source="interactive_cli"))
+            continue
+        if pq.startswith('master enable') or pq.startswith('/master enable') or pq in {'master on', '/master on'}:
+            parts = pq.replace('/', '').split()
+            minutes = 30
+            for item in parts:
+                if item.isdigit():
+                    minutes = int(item)
+                    break
+            c.print(Panel(
+                "This enables CRITICAL tool execution without per-action prompts for the bounded Master session. "
+                "Type the exact phrase below to prove local owner intent.",
+                title="Master Control", border_style="red"
+            ))
+            phrase = c.input('[bold red]Type ENABLE MASTER CONTROL: [/bold red]').strip()
+            if phrase == 'ENABLE MASTER CONTROL':
+                c.print_json(data=rt.master.enable(minutes=minutes, allow_power=True, allow_shell=True, autonomous=True, source='interactive_cli'))
+            else:
+                c.print('[yellow]Master Control was not enabled.[/yellow]')
+            continue
 
         if pq in {'emergency stop', '/emergency stop', 'stop everything'}:
             remote_policy.disarm(kill_switch=True)

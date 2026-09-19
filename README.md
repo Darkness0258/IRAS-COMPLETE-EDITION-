@@ -342,3 +342,8 @@ Local interactive use no longer asks for approval for bounded routine actions su
 
 Spotify playback now follows a deterministic sequence: open/focus Spotify, wait for the real window to become ready, enter the query, wait for the search UI to settle, then issue Spotify's own play action. URI navigation and the visually detected green Play button are compatibility fallbacks rather than startup-racing primary paths.
 
+
+
+### Master Control
+
+RC3 includes a local-owner **Master Control** mode for bounded CRITICAL registered-tool execution across local IRAS, the Windows cloud client, web/PWA and Android. The PC must be locally armed first (`iras --master-enable 30`); web/mobile cannot enable elevation by themselves. Emergency stop, Remote authentication, filesystem roots, audit logging and Windows/UAC remain enforced. See `docs/MASTER_CONTROL_RC3.md`.

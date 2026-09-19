@@ -17,6 +17,7 @@ from iras.safety_runtime import EmergencyStop
 from iras.security.secret_store import protection_backend
 from iras.voice.stt import Listener
 from iras.vision.omniparser_runtime import OmniParserRuntimeManager
+from iras.master_control import MasterControl
 
 
 def _free_gb(path: Path) -> float:
@@ -191,6 +192,19 @@ def run(settings):
         "OmniParser ready",
         omni_ok,
         omni_detail,
+    )
+
+    master = MasterControl().status()
+    add(
+        "Master Control",
+        True,
+        (
+            f"{'ENABLED' if master.get('enabled') else 'off'} "
+            f"permission={master.get('permission_level') or 'normal'} "
+            f"remaining={master.get('remaining_seconds')} "
+            f"shell={master.get('allow_shell')} power={master.get('allow_power')} "
+            f"autonomous={master.get('autonomous')}"
+        ),
     )
 
     remote = RemoteAccessPolicy().status()

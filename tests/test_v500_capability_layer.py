@@ -66,7 +66,7 @@ def test_v5_feature_inventory(tmp_path, monkeypatch):
     rt = V5Runtime(tmp_path / "v5")
     status = rt.status()
     assert status["version"] == "5.0.0-rc3"
-    assert status["feature_count"] == 33
+    assert status["feature_count"] == 34
     assert set(status["features"]) == set(FEATURES)
     assert status["persistent_backend"] == "sqlite"
 

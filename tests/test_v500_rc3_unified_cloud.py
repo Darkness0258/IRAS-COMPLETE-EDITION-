@@ -13,7 +13,7 @@ def store(tmp_path):
 
 def test_cloud_workspace_is_feature_family():
     assert "unified_cloud_workspace" in FEATURES
-    assert len(FEATURES) == 33
+    assert len(FEATURES) == 34
 
 
 def test_cloud_clients_share_one_active_thread_and_history(tmp_path):

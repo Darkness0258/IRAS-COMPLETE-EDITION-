@@ -48,14 +48,14 @@ def main() -> None:
     print("=== IRAS v5.0 RC3 COMPLETE OPERATING LAYER INTEGRATED VALIDATION ===")
     assert __version__ == "5.0.0-rc3"
     assert REMOTE_PROTOCOL_VERSION == 1
-    assert len(FEATURES) == 33
-    assert len(set(FEATURES)) == 33
+    assert len(FEATURES) == 34
+    assert len(set(FEATURES)) == 34
 
     with tempfile.TemporaryDirectory() as td:
         os.environ["IRAS_VAULT_MASTER_KEY"] = EncryptedSync.new_key()
         rt = V5Runtime(td)
         status = rt.status()
-        assert status["feature_count"] == 33
+        assert status["feature_count"] == 34
         assert {x["feature"] for x in status["feature_status"]} == set(FEATURES)
         assert status["remote_protocol"] == 1
         assert status["migrations"]["complete"] is True
@@ -90,6 +90,11 @@ def main() -> None:
     ):
         assert endpoint in cloud
     assert "IRAS Autonomy Control Center" in web and "Feature matrix" in web
+    assert "IRAS Master Control" in web and 'id="master"' in web
+    master = (ROOT / "src/iras/master_control.py").read_text(encoding="utf-8")
+    master_tools_src = (ROOT / "src/iras/tools/master.py").read_text(encoding="utf-8")
+    assert "MasterPermissionEngine" in master and "ENABLE MASTER CONTROL" not in master
+    assert "master_control_status" in master_tools_src and "master_tools(master)" in local_boot
     assert "v5_tools(runtime.v5)" in boot
     assert "OrchestrationManager" in local_boot and "PermissionLevel.READ" in local_boot
     assert "/v1/v5/mobile/register" in android and "showCompanionApproval" in android
@@ -133,7 +138,7 @@ def main() -> None:
     manifest = json.loads((ROOT / "RELEASE-MANIFEST.json").read_text(encoding="utf-8"))
     assert manifest["version"] == "5.0.0-rc3"
     assert manifest["remote_protocol"] == 1
-    assert manifest["feature_count"] == 33
+    assert manifest["feature_count"] == 34
     assert manifest["managed_omniparser"]["default_eager_start"] is True
     assert manifest["managed_omniparser"]["preserves_unmanaged_legacy_tree"] is True
     assert manifest["cloud_model_acceptance_used"] is False

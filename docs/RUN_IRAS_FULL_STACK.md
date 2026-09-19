@@ -218,3 +218,14 @@ Then push `main`; Render auto-deploys the Cloud service. Confirm `/health`, GitH
 ### RC3 remote pairing compatibility
 
 `setup-remote-windows.ps1` validates the deployed cloud by `service_id=iras-cloud` and `remote_protocol=1`. The release version string is informational, so protocol-compatible RC3/v5 cloud releases are accepted instead of being rejected by the old v4-only version guard.
+
+
+## Master Control
+
+Master Control is the local owner-elevation switch. Enable it on the Windows PC with:
+
+```powershell
+iras --master-enable 30
+```
+
+Then attach a Master session from the web sidebar, Android Master button, or `/master on` inside `iras-cloud-client`. Use `iras --master-disable` or the emergency stop to end elevation. See `docs/MASTER_CONTROL_RC3.md` for the complete security/operation model.

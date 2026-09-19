@@ -25,7 +25,7 @@ def runtime(tmp_path, monkeypatch):
 def test_every_rc3_feature_has_operating_surface(tmp_path, monkeypatch):
     rt = runtime(tmp_path, monkeypatch)
     names = {tool.name for tool in make_tools(rt)}
-    assert len(FEATURES) == 33
+    assert len(FEATURES) == 34
     required = {
         "v5_status", "v5_feature_status", "v5_migration_status",
         "v5_schedule_add", "v5_monitor_add", "v5_visual_fuse", "v5_browser_navigate",

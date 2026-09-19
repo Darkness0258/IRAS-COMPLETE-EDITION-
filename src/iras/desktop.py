@@ -4,6 +4,7 @@ import json
 import queue
 import threading
 import tkinter as tk
+from tkinter import messagebox, simpledialog
 from pathlib import Path
 
 from iras.bootstrap import build_runtime
@@ -42,12 +43,14 @@ class App:
         self.listener = Listener(self.settings.whisper_model, self.settings.listen_seconds)
         self.voice_on = tk.BooleanVar(value=True)
         self.rt = build_runtime(self.settings, self.approve)
+        self.master = self.rt.master
         self._pulse_on = True
 
         self._build_ui()
         self.append("IRAS", "Online. Your local intelligence workspace is ready.")
         self.root.after(100, self.poll)
         self.root.after(250, self._pulse_status)
+        self.root.after(400, self._refresh_master_ui)
         self.root.bind("<Control-l>", lambda _e: self.entry.focus_set())
         self.root.bind("<Escape>", lambda _e: self.entry.focus_set())
         self._fade_in()
@@ -146,6 +149,24 @@ class App:
             )
             btn.pack(fill="x", pady=2)
 
+        self.master_button = tk.Button(
+            nav,
+            text="  Master Control · OFF",
+            command=self._toggle_master,
+            anchor="w",
+            bg="#090E18",
+            fg="#AAB5CA",
+            activebackground="#29131A",
+            activeforeground="#FFD8DF",
+            borderwidth=0,
+            relief="flat",
+            padx=12,
+            pady=10,
+            font=self._font(10, "bold"),
+            cursor="hand2",
+        )
+        self.master_button.pack(fill="x", pady=(8, 2))
+
         info = tk.Frame(sidebar, bg="#0D1422", highlightbackground=self.LINE, highlightthickness=1)
         info.pack(side="bottom", fill="x", padx=12, pady=12)
         row = tk.Frame(info, bg="#0D1422")
@@ -231,6 +252,62 @@ class App:
             highlightthickness=0,
         )
         voice.pack(side="right")
+
+    def _toggle_master(self):
+        state = self.master.status()
+        if state.get("enabled"):
+            if messagebox.askyesno(
+                "Disable Master Control",
+                "Disable Master Control now and restore the previous Remote policy?",
+                parent=self.root,
+            ):
+                self.master.disable(source="desktop")
+                self._set_status("Master Control disabled")
+                self._refresh_master_ui()
+            return
+
+        phrase = simpledialog.askstring(
+            "Enable Master Control",
+            "Master Control grants IRAS CRITICAL registered-tool authority, shell/power Remote access, "
+            "and autonomous execution for 30 minutes.\n\nEmergency stop, audit, configured filesystem roots, "
+            "Remote authentication and Windows/UAC remain enforced.\n\nType ENABLE MASTER CONTROL to continue:",
+            parent=self.root,
+        )
+        if phrase != "ENABLE MASTER CONTROL":
+            self._set_status("Master Control was not enabled")
+            return
+        try:
+            self.master.enable(
+                minutes=30, allow_power=True, allow_shell=True, autonomous=True, source="desktop"
+            )
+            self._set_status("MASTER CONTROL ACTIVE · 30 minute owner session")
+        except Exception as exc:
+            messagebox.showerror("Master Control", str(exc), parent=self.root)
+        self._refresh_master_ui()
+
+    def _refresh_master_ui(self):
+        if not hasattr(self, "master_button"):
+            return
+        state = self.master.status()
+        if state.get("enabled"):
+            remaining = state.get("remaining_seconds")
+            if remaining is None:
+                suffix = "PERSISTENT"
+            else:
+                minutes = max(1, int((int(remaining) + 59) // 60))
+                suffix = f"{minutes}m"
+            self.master_button.configure(
+                text=f"  Master Control · ON · {suffix}",
+                bg="#3A111B",
+                fg="#FFD2DC",
+            )
+        else:
+            self.master_button.configure(
+                text="  Master Control · OFF",
+                bg="#090E18",
+                fg="#AAB5CA",
+            )
+        self.root.after(1000, self._refresh_master_ui)
 
     def _fade_in(self):
         try:

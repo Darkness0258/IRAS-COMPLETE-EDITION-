@@ -5,6 +5,7 @@ from iras.config import Settings
 from iras.models import PermissionLevel
 from iras.security.audit import AuditLogger
 from iras.security.permissions import PermissionEngine
+from iras.master_control import MasterControl, MasterPermissionEngine
 from iras.memory.store import MemoryStore
 from iras.tools.registry import ToolRegistry
 from iras.tools.filesystem import TOOLS as FILES
@@ -33,22 +34,24 @@ from iras.persona import build_system_prompt
 from iras.v5 import build_v5_runtime
 from iras.tools.v5 import make_tools as v5_tools
 from iras.tools.vision import make_tools as vision_tools
+from iras.tools.master import make_tools as master_tools
 from iras.vision.omniparser_runtime import OmniParserRuntimeManager
 from iras.orchestration import OrchestrationManager
 
 class Runtime:
-    def __init__(self,settings,agent,registry,memory,audit,browser,automations,personality,v5=None,vision=None):
-        self.settings=settings; self.agent=agent; self.registry=registry; self.memory=memory; self.audit=audit; self.browser=browser; self.automations=automations; self.personality=personality; self.v5=v5; self.vision=vision
+    def __init__(self,settings,agent,registry,memory,audit,browser,automations,personality,v5=None,vision=None,master=None):
+        self.settings=settings; self.agent=agent; self.registry=registry; self.memory=memory; self.audit=audit; self.browser=browser; self.automations=automations; self.personality=personality; self.v5=v5; self.vision=vision; self.master=master
 
 def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.CRITICAL):
     s=settings or Settings.load(); audit=AuditLogger(s.audit_path); memory=MemoryStore(s.db_path); auto=PermissionLevel(max(0,min(s.auto_permission_level,3)))
-    perms=PermissionEngine(auto,approval_callback,s.always_confirm_critical,hard_cap); reg=ToolRegistry(perms,audit); browser=BrowserSession(); autos=AutomationStore(memory); personality=AdaptivePersonality(memory,audit,enabled=s.adaptive_personality)
+    master=MasterControl()
+    perms=MasterPermissionEngine(auto,approval_callback,s.always_confirm_critical,hard_cap,master_control=master); reg=ToolRegistry(perms,audit); browser=BrowserSession(); autos=AutomationStore(memory); personality=AdaptivePersonality(memory,audit,enabled=s.adaptive_personality)
     local_device = LocalDeviceBridgeStore()
     skill_path = s.data_dir / "app_skills.json"
     app_skills = PersistentSkillStore(skill_path)
     os.environ["IRAS_SKILL_STORE"] = str(skill_path)
     vision = OmniParserRuntimeManager()
-    for t in [*FILES,*SHELL,*SYSTEM,*WEB,*GIT,*API_ACCESS,*REMOTE,*memory_tools(memory),*personality_tools(personality),*browser_tools(browser),*automation_tools(autos),*device_bridge_tools(local_device),*device_skill_tools(local_device, app_skills),*vision_tools(vision)]: reg.register(t)
+    for t in [*FILES,*SHELL,*SYSTEM,*WEB,*GIT,*API_ACCESS,*REMOTE,*memory_tools(memory),*personality_tools(personality),*browser_tools(browser),*automation_tools(autos),*device_bridge_tools(local_device),*device_skill_tools(local_device, app_skills),*vision_tools(vision),*master_tools(master)]: reg.register(t)
     if s.provider == 'demo':
         provider = DemoProvider()
     elif s.provider == 'openrouter':
@@ -84,9 +87,25 @@ def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.
         return [{"task_id":"work","title":"Execute read-only objective","prompt":objective,"role":"general"}]
 
     def local_worker(prompt, context):
-        worker_perms = PermissionEngine(PermissionLevel.READ, None, True, PermissionLevel.READ)
+        master_state = master.status()
+        master_autonomy = bool(master_state.get("enabled") and master_state.get("autonomous"))
+        if master_autonomy:
+            worker_perms = MasterPermissionEngine(
+                PermissionLevel.CRITICAL, None, False, PermissionLevel.CRITICAL, master_control=master
+            )
+        else:
+            worker_perms = PermissionEngine(PermissionLevel.READ, None, True, PermissionLevel.READ)
         worker_reg = ToolRegistry(worker_perms, audit)
-        for tool in [*FILES, *WEB, *GIT, *API_ACCESS, *memory_tools(memory), *device_bridge_tools(local_device), *v5_tools(v5)]:
+        worker_browser = BrowserSession()
+        worker_tools = (
+            [*FILES, *SHELL, *SYSTEM, *WEB, *GIT, *API_ACCESS, *REMOTE,
+             *memory_tools(memory), *personality_tools(personality), *browser_tools(worker_browser),
+             *automation_tools(autos), *device_bridge_tools(local_device),
+             *device_skill_tools(local_device, app_skills), *vision_tools(vision), *master_tools(master), *v5_tools(v5)]
+            if master_autonomy
+            else [*FILES, *WEB, *GIT, *API_ACCESS, *memory_tools(memory), *device_bridge_tools(local_device), *v5_tools(v5)]
+        )
+        for tool in worker_tools:
             if tool.name not in worker_reg.names():
                 worker_reg.register(tool)
         if s.provider == 'demo':
@@ -104,8 +123,19 @@ def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.
             worker_prompt += "\n\nDependency results:\n" + json.dumps(deps, ensure_ascii=False, default=str)[:20000]
         worker_agent = IRASAgent(worker_provider, worker_reg, memory, audit, s.max_agent_steps, system_prompt=build_system_prompt(s.voice_profile), personality=personality, voice_profile=s.voice_profile)
         try:
-            return {"result": worker_agent.handle(worker_prompt), "metrics": {"permission_cap": "READ", "local": True}}
+            return {
+                "result": worker_agent.handle(worker_prompt),
+                "metrics": {
+                    "permission_cap": "CRITICAL" if master_autonomy else "READ",
+                    "local": True,
+                    "master_control": master_autonomy,
+                },
+            }
         finally:
+            try:
+                worker_browser.close()
+            except Exception:
+                pass
             close = getattr(worker_provider, "close", None)
             if callable(close):
                 close()
@@ -113,4 +143,4 @@ def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.
     v5.orchestration_manager = OrchestrationManager(
         local_worker, local_plan, journal_path=s.data_dir / "v5" / "orchestration_runs.json"
     )
-    return Runtime(s,agent,reg,memory,audit,browser,autos,personality,v5=v5,vision=vision)
+    return Runtime(s,agent,reg,memory,audit,browser,autos,personality,v5=v5,vision=vision,master=master)

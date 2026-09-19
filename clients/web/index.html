@@ -117,6 +117,7 @@
     dialog[open]{animation:dialogIn .2s var(--ease) forwards}dialog::backdrop{background:rgba(3,6,12,.72);backdrop-filter:blur(8px);animation:backdropIn .18s ease-out both}
     @keyframes dialogIn{to{opacity:1;transform:none}}@keyframes backdropIn{from{opacity:0}to{opacity:1}}
     dialog h3{margin:0 0 14px;font-size:19px;font-weight:650;letter-spacing:-.02em}dialog label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-top:10px}dialog input{width:100%;margin:6px 0 10px}.row{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}.row button,dialog button{border:1px solid var(--line-strong);background:#151c2b;color:#eef2ff;border-radius:11px;padding:10px 12px;transition:.16s var(--ease)}.row button:hover,dialog button:hover{background:#1a2335;transform:translateY(-1px)}
+    .master-on{background:linear-gradient(135deg,rgba(91,20,35,.96),rgba(49,15,27,.96))!important;border-color:rgba(255,99,129,.42)!important;color:#ffd7df!important;box-shadow:0 0 0 1px rgba(255,99,129,.08),0 10px 32px rgba(82,12,28,.26)}.master-warning{border:1px solid rgba(255,99,129,.28);background:rgba(62,15,27,.34);border-radius:14px;padding:12px;color:#ffc7d2;line-height:1.55}.master-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin:12px 0}.master-metric{border:1px solid var(--line);background:rgba(9,14,23,.72);border-radius:14px;padding:12px}.master-metric b{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}.master-metric span{font-weight:700}
     .provider-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin:12px 0}.provider-card{border:1px solid var(--line);background:linear-gradient(145deg,rgba(16,22,35,.92),rgba(10,15,24,.92));border-radius:16px;padding:13px;transition:.18s var(--ease)}.provider-card:hover{border-color:rgba(139,156,255,.24);transform:translateY(-2px)}.provider-head{display:flex;justify-content:space-between;gap:8px;font-weight:700}.provider-state{font-size:10px;text-transform:uppercase;opacity:.8}.provider-meta{font-size:12px;color:var(--muted);line-height:1.5;margin-top:7px;word-break:break-word}.sub{color:var(--muted);font-size:12px;line-height:1.5}
 
     @media(max-width:980px){
@@ -144,6 +145,7 @@
       <button id="providers" type="button"><span class="nav-icon">◫</span><span>Providers</span></button>
       <button id="v5control" type="button"><span class="nav-icon">◎</span><span>Autonomy</span></button>
       <button id="remote" type="button"><span class="nav-icon">◈</span><span>Remote</span></button>
+      <button id="master" type="button"><span class="nav-icon">⚡</span><span>Master</span></button>
       <button id="settings" type="button"><span class="nav-icon">⚙</span><span>Settings</span></button>
     </nav>
     <div class="sidebar-spacer"></div>
@@ -245,6 +247,18 @@ Summarize the current project state"></textarea>
   <div class="row"><button id="v5Refresh">Refresh</button><button id="v5Close">Close</button></div>
 </dialog>
 
+<dialog id="masterDlg" style="max-width:720px">
+  <h3>IRAS Master Control</h3>
+  <div class="master-warning"><b>Owner elevation.</b> Master Control gives IRAS CRITICAL registered-tool authority for the bounded session, including shell/power when locally armed. Emergency stop, audit logging, configured filesystem roots, Remote authentication, and Windows/UAC remain enforced.</div>
+  <div class="master-grid">
+    <div class="master-metric"><b>PC master state</b><span id="masterLocalState">Checking…</span></div>
+    <div class="master-metric"><b>Cloud master session</b><span id="masterCloudState">Off</span></div>
+    <div class="master-metric"><b>Autonomy</b><span id="masterAutonomyState">—</span></div>
+  </div>
+  <pre id="masterOut">Master Control must be enabled locally on the Windows PC before web/mobile can attach a Master session. On the PC run: iras --master-enable 30</pre>
+  <div class="row"><button id="masterRefresh">Refresh</button><button class="primary" id="masterEnable">Attach Master Session</button><button id="masterDisable">End Web Master Session</button><button id="masterClose">Close</button></div>
+</dialog>
+
 <dialog id="directDlg">
   <h3>Direct remote action</h3>
   <div class="sub" style="margin-bottom:10px">Model-independent control. Every action is still limited by the active remote session and the laptop's local policy.</div>
@@ -261,12 +275,13 @@ const $=s=>document.querySelector(s);
 const chat=$("#chat"),msg=$("#msg"),status=$("#status"),welcome=$("#welcome");
 const cfg=$("#cfg"),server=$("#server"),token=$("#token"),wake=$("#wake");
 const handsButton=$("#handsfree");
-const remoteButton=$("#remote"),screenButton=$("#screen"),directButton=$("#direct"),tasksButton=$("#tasks"),providersButton=$("#providers"),v5Button=$("#v5control");
+const remoteButton=$("#remote"),masterButton=$("#master"),screenButton=$("#screen"),directButton=$("#direct"),tasksButton=$("#tasks"),providersButton=$("#providers"),v5Button=$("#v5control");
 const screenDlg=$("#screenDlg"),screenImg=$("#screenImg");
 const directDlg=$("#directDlg"),directAction=$("#directAction"),directArgs=$("#directArgs"),directOut=$("#directOut");
 const tasksDlg=$("#tasksDlg"),taskInput=$("#taskInput"),taskOut=$("#taskOut"),goalInput=$("#goalInput");
 const providersDlg=$("#providersDlg"),providerGrid=$("#providerGrid"),providerSummary=$("#providerSummary");
 const v5Dlg=$("#v5Dlg"),v5Summary=$("#v5Summary"),v5Out=$("#v5Out");
+const masterDlg=$("#masterDlg"),masterOut=$("#masterOut"),masterLocalState=$("#masterLocalState"),masterCloudState=$("#masterCloudState"),masterAutonomyState=$("#masterAutonomyState");
 let activeGoalRunId="",goalPollGeneration=0,providerStatusGeneration=0;
 const announcedGoalRuns=new Set(),chatGoalWatchers=new Set();
 
@@ -503,6 +518,18 @@ function updateRemoteButton(){
   const s=remoteSession();
   remoteButton.textContent=s?"Remote: "+String(s.mode||"on").replace("_"," "):"Remote";
   remoteButton.classList.toggle("active",!!s);
+  updateMasterButton();
+}
+
+function masterRemoteSession(){
+  const s=remoteSession();
+  return s&&(s.scopes||[]).map(x=>String(x).toLowerCase()).includes("master")?s:null;
+}
+
+function updateMasterButton(){
+  const active=!!masterRemoteSession();
+  masterButton.classList.toggle("master-on",active);
+  masterButton.querySelector("span:last-child").textContent=active?"Master · ON":"Master";
 }
 
 function remoteHeaders(){
@@ -513,26 +540,33 @@ function remoteHeaders(){
   }:{};
 }
 
-async function createRemoteSession(){
+async function createRemoteSession(options={}){
   const c=config();
   if(!c.token){cfg.showModal();return}
   const base=c.server||location.origin;
+  const mode=String(options.mode||"full");
+  const ttl=Math.max(60,Math.min(Number(options.ttl_seconds||1800),12*60*60));
+  const scopes=Array.isArray(options.scopes)&&options.scopes.length?options.scopes:["windows"];
   status.textContent="Connecting to your Windows PC...";
   const devicesResponse=await fetch(base+"/v1/devices",{headers:{"Authorization":"Bearer "+c.token}});
   if(!devicesResponse.ok)throw new Error((await devicesResponse.text())||("HTTP "+devicesResponse.status));
   const devices=(await devicesResponse.json()).devices||[];
   const device=devices.find(d=>d.online&&String(d.platform||"").toLowerCase().includes("windows"))||devices.find(d=>d.online);
   if(!device)throw new Error("No paired IRAS computer is online.");
-  if(!confirm("Enable a 30-minute FULL remote-control session for "+device.display_name+"? The laptop's local policy is still the final permission boundary."))return;
+  if(options.confirm!==false){
+    const label=mode==="full"?"FULL":"READ-ONLY";
+    if(!confirm((options.confirmText||(`Enable a ${Math.ceil(ttl/60)}-minute ${label} remote-control session for ${device.display_name}?`))+"\n\nThe laptop's local policy remains the final permission boundary."))return null;
+  }
   const response=await fetch(base+"/v1/remote/sessions",{
     method:"POST",
     headers:{"Content-Type":"application/json","Authorization":"Bearer "+c.token,"X-Device-ID":"web"},
-    body:JSON.stringify({device_id:device.device_id,mode:"full",ttl_seconds:1800,scopes:["windows"]})
+    body:JSON.stringify({device_id:device.device_id,mode,ttl_seconds:ttl,scopes})
   });
   if(!response.ok)throw new Error((await response.text())||("HTTP "+response.status));
   const session=await response.json();
   setRemoteSession(session);
-  status.textContent="Full remote session active for 30 minutes";
+  status.textContent=mode==="full"?"Full remote session active":"Read-only remote session active";
+  return session;
 }
 
 async function revokeRemoteSession(){
@@ -549,6 +583,73 @@ async function toggleRemote(){
     if(remoteSession())await revokeRemoteSession();
     else await createRemoteSession();
   }catch(e){status.textContent="Remote error: "+e.message}
+}
+
+async function localMasterStatus(){
+  let temporary=false;
+  if(!remoteSession()){
+    const created=await createRemoteSession({mode:"read_only",ttl_seconds:300,scopes:["windows"],confirm:false});
+    if(!created)throw new Error("Could not create a read-only status session.");
+    temporary=true;
+  }
+  try{
+    const info=(await invokeRemoteAction("system_info",{},30))||{};
+    const user=String(info.user||"").trim();
+    if(!user)return {enabled:false,reason:"Windows user could not be determined"};
+    const masterPath=`C:\\Users\\${user}\\.iras\\master_control.json`;
+    let raw;
+    try{raw=await invokeRemoteAction("read_text",{path:masterPath,max_chars:12000},30)}catch(_){return {enabled:false};}
+    let data={};
+    try{data=JSON.parse(String(raw?.text||raw?.content||raw||"{}"))}catch(_){data={};}
+    if(data.enabled&&!data.persistent&&Number(data.expires_at||0)>0&&Date.now()/1000>=Number(data.expires_at))data.enabled=false;
+    return data;
+  }finally{
+    if(temporary&&!masterRemoteSession())await revokeRemoteSession();
+  }
+}
+
+function renderMasterStatus(local){
+  const enabled=!!local.enabled;
+  const remaining=local.remaining_seconds==null?(local.persistent?"persistent":"—"):Math.max(0,Math.ceil(Number(local.remaining_seconds)/60))+"m";
+  masterLocalState.textContent=enabled?`ON · ${remaining}`:"OFF";
+  masterAutonomyState.textContent=enabled?(local.autonomous?"CRITICAL autonomous":"interactive only"):"—";
+  const cloud=masterRemoteSession();
+  masterCloudState.textContent=cloud?`ON · ${String(cloud.max_permission||"CRITICAL")}`:"OFF";
+  masterOut.textContent=enabled
+    ?`Local owner elevation is active. Shell: ${!!local.allow_shell} · Power: ${!!local.allow_power} · Autonomous: ${!!local.autonomous}.\n\nAttach a Master session to let this browser carry FULL Remote authority into chat and direct actions.`
+    :"Master Control is OFF on the Windows PC. For safety, web/mobile cannot turn it on remotely. On the PC run:\n\n  iras --master-enable 30\n\nThen return here and click Refresh / Attach Master Session.";
+  updateMasterButton();
+}
+
+async function refreshMasterControl(){
+  masterOut.textContent="Checking the Windows owner-control state...";
+  const local=await localMasterStatus();
+  renderMasterStatus(local);
+  return local;
+}
+
+async function enableMasterRemote(){
+  const local=await refreshMasterControl();
+  if(!local.enabled){
+    throw new Error("Enable Master Control locally on the PC first: iras --master-enable 30");
+  }
+  if(remoteSession())await revokeRemoteSession();
+  const ttl=Math.max(60,Math.min(Number(local.remaining_seconds||1800),12*60*60));
+  const session=await createRemoteSession({
+    mode:"full",ttl_seconds:ttl,scopes:["windows","master"],
+    confirmText:"Attach this browser to the active local Master Control session? CRITICAL registered tools may run without per-action approval prompts."
+  });
+  if(!session)return;
+  masterCloudState.textContent=`ON · ${String(session.max_permission||"CRITICAL")}`;
+  updateMasterButton();
+  status.textContent="MASTER session attached to this browser";
+}
+
+async function disableMasterRemote(){
+  if(masterRemoteSession())await revokeRemoteSession();
+  masterCloudState.textContent="OFF";
+  updateMasterButton();
+  status.textContent="Browser Master session ended; local PC Master state was not changed";
 }
 
 async function invokeRemoteAction(action,args={},timeout=45){
@@ -1669,6 +1770,11 @@ async function toggleHandsFree(){
 
 $("#settings").onclick=()=>cfg.showModal();
 remoteButton.onclick=toggleRemote;
+masterButton.onclick=()=>{masterDlg.showModal();refreshMasterControl().catch(e=>{masterOut.textContent="Master status error: "+e.message})};
+$("#masterRefresh").onclick=()=>refreshMasterControl().catch(e=>{masterOut.textContent="Master status error: "+e.message});
+$("#masterEnable").onclick=()=>enableMasterRemote().catch(e=>{masterOut.textContent="Master enable error: "+e.message});
+$("#masterDisable").onclick=()=>disableMasterRemote().catch(e=>{masterOut.textContent="Master disable error: "+e.message});
+$("#masterClose").onclick=()=>masterDlg.close();
 screenButton.onclick=()=>refreshRemoteScreen().catch(e=>status.textContent="Screen error: "+e.message);
 directButton.onclick=()=>directDlg.showModal();
 tasksButton.onclick=()=>{tasksDlg.showModal();loadLatestGoal().catch(()=>{});};

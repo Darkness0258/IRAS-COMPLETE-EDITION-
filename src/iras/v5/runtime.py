@@ -72,6 +72,7 @@ FEATURES = (
     "schema_migrations",
     "control_center_ui",
     "unified_cloud_workspace",
+    "master_control",
     "release_engineering",
 )
 
@@ -365,6 +366,8 @@ class V5Runtime:
             "goal_hierarchy": True,
             "schema_migrations": bool(migration.get("complete")),
             "control_center_ui": True,
+            "unified_cloud_workspace": True,
+            "master_control": True,
             "release_engineering": True,
         }
         return [{"feature": name, "operational": bool(operational.get(name, False))} for name in FEATURES]

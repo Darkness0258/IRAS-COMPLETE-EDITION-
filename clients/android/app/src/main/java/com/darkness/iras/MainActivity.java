@@ -37,6 +37,7 @@ public class MainActivity extends Activity {
     private EditText input;
     private TextView status;
     private Button handsButton;
+    private Button masterButton;
 
     private SpeechRecognizer recognizer;
     private android.content.SharedPreferences prefs;
@@ -65,6 +66,9 @@ public class MainActivity extends Activity {
 
     private long conversationUntil = 0L;
     private String lastSpokenText = "";
+    private volatile String masterRemoteSessionId = "";
+    private volatile String masterRemoteSessionToken = "";
+    private volatile long masterRemoteExpiresAt = 0L;
 
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
@@ -91,6 +95,7 @@ public class MainActivity extends Activity {
         }
 
         updateHandsButton();
+        updateMasterButton();
         createCompanionNotificationChannel();
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION);
@@ -364,6 +369,15 @@ public class MainActivity extends Activity {
             v -> showSettings()
         );
         top.addView(settings);
+
+        masterButton = new Button(this);
+        masterButton.setText("Master");
+        masterButton.setContentDescription("Attach or end IRAS Master Control session");
+        styleButton(masterButton, false);
+        masterButton.setOnClickListener(v -> toggleMasterSession());
+        LinearLayout.LayoutParams masterParams = new LinearLayout.LayoutParams(-2, -2);
+        masterParams.setMargins(dp(6), 0, 0, 0);
+        top.addView(masterButton, masterParams);
         root.addView(top);
 
         LinearLayout stateRow =
@@ -949,6 +963,10 @@ public class MainActivity extends Activity {
                 "X-Device-ID",
                 "android"
             );
+            if (masterSessionActive()) {
+                c.setRequestProperty("X-IRAS-Remote-Session-ID", masterRemoteSessionId);
+                c.setRequestProperty("X-IRAS-Remote-Token", masterRemoteSessionToken);
+            }
 
             JSONObject body =
                 new JSONObject();
@@ -1532,6 +1550,7 @@ public class MainActivity extends Activity {
                 caps.put("cloud-sync");
                 caps.put("voice");
                 caps.put("approvals");
+                caps.put("master-session");
                 registration.put("capabilities", caps);
                 JSONObject registered = companionRequest("POST", "/v1/cloud/clients/register", registration);
                 String threadId = cloudThreadId();
@@ -1739,6 +1758,165 @@ public class MainActivity extends Activity {
 
     private String pathPart(String value) throws UnsupportedEncodingException {
         return URLEncoder.encode(value == null ? "" : value, "UTF-8").replace("+", "%20");
+    }
+
+    private boolean masterSessionActive() {
+        return !masterRemoteSessionId.isEmpty()
+            && !masterRemoteSessionToken.isEmpty()
+            && (masterRemoteExpiresAt <= 0L || System.currentTimeMillis() / 1000L < masterRemoteExpiresAt);
+    }
+
+    private void updateMasterButton() {
+        if (masterButton == null) return;
+        boolean active = masterSessionActive();
+        masterButton.setText(active ? "MASTER ON" : "Master");
+        masterButton.setTextColor(active ? Color.rgb(255, 213, 222) : Color.rgb(218, 225, 240));
+        masterButton.setBackground(
+            active
+                ? rounded(Color.rgb(75, 20, 34), 14, Color.rgb(139, 52, 73))
+                : rounded(Color.rgb(18, 25, 39), 14, Color.rgb(45, 56, 78))
+        );
+    }
+
+    private void toggleMasterSession() {
+        if (masterSessionActive()) {
+            new AlertDialog.Builder(this)
+                .setTitle("End Master session?")
+                .setMessage("This ends the Android Master Remote session. It does not turn off the PC's local Master Control.")
+                .setPositiveButton("End session", (d, w) -> detachMasterSessionAsync())
+                .setNegativeButton("Cancel", null)
+                .show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+            .setTitle("IRAS Master Control")
+            .setMessage(
+                "Master Control must already be enabled locally on the Windows PC. "
+                + "When attached, this Android chat can carry FULL Remote authority into IRAS.\n\n"
+                + "Emergency stop, audit, filesystem roots, Remote authentication and Windows/UAC remain enforced."
+            )
+            .setPositiveButton("Attach", (d, w) -> attachMasterSessionAsync())
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    private void attachMasterSessionAsync() {
+        status.setText("Checking PC Master Control...");
+        new Thread(() -> {
+            String createdSessionId = "";
+            try {
+                JSONObject devicesData = companionRequest("GET", "/v1/devices", null);
+                JSONArray devices = devicesData.optJSONArray("devices");
+                JSONObject device = null;
+                if (devices != null) {
+                    for (int i = 0; i < devices.length(); i++) {
+                        JSONObject item = devices.optJSONObject(i);
+                        if (item == null || !item.optBoolean("online", false)) continue;
+                        String platform = item.optString("platform", "").toLowerCase(Locale.ROOT);
+                        if (platform.contains("windows")) { device = item; break; }
+                        if (device == null) device = item;
+                    }
+                }
+                if (device == null) throw new IOException("No paired Windows PC is online.");
+
+                JSONObject body = new JSONObject();
+                body.put("device_id", device.optString("device_id", ""));
+                body.put("mode", "full");
+                body.put("ttl_seconds", 1800);
+                JSONArray scopes = new JSONArray();
+                scopes.put("windows");
+                scopes.put("master");
+                body.put("scopes", scopes);
+                JSONObject session = companionRequest("POST", "/v1/remote/sessions", body);
+                createdSessionId = session.optString("session_id", "");
+                String sessionToken = session.optString("session_token", "");
+                long expiresAt = session.optLong("expires_at", 0L);
+                if (createdSessionId.isEmpty() || sessionToken.isEmpty()) {
+                    throw new IOException("Cloud did not return a usable Master Remote session.");
+                }
+
+                JSONObject info = remoteInvoke(createdSessionId, sessionToken, "system_info", new JSONObject(), 30);
+                String windowsUser = info.optString("user", "").trim();
+                if (windowsUser.isEmpty()) throw new IOException("Could not determine the Windows user for Master Control status.");
+                JSONObject readArgs = new JSONObject();
+                readArgs.put("path", "C:\\Users\\" + windowsUser + "\\.iras\\master_control.json");
+                readArgs.put("max_chars", 12000);
+                JSONObject masterFile = remoteInvoke(createdSessionId, sessionToken, "read_text", readArgs, 30);
+                String masterText = masterFile.optString("text", masterFile.optString("content", "{}"));
+                JSONObject master = masterText.trim().isEmpty() ? new JSONObject() : new JSONObject(masterText);
+                boolean masterEnabled = master.optBoolean("enabled", false);
+                if (masterEnabled && !master.optBoolean("persistent", false)) {
+                    long expiresAtLocal = (long)master.optDouble("expires_at", 0);
+                    if (expiresAtLocal > 0 && System.currentTimeMillis() / 1000L >= expiresAtLocal) masterEnabled = false;
+                }
+                if (!masterEnabled) {
+                    try { companionRequest("DELETE", "/v1/remote/sessions/" + pathPart(createdSessionId), null); } catch (Exception ignored) {}
+                    throw new IOException("Master Control is OFF on the PC. Run `iras --master-enable 30` locally first.");
+                }
+
+                masterRemoteSessionId = createdSessionId;
+                masterRemoteSessionToken = sessionToken;
+                masterRemoteExpiresAt = expiresAt;
+                runOnUiThread(() -> {
+                    updateMasterButton();
+                    status.setText("MASTER session attached · CRITICAL Remote authority");
+                });
+            } catch (Exception e) {
+                final String detail = e.getMessage();
+                runOnUiThread(() -> {
+                    updateMasterButton();
+                    status.setText("Master unavailable");
+                    new AlertDialog.Builder(this)
+                        .setTitle("Master Control unavailable")
+                        .setMessage(detail + "\n\nEnable locally on the PC with:\niras --master-enable 30")
+                        .setPositiveButton("OK", null)
+                        .show();
+                });
+            }
+        }, "iras-master-attach").start();
+    }
+
+    private void detachMasterSessionAsync() {
+        final String sessionId = masterRemoteSessionId;
+        masterRemoteSessionId = "";
+        masterRemoteSessionToken = "";
+        masterRemoteExpiresAt = 0L;
+        updateMasterButton();
+        status.setText("Android Master session ended");
+        if (sessionId.isEmpty()) return;
+        new Thread(() -> {
+            try { companionRequest("DELETE", "/v1/remote/sessions/" + pathPart(sessionId), null); } catch (Exception ignored) {}
+        }, "iras-master-detach").start();
+    }
+
+    private JSONObject remoteInvoke(String sessionId, String sessionToken, String action, JSONObject arguments, int timeout) throws Exception {
+        HttpURLConnection c = (HttpURLConnection)new URL(serverUrl() + "/v1/remote/invoke").openConnection();
+        try {
+            c.setRequestMethod("POST");
+            c.setConnectTimeout(15000);
+            c.setReadTimeout(Math.max(30000, timeout * 1000 + 5000));
+            c.setDoOutput(true);
+            c.setRequestProperty("Content-Type", "application/json");
+            c.setRequestProperty("Accept", "application/json");
+            c.setRequestProperty("X-Device-ID", "android-master");
+            c.setRequestProperty("X-IRAS-Remote-Token", sessionToken);
+            JSONObject body = new JSONObject();
+            body.put("session_id", sessionId);
+            body.put("action", action);
+            body.put("arguments", arguments == null ? new JSONObject() : arguments);
+            body.put("timeout", timeout);
+            try (OutputStream os = c.getOutputStream()) {
+                os.write(body.toString().getBytes(StandardCharsets.UTF_8));
+            }
+            int code = c.getResponseCode();
+            String text = readAll(code >= 200 && code < 300 ? c.getInputStream() : c.getErrorStream());
+            if (code < 200 || code >= 300) throw new IOException("HTTP " + code + (text.isEmpty() ? "" : ": " + text));
+            JSONObject response = text.trim().isEmpty() ? new JSONObject() : new JSONObject(text);
+            Object result = response.opt("result");
+            return result instanceof JSONObject ? (JSONObject)result : new JSONObject();
+        } finally {
+            c.disconnect();
+        }
     }
 
     private JSONObject companionRequest(String method, String path, JSONObject body) throws Exception {
