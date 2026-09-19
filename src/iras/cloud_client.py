@@ -208,7 +208,7 @@ def main() -> None:
                 f"[bold]IRAS Cloud Client {__version__}[/bold]\n"
                 f"Server: {server}\n"
                 f"Thread: {thread_id}\n"
-                "Shared with web + Android. Commands: /new, /history, /agent, /master, /master on, /master off, /exit"
+                "Shared with web + Android. Commands: /new, /history, /agent, /code <goal>, /code status, /master, /master on, /master off, /exit"
             )
         )
 
@@ -243,6 +243,64 @@ def main() -> None:
                     console.print_json(data=status)
                 except Exception as exc:
                     console.print(f"[bold red]Agent status failed:[/bold red] {exc}")
+                continue
+            if text.lower() in {"/code", "/code status"} or text.lower().startswith("/code status "):
+                run_id = ""
+                parts = text.split(maxsplit=2)
+                if len(parts) >= 3 and parts[1].lower() == "status":
+                    run_id = parts[2].strip()
+                if not run_id:
+                    run_id = str(state.get("last_code_run_id") or "")
+                if not run_id:
+                    try:
+                        status = _request(client, "GET", "/v1/coding-agent/status", token=token).json()
+                        console.print_json(data=status)
+                    except Exception as exc:
+                        console.print(f"[bold red]Coding Agent status failed:[/bold red] {exc}")
+                    continue
+                try:
+                    run = _request(
+                        client, "GET", f"/v1/coding-agent/runs/{run_id}", token=token
+                    ).json()
+                    console.print_json(data=run)
+                except Exception as exc:
+                    console.print(f"[bold red]Coding Agent run status failed:[/bold red] {exc}")
+                continue
+            if text.lower().startswith("/code "):
+                objective = text[6:].strip()
+                if not objective:
+                    console.print("[yellow]Usage: /code <coding objective>[/yellow]")
+                    continue
+                if not remote_session:
+                    console.print(
+                        "[yellow]Coding Agent needs a live Remote session. Use /master on first, "
+                        "or attach another authorized Remote session.[/yellow]"
+                    )
+                    continue
+                try:
+                    run = _request(
+                        client,
+                        "POST",
+                        "/v1/coding-agent/runs",
+                        token=token,
+                        headers={
+                            "X-Device-ID": client_id,
+                            "X-IRAS-Remote-Session-ID": str(remote_session.get("session_id") or ""),
+                            "X-IRAS-Remote-Token": str(remote_session.get("session_token") or ""),
+                        },
+                        json={"objective": objective, "thread_id": thread_id},
+                    ).json()
+                    run_id = str(run.get("run_id") or "")
+                    if run_id:
+                        state["last_code_run_id"] = run_id
+                        _save_state(state)
+                    console.print(
+                        f"[bold green]Coding Agent started[/bold green] · run {run_id or 'unknown'} · "
+                        f"state {run.get('state','queued')}"
+                    )
+                    console.print("[dim]Use /code status to inspect progress.[/dim]")
+                except Exception as exc:
+                    console.print(f"[bold red]Coding Agent failed to start:[/bold red] {exc}")
                 continue
             if text.lower() in {"/master", "/master status"}:
                 local_status = master.status()

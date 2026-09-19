@@ -12,6 +12,8 @@ from iras.config import Settings
 from iras.models import ApprovalRequest
 from iras.voice.stt import Listener
 from iras.voice.tts import Speaker
+from iras.coding_agent import build_coding_agent_graph
+from iras.orchestration import format_orchestration_result
 
 
 class App:
@@ -44,6 +46,7 @@ class App:
         self.voice_on = tk.BooleanVar(value=True)
         self.rt = build_runtime(self.settings, self.approve)
         self.master = self.rt.master
+        self.last_code_run_id = ""
         self._pulse_on = True
 
         self._build_ui()
@@ -427,7 +430,42 @@ class App:
 
     def work(self, text: str):
         try:
-            ans = self.rt.agent.handle(text)
+            raw = str(text or "").strip()
+            lower = raw.lower()
+            manager = getattr(getattr(self.rt, "v5", None), "orchestration_manager", None)
+            if lower in {"/code", "/code status"}:
+                if not manager:
+                    ans = "Coding Agent is unavailable because the local orchestration manager is not running."
+                elif not self.last_code_run_id:
+                    ans = "No local Coding Agent run has been started yet. Use /code <goal>."
+                else:
+                    run = manager.get(self.last_code_run_id)
+                    ans = format_orchestration_result(run) if run else "The last Coding Agent run is no longer available."
+            elif lower.startswith("/code "):
+                objective = raw[6:].strip()
+                master_status = self.master.status()
+                if not objective:
+                    ans = "Usage: /code <coding objective>"
+                elif not (master_status.get("enabled") and master_status.get("autonomous")):
+                    ans = (
+                        "Local Coding Agent execution requires Master Control with autonomous mode enabled. "
+                        "Enable Master Control, then send the /code request again."
+                    )
+                elif not manager:
+                    ans = "Coding Agent is unavailable because the local orchestration manager is not running."
+                else:
+                    run = manager.submit_graph(
+                        objective,
+                        build_coding_agent_graph(objective),
+                        context={"coding_agent": True, "coding_windows_control": True},
+                        requester_device="local-desktop",
+                        add_coordinator=True,
+                    )
+                    self.last_code_run_id = str(run.get("run_id") or "")
+                    run = manager.wait(self.last_code_run_id, timeout=1800.0)
+                    ans = format_orchestration_result(run)
+            else:
+                ans = self.rt.agent.handle(text)
         except Exception as exc:
             ans = f"Error: {type(exc).__name__}: {exc}"
         self.q.put(("answer", ans))

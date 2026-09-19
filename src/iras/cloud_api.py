@@ -78,6 +78,13 @@ from iras.execution_router import (
     parallel_graph,
     rank_matching_project_candidates,
 )
+from iras.coding_agent import (
+    CODING_AGENT_TOOL_ALLOWLIST,
+    build_coding_agent_graph,
+    coding_agent_role_allowlist,
+    coding_agent_status,
+    is_coding_agent_objective,
+)
 from iras.config import Settings
 from iras.v5 import build_v5_runtime
 from iras.voice.humanize import (
@@ -212,6 +219,11 @@ class OrchestrationIn(BaseModel):
     objective: str = Field(min_length=1, max_length=12000)
     tasks: list[GraphTaskIn] = Field(default_factory=list)
     add_coordinator: bool = True
+
+
+class CodingAgentIn(BaseModel):
+    objective: str = Field(min_length=1, max_length=12000)
+    thread_id: str = Field(default="", max_length=128)
 
 
 class TTSIn(BaseModel):
@@ -557,12 +569,7 @@ _ORCHESTRATION_ROLE_TOOLS = {
         "device_read_text", "device_read_text_range", "device_search_text", "device_file_info",
         "device_git_status", "device_git_diff", "device_git_log",
     },
-    "coder": {
-        "device_computer_status", "device_system_info", "device_find_projects", "device_list_files",
-        "device_read_text", "device_read_text_range", "device_search_text", "device_file_info",
-        "device_git_status", "device_git_diff", "device_git_log", "device_write_text",
-        "device_replace_text", "device_run_tests",
-    },
+    "coder": set(CODING_AGENT_TOOL_ALLOWLIST),
     "tester": {
         "device_computer_status", "device_system_info", "device_find_projects", "device_list_files",
         "device_read_text", "device_read_text_range", "device_search_text", "device_file_info",
@@ -671,7 +678,11 @@ def _multitask_worker(prompt: str, context: dict[str, Any]) -> dict[str, Any]:
         worker.agent.max_steps = max(worker.agent.max_steps, _orchestration_agent_step_budget(context))
         if master_execution_limits_for_context(context).get("active"):
             worker.agent.master_execution_override = True
-        role_tools = _ORCHESTRATION_ROLE_TOOLS.get(role)
+        role_tools = (
+            coding_agent_role_allowlist(role)
+            if context.get("coding_agent")
+            else _ORCHESTRATION_ROLE_TOOLS.get(role)
+        )
         if role_tools is not None:
             worker.agent.tool_allowlist = set(role_tools)
     remote_session = context.get("remote_session")
@@ -1116,6 +1127,47 @@ def _prepare_orchestration_context(
     return context
 
 
+def _start_coding_agent(
+    objective: str,
+    *,
+    remote_session: dict | None,
+    requester_device: str,
+    thread_id: str = "",
+) -> dict[str, Any]:
+    if not remote_session:
+        raise PermissionError(
+            "The Coding Agent requires a live IRAS Remote session because it may edit project files "
+            "and operate permissioned Windows controls."
+        )
+    context = _prepare_orchestration_context(
+        objective,
+        remote_session=remote_session,
+        requester_device=requester_device,
+        thread_id=thread_id,
+    )
+    context["coding_agent"] = True
+    context["coding_windows_control"] = True
+    run = orchestration_manager.submit_graph(
+        objective,
+        build_coding_agent_graph(objective),
+        context=context,
+        requester_device=requester_device,
+        add_coordinator=True,
+    )
+    runtime.audit.record(
+        "coding_agent_run_started",
+        {
+            "run_id": run["run_id"],
+            "objective": objective[:500],
+            "requester_device": requester_device,
+            "remote_session_id": remote_session.get("session_id"),
+            "project_root": context.get("project_root"),
+            "windows_control": True,
+        },
+    )
+    return run
+
+
 def _start_multitask(
     tasks: list[str],
     *,
@@ -1485,6 +1537,7 @@ def agent_status(
             "browser_workflows",
             "remote_device_tools",
         ],
+        "coding_agent": coding_agent_status(),
         "master_control_supported": True,
         "remote_protocol": REMOTE_PROTOCOL_VERSION,
     }
@@ -1524,6 +1577,7 @@ def readiness():
             "max_tasks_per_run": orchestration_manager.max_tasks_per_run,
             "roles": ["planner", "researcher", "coder", "tester", "reviewer", "coordinator", "general"],
         },
+        "coding_agent": coding_agent_status(),
         "autonomous_execution": {
             "enabled": _autonomous_execution_enabled(),
             "router": "local-policy-first",
@@ -1589,6 +1643,70 @@ def cancel_multitask_run(
     if not run:
         raise HTTPException(status_code=404, detail="Multitask run not found.")
     return run
+
+
+@app.get("/v1/coding-agent/status")
+def get_coding_agent_status(
+    authorization: str | None = Header(default=None),
+):
+    _authorized(authorization)
+    status = coding_agent_status()
+    status["remote_protocol"] = REMOTE_PROTOCOL_VERSION
+    status["master_control_supported"] = True
+    return status
+
+
+@app.post("/v1/coding-agent/runs")
+def create_coding_agent_run(
+    body: CodingAgentIn,
+    authorization: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
+    x_iras_remote_session_id: str | None = Header(default=None, alias="X-IRAS-Remote-Session-ID"),
+    x_iras_remote_token: str | None = Header(default=None, alias="X-IRAS-Remote-Token"),
+):
+    _authorized(authorization)
+    remote_session = _authorize_remote_session(
+        x_iras_remote_session_id,
+        x_iras_remote_token,
+    )
+    if not remote_session:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "The Coding Agent requires a live IRAS Remote session because it may edit project files "
+                "and operate permissioned Windows controls. Enable Remote or Master Control, then retry."
+            ),
+        )
+    requester = str(x_device_id or "web")[:128]
+    try:
+        run = _start_coding_agent(
+            body.objective,
+            remote_session=remote_session,
+            requester_device=requester,
+            thread_id=body.thread_id,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result = dict(run)
+    result["agent_type"] = "coding_agent"
+    result["windows_control"] = True
+    return result
+
+
+@app.get("/v1/coding-agent/runs/{run_id}")
+def get_coding_agent_run(
+    run_id: str,
+    authorization: str | None = Header(default=None),
+):
+    _authorized(authorization)
+    run = orchestration_manager.get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Coding Agent run not found.")
+    result = dict(run)
+    result["agent_type"] = "coding_agent"
+    return result
 
 
 @app.post("/v1/orchestration/runs")
@@ -1878,9 +1996,12 @@ def chat(
     )
 
     try:
+        raw_message = str(body.message or "").strip()
+        explicit_code = raw_message.lower().startswith("/code ")
+        coding_objective = raw_message[6:].strip() if explicit_code else ""
         goal_objective = parse_goal_command(body.message)
         parallel_tasks = parse_parallel_command(body.message)
-        decision = None if (goal_objective or parallel_tasks) else _auto_decision(body.message)
+        decision = None if (goal_objective or parallel_tasks or explicit_code) else _auto_decision(body.message)
         if goal_objective and exact_file_plan(goal_objective) is not None and not remote_session:
             response = (
                 "This goal changes Windows state and needs a live IRAS Remote session. "
@@ -1924,6 +2045,45 @@ def chat(
                     "model_ms": 0,
                     "tool_schema_count": 0,
                 }
+        elif explicit_code:
+            if not remote_session:
+                response = (
+                    "The Coding Agent needs a live IRAS Remote session because it can edit project files and operate "
+                    "permissioned Windows controls. Enable Remote or Master Control, then send the /code request again."
+                )
+                metrics = {
+                    "model": "coding-agent-safety-gate",
+                    "total_ms": 0,
+                    "model_ms": 0,
+                    "tool_schema_count": 0,
+                }
+            else:
+                try:
+                    run = _start_coding_agent(
+                        coding_objective,
+                        remote_session=remote_session,
+                        requester_device=device_id,
+                        thread_id=cloud_thread_id,
+                    )
+                except (RuntimeError, ValueError, PermissionError) as exc:
+                    response = str(exc)
+                    metrics = {
+                        "model": "coding-agent-preflight",
+                        "total_ms": 0,
+                        "model_ms": 0,
+                        "tool_schema_count": 0,
+                    }
+                else:
+                    response = (
+                        f"Started Coding Agent run {run['run_id']} for: {coding_objective}. "
+                        "It will inspect, implement, test, repair if needed, run final verification, and review the diff."
+                    )
+                    metrics = {
+                        "model": "coding-agent-coordinator",
+                        "total_ms": 0,
+                        "model_ms": 0,
+                        "tool_schema_count": 0,
+                    }
         elif parallel_tasks:
             run = _start_multitask(
                 parallel_tasks,
@@ -1982,17 +2142,34 @@ def chat(
                     "tool_schema_count": 0,
                 }
             else:
-                run = orchestration_manager.submit_objective(
-                    objective,
-                    context=context,
-                    requester_device=device_id,
-                )
-                response = (
-                    f"I chose multi-agent execution for this request and started run {run['run_id']} "
-                    f"because {decision.reason}. Open Tasks to watch the graph while I work."
-                )
+                if is_coding_agent_objective(objective):
+                    context["coding_agent"] = True
+                    context["coding_windows_control"] = True
+                    run = orchestration_manager.submit_graph(
+                        objective,
+                        build_coding_agent_graph(objective),
+                        context=context,
+                        requester_device=device_id,
+                        add_coordinator=True,
+                    )
+                    response = (
+                        f"I chose the dedicated Coding Agent for this request and started run {run['run_id']}. "
+                        "It can use permissioned Windows/VS Code controls in addition to file, Git, and test tools."
+                    )
+                    model_name = "coding-agent-router"
+                else:
+                    run = orchestration_manager.submit_objective(
+                        objective,
+                        context=context,
+                        requester_device=device_id,
+                    )
+                    response = (
+                        f"I chose multi-agent execution for this request and started run {run['run_id']} "
+                        f"because {decision.reason}. Open Tasks to watch the graph while I work."
+                    )
+                    model_name = "autonomous-execution-router"
                 metrics = {
-                    "model": "autonomous-execution-router",
+                    "model": model_name,
                     "total_ms": 0,
                     "model_ms": 0,
                     "tool_schema_count": 0,
@@ -2160,16 +2337,19 @@ def chat_stream(
         body, device_id=device_id, request_id=request_id
     )
 
+    raw_message = str(body.message or "").strip()
+    explicit_code = raw_message.lower().startswith("/code ")
+    coding_objective = raw_message[6:].strip() if explicit_code else ""
     goal_objective = parse_goal_command(body.message)
     parallel_tasks = parse_parallel_command(body.message)
-    decision = None if (goal_objective or parallel_tasks) else _auto_decision(body.message)
+    decision = None if (goal_objective or parallel_tasks or explicit_code) else _auto_decision(body.message)
     direct_deterministic_candidate = parse_exact_file_objective(body.message) is not None
     autonomous_non_direct = bool(
         decision is not None and decision.mode in {"parallel", "orchestrate", "deterministic"}
     )
     direct_stream = (
         False
-        if (parallel_tasks or goal_objective or direct_deterministic_candidate or autonomous_non_direct)
+        if (parallel_tasks or goal_objective or explicit_code or direct_deterministic_candidate or autonomous_non_direct)
         else runtime.agent.can_stream(body.message)
     )
 
@@ -2273,6 +2453,74 @@ def chat_stream(
                         "streamed": False,
                         "queue_wait_ms": 0,
                         "orchestration_run_id": run.get("run_id"),
+                    },
+                )
+                return
+            if explicit_code:
+                if not remote_session:
+                    text = (
+                        "The Coding Agent needs a live IRAS Remote session because it can edit project files and operate "
+                        "permissioned Windows controls. Enable Remote or Master Control, then send the /code request again."
+                    )
+                    yield _sse("token", {"text": text})
+                    yield _sse(
+                        "done",
+                        {
+                            "request_id": request_id,
+                            "model": "coding-agent-safety-gate",
+                            "timing_ms": 0,
+                            "model_ms": 0,
+                            "first_token_ms": 0,
+                            "tool_schema_count": 0,
+                            "streamed": False,
+                            "queue_wait_ms": 0,
+                            "execution_mode": "authorization_required",
+                        },
+                    )
+                    return
+                try:
+                    run = _start_coding_agent(
+                        coding_objective,
+                        remote_session=remote_session,
+                        requester_device=device_id,
+                        thread_id=cloud_thread_id,
+                    )
+                except (RuntimeError, ValueError, PermissionError) as exc:
+                    text = str(exc)
+                    yield _sse("token", {"text": text})
+                    yield _sse(
+                        "done",
+                        {
+                            "request_id": request_id,
+                            "model": "coding-agent-preflight",
+                            "timing_ms": 0,
+                            "model_ms": 0,
+                            "first_token_ms": 0,
+                            "tool_schema_count": 0,
+                            "streamed": False,
+                            "queue_wait_ms": 0,
+                            "execution_mode": "preflight_failed",
+                        },
+                    )
+                    return
+                text = (
+                    f"Started Coding Agent run {run['run_id']}. It will inspect, implement, test, repair if needed, "
+                    "run final verification, and review the diff."
+                )
+                yield _sse("token", {"text": text})
+                yield _sse(
+                    "done",
+                    {
+                        "request_id": request_id,
+                        "model": "coding-agent-coordinator",
+                        "timing_ms": 0,
+                        "model_ms": 0,
+                        "first_token_ms": 0,
+                        "tool_schema_count": 0,
+                        "streamed": False,
+                        "queue_wait_ms": 0,
+                        "orchestration_run_id": run.get("run_id"),
+                        "execution_mode": "coding_agent",
                     },
                 )
                 return
@@ -2406,21 +2654,40 @@ def chat_stream(
                         },
                     )
                     return
-                run = orchestration_manager.submit_objective(
-                    objective,
-                    context=context,
-                    requester_device=device_id,
-                )
-                text = (
-                    f"I chose multi-agent execution and started run {run['run_id']} "
-                    f"because {decision.reason}. Open Tasks to watch the graph while I work."
-                )
+                if is_coding_agent_objective(objective):
+                    context["coding_agent"] = True
+                    context["coding_windows_control"] = True
+                    run = orchestration_manager.submit_graph(
+                        objective,
+                        build_coding_agent_graph(objective),
+                        context=context,
+                        requester_device=device_id,
+                        add_coordinator=True,
+                    )
+                    text = (
+                        f"I chose the dedicated Coding Agent and started run {run['run_id']}. "
+                        "It can use permissioned Windows/VS Code controls in addition to file, Git, and test tools."
+                    )
+                    model_name = "coding-agent-router"
+                    execution_mode = "coding_agent"
+                else:
+                    run = orchestration_manager.submit_objective(
+                        objective,
+                        context=context,
+                        requester_device=device_id,
+                    )
+                    text = (
+                        f"I chose multi-agent execution and started run {run['run_id']} "
+                        f"because {decision.reason}. Open Tasks to watch the graph while I work."
+                    )
+                    model_name = "autonomous-execution-router"
+                    execution_mode = "orchestrate"
                 yield _sse("token", {"text": text})
                 yield _sse(
                     "done",
                     {
                         "request_id": request_id,
-                        "model": "autonomous-execution-router",
+                        "model": model_name,
                         "timing_ms": 0,
                         "model_ms": 0,
                         "first_token_ms": 0,
@@ -2428,7 +2695,7 @@ def chat_stream(
                         "streamed": False,
                         "queue_wait_ms": 0,
                         "orchestration_run_id": run.get("run_id"),
-                        "execution_mode": "orchestrate",
+                        "execution_mode": execution_mode,
                     },
                 )
                 return

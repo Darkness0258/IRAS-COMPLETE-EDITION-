@@ -83,7 +83,7 @@
   "local_regression": {
     "android_companion_compile": "static-contract-validated; Android SDK/Gradle build is host-side",
     "failed": 0,
-    "passed": 859
+    "passed": 873
   },
   "managed_omniparser": {
     "authenticated_lifecycle": true,
@@ -206,5 +206,40 @@
     "spotify_exact_token_truth": "Spotify search and now-playing verification use whole normalized query tokens; short queries such as 'maa' cannot match Maanu, Maand, or Maahi by substring.",
     "spotify_cloud_independent_reverify": "Cloud/remote Spotify execution always takes an independent fresh computer_observe verification instead of blindly trusting bridge verified_playback claims.",
     "spotify_evidence_reporting": "Verified playback messages report query-matching evidence before generic now-playing candidates."
+  },
+  "coding_agent": {
+    "mode": "dedicated_engineering_agent",
+    "workflow": [
+      "inspect",
+      "implement",
+      "test",
+      "repair_if_needed",
+      "final_test",
+      "review",
+      "coordinate"
+    ],
+    "cloud_status_endpoint": "/v1/coding-agent/status",
+    "cloud_run_endpoint": "/v1/coding-agent/runs",
+    "windows_client_command": "/code <goal>",
+    "chat_auto_routing": true,
+    "cloud_requires_live_remote_session": true,
+    "local_requires_master_autonomous": true,
+    "permissioned_windows_control": true,
+    "windows_controls": [
+      "open/focus VS Code",
+      "UIA/OmniParser observe",
+      "grounded computer actions",
+      "semantic UI actions",
+      "clipboard",
+      "process listing",
+      "integrated terminal"
+    ],
+    "critical_run_command": "shell=False and allowed only when active Remote/Master policy permits CRITICAL command execution",
+    "default_exclusions": [
+      "power_action",
+      "kill_process",
+      "delete_path"
+    ],
+    "project_root_and_remote_enforcement_unchanged": true
   }
 }

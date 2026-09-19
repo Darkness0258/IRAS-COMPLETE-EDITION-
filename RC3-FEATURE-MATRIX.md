@@ -12,7 +12,7 @@ RC3 declares **34 operating-layer feature families**. A feature is counted here 
 | 6 | Workflow recording | Record/list/replay through ToolRegistry rather than direct execution |
 | 7 | Long-term semantic memory | Namespaces, provenance, persistent token index, expiry and explicit deletion |
 | 8 | Project knowledge graph | Authorized repository indexing and graph snapshots |
-| 9 | Isolated coding workspaces | Git worktrees, status/diff/commits/tests/commit/merge-plan/approval-gated merge/remove |
+| 9 | Isolated coding workspaces | Git worktrees plus dedicated Coding Agent (inspect → implement → test → repair → verify → review), permissioned Windows/VS Code control, status/diff/commits/tests/commit/merge-plan/approval-gated merge/remove |
 | 10 | Self-healing workflows | Recovery statistics and bounded recovery hooks without replaying consequential actions |
 | 11 | Capability learning | Proposal, sandbox qualification, install inventory and uninstall lifecycle |
 | 12 | Plugin connector layer | Gmail/Calendar/Drive/GitHub/Supabase/Slack/Discord/Notion lifecycle, vault refs, expiry fail-closed |

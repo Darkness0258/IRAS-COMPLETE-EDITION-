@@ -20,6 +20,8 @@ from iras.vision.omniparser_runtime import OmniParserRuntimeManager
 from iras.remote_access import RemoteAccessPolicy
 from iras.safety_runtime import EmergencyStop
 from iras.master_control import MasterControl
+from iras.coding_agent import build_coding_agent_graph
+from iras.orchestration import format_orchestration_result
 
 
 def _voice_intent(text: str):
@@ -216,6 +218,7 @@ def main():
         return c.input('[bold yellow]Approve this action? [y/N]: [/bold yellow]').strip().lower() in {'y', 'yes', 'yeah', 'yep', 'yup', 'ok', 'okay', 'approve', 'approved'}
 
     rt = build_runtime(s, approve)
+    last_code_run_id = ""
     if args.tools:
         for x in rt.registry.describe():
             c.print(f"{x['name']}: {x['description']}")
@@ -235,7 +238,7 @@ def main():
             f'Remote Windows: {remote_policy.status().get("mode")} ({"armed" if remote_policy.status().get("enabled") else "disarmed"})\n'
             f'Emergency stop: {"ACTIVE" if emergency_stop.tripped() else "clear"}\n'
             f'Master Control: {"ON" if rt.master.status().get("enabled") else "off"}\n'
-            'Commands: master status/enable/disable, voice, listen, vision status/start/restart/stop, remote status, remote arm full, remote disarm, emergency stop, personality status, /exit.'
+            'Commands: /code <goal>, /code status, master status/enable/disable, voice, listen, vision status/start/restart/stop, remote status, remote arm full, remote disarm, emergency stop, personality status, /exit.'
         )
     )
     voice = s.voice_replies
@@ -255,6 +258,43 @@ def main():
             break
 
         pq = ' '.join(q.lower().strip().split())
+
+        if pq in {'/code', '/code status'}:
+            manager = getattr(getattr(rt, "v5", None), "orchestration_manager", None)
+            if not manager:
+                c.print('[bold red]Coding Agent unavailable:[/bold red] local orchestration manager is not running.')
+            elif not last_code_run_id:
+                c.print('[yellow]No local Coding Agent run has been started yet. Use /code <goal>.[/yellow]')
+            else:
+                run = manager.get(last_code_run_id)
+                c.print(format_orchestration_result(run) if run else 'The last Coding Agent run is no longer available.')
+            continue
+        if pq.startswith('/code '):
+            objective = q[6:].strip()
+            master_status = rt.master.status()
+            manager = getattr(getattr(rt, "v5", None), "orchestration_manager", None)
+            if not objective:
+                c.print('[yellow]Usage: /code <coding objective>[/yellow]')
+            elif not (master_status.get('enabled') and master_status.get('autonomous')):
+                c.print('[yellow]Local Coding Agent execution requires Master Control with autonomous mode enabled. Enable Master Control, then retry.[/yellow]')
+            elif not manager:
+                c.print('[bold red]Coding Agent unavailable:[/bold red] local orchestration manager is not running.')
+            else:
+                try:
+                    run = manager.submit_graph(
+                        objective,
+                        build_coding_agent_graph(objective),
+                        context={"coding_agent": True, "coding_windows_control": True},
+                        requester_device="local-cli",
+                        add_coordinator=True,
+                    )
+                    last_code_run_id = str(run.get('run_id') or '')
+                    c.print(f'[bold green]Coding Agent started[/bold green] · run {last_code_run_id}')
+                    run = manager.wait(last_code_run_id, timeout=1800.0)
+                    c.print(format_orchestration_result(run))
+                except Exception as exc:
+                    c.print(f'[bold red]Coding Agent failed:[/bold red] {type(exc).__name__}: {exc}')
+            continue
 
         if pq in {'master status', '/master status', 'master'}:
             c.print_json(data=rt.master.status())

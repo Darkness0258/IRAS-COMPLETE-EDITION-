@@ -2,6 +2,9 @@
 
 IRAS v5 builds on the frozen v4.4 permissioned Windows/control core and adds a modular autonomous operating layer with **33 validated feature families**: persistent schedules, proactive monitoring, managed multimodal vision, dedicated browser workflows, project knowledge, isolated coding workspaces, semantic memory, workflow recording/replay, lifecycle-managed connectors, full-duplex voice coordination, mobile/Android approvals, notifications, artifacts, encrypted secrets/sync, sandboxed capability learning, research/debate agents, resource-aware routing, rollback/audit, signed skills, home adapters, multi-user profiles, schema migrations, a Control Center, and deterministic release engineering.
 
+**Dedicated Coding Agent (RC3):** repository-scale coding tasks now use an inspect → implement → test → repair → final-test → review graph. The Coder can use permissioned Windows/VS Code controls, UIA/OmniParser grounding, project/Git/test tools, and CRITICAL `shell=False` command execution only when the active Remote/Master policy permits it. `/code <goal>` is available in Cloud/Windows and local desktop/CLI; ordinary engineering chat can auto-route to the Coding Agent.
+
+
 **Release status:** `5.0.0-rc3`. The remote protocol remains `1`; v5 does not weaken the v4.4 device bridge, Remote-session, local-policy, emergency-stop, or ToolRegistry boundaries.
 
 ## Professional UI/UX & motion system

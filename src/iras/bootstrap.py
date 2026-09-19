@@ -37,6 +37,7 @@ from iras.tools.vision import make_tools as vision_tools
 from iras.tools.master import make_tools as master_tools
 from iras.vision.omniparser_runtime import OmniParserRuntimeManager
 from iras.orchestration import OrchestrationManager
+from iras.coding_agent import build_coding_agent_graph, coding_agent_role_allowlist
 
 class Runtime:
     def __init__(self,settings,agent,registry,memory,audit,browser,automations,personality,v5=None,vision=None,master=None):
@@ -73,6 +74,8 @@ def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.
     # separate READ-only registry, so schedules/research can inspect data without
     # silently inheriting the interactive session's state-changing permissions.
     def local_plan(objective, context):
+        if context.get("coding_agent"):
+            return build_coding_agent_graph(objective)
         if context.get("research_project"):
             return [
                 {"task_id":"research","title":"Research","prompt":objective,"role":"researcher"},
@@ -125,6 +128,8 @@ def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.
         if master_autonomy:
             worker_steps = max(worker_steps, int(emergency_execution_limits()["agent_steps"]))
         worker_agent = IRASAgent(worker_provider, worker_reg, memory, audit, worker_steps, system_prompt=build_system_prompt(s.voice_profile), personality=personality, voice_profile=s.voice_profile)
+        if context.get("coding_agent"):
+            worker_agent.tool_allowlist = coding_agent_role_allowlist(context.get("agent_role"))
         try:
             return {
                 "result": worker_agent.handle(worker_prompt),
