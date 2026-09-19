@@ -1,7 +1,7 @@
 {
   "product": "IRAS",
   "version": "5.0.0-rc3",
-  "release_name": "Complete Operating Layer - Professional UI/UX + Unified Cloud",
+  "release_name": "Complete Operating Layer - Professional UI/UX + Viewport/Markdown/Branding",
   "baseline_commit": "c37d8a5",
   "remote_protocol": 1,
   "feature_count": 33,
@@ -9,7 +9,7 @@
   "build_mode": "build-first-local",
   "cloud_model_acceptance_used": false,
   "local_regression": {
-    "passed": 835,
+    "passed": 838,
     "failed": 0,
     "android_companion_compile": "static-contract-validated; Android SDK/Gradle build is host-side"
   },
@@ -82,7 +82,11 @@
   },
   "release_notes": [
     "Unified cloud workspace shared across Windows, web and Android clients.",
-    "Professional adaptive UI/UX and motion system across web/PWA, Windows desktop and Android."
+    "Professional adaptive UI/UX and motion system across web/PWA, Windows desktop and Android.",
+    "Viewport-locked chat workspace keeps the composer visible while history scrolls internally.",
+    "Safe local Markdown renderer adds professional headings, lists, inline code and collapsible/copyable code blocks without external UI libraries.",
+    "User-supplied IRAS logo is packaged across web/PWA, Windows desktop and Android branding.",
+    "Full PC + Cloud + Web + Android operating guide is packaged at docs/RUN_IRAS_FULL_STACK.md."
   ],
   "unified_cloud_workspace": {
     "persistent_backend": "PostgreSQL when DATABASE_URL is configured; SQLite locally",
@@ -139,6 +143,17 @@
     "android": "tonal dark surfaces, inset-aware layout, animated message groups, polished composer, accessible labels",
     "motion": "functional micro-interactions, short natural easing, reduced-motion web fallback",
     "external_ui_dependencies": false,
-    "security_boundaries_changed": false
+    "security_boundaries_changed": false,
+    "viewport_locked_chat": true,
+    "markdown_messages": true,
+    "collapsible_code_blocks": true,
+    "code_copy_actions": true,
+    "fresh_cloud_thread_action": true,
+    "official_user_supplied_logo_packaged": [
+      "web-pwa",
+      "windows-desktop",
+      "android"
+    ],
+    "full_stack_run_guide": "docs/RUN_IRAS_FULL_STACK.md"
   }
 }

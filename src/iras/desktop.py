@@ -4,6 +4,7 @@ import json
 import queue
 import threading
 import tkinter as tk
+from pathlib import Path
 
 from iras.bootstrap import build_runtime
 from iras.config import Settings
@@ -91,11 +92,22 @@ class App:
 
         brand = tk.Frame(sidebar, bg="#090E18")
         brand.pack(fill="x", padx=18, pady=(18, 22))
-        orb = tk.Canvas(brand, width=42, height=42, bg="#090E18", highlightthickness=0)
-        orb.pack(side="left")
-        orb.create_oval(4, 4, 38, 38, fill="#182443", outline="#3D4F80", width=1)
-        orb.create_oval(13, 13, 29, 29, fill=self.CYAN, outline="")
-        orb.create_oval(17, 17, 25, 25, fill="#0B1020", outline="")
+        logo_path = Path(__file__).with_name("assets") / "iras-logo.png"
+        try:
+            image = tk.PhotoImage(file=str(logo_path))
+            scale = max(1, max(image.width() // 70, image.height() // 70))
+            self.logo_image = image.subsample(scale, scale)
+            tk.Label(brand, image=self.logo_image, bg="#090E18", bd=0).pack(side="left")
+            try:
+                self.root.iconphoto(True, self.logo_image)
+            except tk.TclError:
+                pass
+        except Exception:
+            orb = tk.Canvas(brand, width=42, height=42, bg="#090E18", highlightthickness=0)
+            orb.pack(side="left")
+            orb.create_oval(4, 4, 38, 38, fill="#182443", outline="#3D4F80", width=1)
+            orb.create_oval(13, 13, 29, 29, fill=self.CYAN, outline="")
+            orb.create_oval(17, 17, 25, 25, fill="#0B1020", outline="")
         brand_copy = tk.Frame(brand, bg="#090E18")
         brand_copy.pack(side="left", padx=10)
         tk.Label(brand_copy, text="IRAS", bg="#090E18", fg=self.TEXT, font=self._font(15, "bold")).pack(anchor="w")

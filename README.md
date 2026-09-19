@@ -270,6 +270,8 @@ From the hosted web client, enter the server + API token for the current browser
 
 See `docs/REMOTE_WINDOWS_ACCESS_V4.md`.
 
+For the complete daily startup/deployment checklist covering **PC + Cloud + Web + Android + OmniParser + Remote**, see `docs/RUN_IRAS_FULL_STACK.md`.
+
 ## Remote permission levels
 
 | Mode | Maximum | Examples |

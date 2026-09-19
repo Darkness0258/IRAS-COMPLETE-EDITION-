@@ -8,5 +8,16 @@
   "orientation": "any",
   "background_color": "#070910",
   "theme_color": "#090b12",
-  "categories": ["productivity", "utilities"]
+  "categories": [
+    "productivity",
+    "utilities"
+  ],
+  "icons": [
+    {
+      "src": "/app/iras-logo.png",
+      "sizes": "1254x1254",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
 }

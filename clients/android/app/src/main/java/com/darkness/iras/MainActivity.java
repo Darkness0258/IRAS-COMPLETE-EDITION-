@@ -309,10 +309,10 @@ public class MainActivity extends Activity {
             dp(12)
         );
 
-        TextView orb =
-            tv("●", 22);
-        orb.setGravity(Gravity.CENTER);
-        orb.setTextColor(Color.rgb(111, 224, 255));
+        ImageView orb = new ImageView(this);
+        orb.setImageResource(R.drawable.iras_logo);
+        orb.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        orb.setContentDescription("IRAS logo");
         orb.setBackground(
             rounded(
                 Color.rgb(20, 28, 46),
@@ -320,10 +320,11 @@ public class MainActivity extends Activity {
                 Color.rgb(48, 62, 94)
             )
         );
+        orb.setClipToOutline(true);
         LinearLayout.LayoutParams orbParams =
             new LinearLayout.LayoutParams(
-                dp(44),
-                dp(44)
+                dp(52),
+                dp(52)
             );
         orbParams.setMargins(0, 0, dp(10), 0);
         top.addView(orb, orbParams);
