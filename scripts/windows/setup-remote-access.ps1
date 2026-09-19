@@ -31,16 +31,16 @@ try {
     throw "IRAS Cloud health check failed at $ServerUrl/health. Confirm the Render service is live and the URL is correct. $($_.Exception.Message)"
 }
 if (-not $health.ok) {
-    throw "IRAS Cloud /health did not report ok=true. Redeploy the v4 cloud backend before pairing Windows."
+    throw "IRAS Cloud /health did not report ok=true. Redeploy the current IRAS cloud backend before pairing Windows."
 }
-if (-not $health.version -or $health.version -notmatch '^4\.') {
-    throw "The configured server is not running the v4 remote backend (version=$($health.version)). Redeploy the current IRAS v4 release to Render."
+if (-not $health.version) {
+    throw "IRAS Cloud /health is missing version metadata. Redeploy the current IRAS cloud backend before pairing Windows."
 }
 if (-not $health.service_id -or $health.service_id -ne "iras-cloud") {
-    throw "The configured server is not running the v4 remote backend (service_id=$($health.service_id)). Redeploy the current IRAS v4 release to Render."
+    throw "The configured server is not an IRAS Cloud service (service_id=$($health.service_id)). Redeploy the current IRAS cloud backend to Render."
 }
 if ($null -eq $health.remote_protocol -or [int]$health.remote_protocol -ne 1) {
-    throw "The configured server has an incompatible IRAS remote protocol (server=$($health.remote_protocol), required=1). Redeploy the current IRAS v4 release to Render."
+    throw "The configured server has an incompatible IRAS remote protocol (server=$($health.remote_protocol), required=1). Redeploy a protocol-compatible IRAS cloud backend to Render."
 }
 
 $secureToken = Read-Host "IRAS_API_TOKEN (32+ random characters)" -AsSecureString

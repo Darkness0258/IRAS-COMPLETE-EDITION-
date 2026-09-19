@@ -214,3 +214,7 @@ Before deploying a new build:
 ```
 
 Then push `main`; Render auto-deploys the Cloud service. Confirm `/health`, GitHub Actions, and one PC/Web/Android shared-thread test before treating the release as production-ready.
+
+### RC3 remote pairing compatibility
+
+`setup-remote-windows.ps1` validates the deployed cloud by `service_id=iras-cloud` and `remote_protocol=1`. The release version string is informational, so protocol-compatible RC3/v5 cloud releases are accepted instead of being rejected by the old v4-only version guard.

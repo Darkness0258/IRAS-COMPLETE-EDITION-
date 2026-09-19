@@ -31,8 +31,10 @@ def test_remote_setup_rejects_unhealthy_cloud_before_secret_prompt():
     assert text.index('$ServerUrl + "/health"') < text.index('Read-Host "IRAS_API_TOKEN')
 
 
-def test_remote_setup_rejects_old_cloud_backend_version():
+def test_remote_setup_uses_protocol_contract_not_release_major():
     text = _script()
     assert "$health.version" in text
-    assert "not running the v4 remote backend" in text
-    assert "-notmatch '^4\\.'" in text
+    assert "-notmatch '^4\\.'" not in text
+    assert '$health.service_id -ne "iras-cloud"' in text
+    assert '[int]$health.remote_protocol -ne 1' in text
+    assert "incompatible IRAS remote protocol" in text
