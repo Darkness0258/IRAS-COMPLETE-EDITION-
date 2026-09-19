@@ -1536,14 +1536,7 @@ class WindowsUIController:
                 error_messages.append(original)
         spotify_error = error_messages[0] if error_messages else None
 
-        stop = {
-            "play", "spotify", "song", "songs", "music", "track",
-            "please", "some", "the", "a", "an", "on", "put", "listen",
-        }
-        query_terms = [
-            token for token in norm(query).split()
-            if len(token) >= 3 and token not in stop
-        ]
+        query_terms = self._spotify_query_terms(query)
 
         query_evidence = []
         now_candidates = []
@@ -1574,7 +1567,7 @@ class WindowsUIController:
                     continue
                 if name not in now_candidates:
                     now_candidates.append(name)
-                if query_terms and any(term in normalized for term in query_terms):
+                if query_terms and self._spotify_query_matches_label(query, name):
                     if name not in query_evidence:
                         query_evidence.append(name)
         except Exception:
@@ -1608,13 +1601,29 @@ class WindowsUIController:
     @classmethod
     def _spotify_query_terms(cls, query: str) -> list[str]:
         stop = {
-            "play", "spotify", "song", "songs", "music", "track",
+            "play", "spotify", "song", "songs", "music", "track", "tracks",
             "please", "some", "the", "a", "an", "on", "put", "listen",
+            "by", "from",
         }
         return [
             token for token in cls._spotify_norm(query).split()
-            if len(token) >= 3 and token not in stop
+            if len(token) >= 2 and token not in stop
         ]
+
+    @classmethod
+    def _spotify_query_matches_label(cls, query: str, label: str) -> bool:
+        """Match Spotify evidence using whole normalized tokens only.
+
+        Short music queries are especially prone to dangerous substring matches:
+        ``maa`` must not match ``Maanu``, ``Maand`` or ``Maahi``.  Requiring
+        every meaningful query token to exist as a complete label token keeps
+        candidate selection and playback verification aligned.
+        """
+        terms = cls._spotify_query_terms(query)
+        if not terms:
+            return False
+        tokens = set(cls._spotify_norm(label).split())
+        return all(term in tokens for term in terms)
 
     def _spotify_semantic_snapshot(self, hwnd: int, *, max_elements: int = 300) -> dict:
         from iras.device_bridge.visual_control import SemanticVisualController
@@ -1743,7 +1752,7 @@ class WindowsUIController:
             normalized = self._spotify_norm(name)
             if not name or normalized in ignored or not item.get("enabled", True):
                 continue
-            if not any(term in normalized for term in terms):
+            if not self._spotify_query_matches_label(query, name):
                 continue
             rect = item.get("rect") or {}
             left = int(rect.get("left", 0) or 0)
@@ -1762,19 +1771,22 @@ class WindowsUIController:
             score = 0.0
             if normalized == phrase:
                 score += 12.0
-            if phrase and phrase in normalized:
+            label_tokens = set(normalized.split())
+            if phrase and normalized.startswith(phrase + " "):
                 score += 8.0
-            matched = sum(1 for term in terms if term in normalized)
+            matched = sum(1 for term in terms if term in label_tokens)
             score += matched * 3.5
             if matched == len(terms):
-                score += 4.0
+                score += 6.0
             role = self._spotify_norm(item.get("role") or "")
             if role in {"listitem", "dataitem", "hyperlink", "button", "text", "group"}:
                 score += 1.5
             if 0.22 <= rx <= 0.97:
                 score += 2.0
             elif rx < 0.22:
-                score -= 3.5
+                # Left sidebar/library labels may contain the query but are not
+                # Spotify search-result targets. Keep them below central results.
+                score -= 8.0
             if 0.10 <= ry <= 0.76:
                 score += 2.0
             if "library" in normalized or "recent" in normalized:

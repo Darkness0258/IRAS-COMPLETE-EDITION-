@@ -201,5 +201,10 @@
     "stable_client_ids": true,
     "thread_scoped_direct_chat_context": true
   },
-  "version": "5.0.0-rc3"
+  "version": "5.0.0-rc3",
+  "features": {
+    "spotify_exact_token_truth": "Spotify search and now-playing verification use whole normalized query tokens; short queries such as 'maa' cannot match Maanu, Maand, or Maahi by substring.",
+    "spotify_cloud_independent_reverify": "Cloud/remote Spotify execution always takes an independent fresh computer_observe verification instead of blindly trusting bridge verified_playback claims.",
+    "spotify_evidence_reporting": "Verified playback messages report query-matching evidence before generic now-playing candidates."
+  }
 }

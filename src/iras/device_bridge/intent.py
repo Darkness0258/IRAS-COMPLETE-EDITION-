@@ -962,7 +962,10 @@ def result_message(action: dict, result) -> str:
             return f"I searched Spotify and sent Play for “{query}”."
         output = raw_output if isinstance(raw_output, dict) else {}
         if bool(output.get("verified_playback")):
+            evidence = [str(item).strip() for item in (output.get("query_evidence") or []) if str(item).strip()]
             candidates = [str(item).strip() for item in (output.get("now_playing_candidates") or []) if str(item).strip()]
+            if evidence:
+                return f"Verified Spotify playback for “{query}”. Matching now-playing evidence: {evidence[0]}."
             if candidates:
                 return f"Verified Spotify playback for “{query}”. Now-playing UI shows: {candidates[0]}."
             return f"Verified Spotify is playing a result related to “{query}”."

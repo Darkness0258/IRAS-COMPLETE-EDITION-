@@ -92,3 +92,39 @@ def test_cloud_agent_contract_exposes_device_ollama_and_status_command():
     assert '"/v1/agent/status"' in cloud
     assert '"spotify_semantic_verify"' in cloud
     assert '/agent' in client
+
+
+def test_spotify_cloud_visual_rejects_query_as_artist_substring():
+    obs = {
+        "foreground": {
+            "title": "Spotify",
+            "rect": {"left": 0, "top": 0, "width": 1600, "height": 900},
+        },
+        "elements": [
+            {"label": "Pause", "rect": {"left": 760, "top": 820, "width": 40, "height": 40}},
+            {"label": "savera", "rect": {"left": 1310, "top": 420, "width": 180, "height": 35}},
+            {"label": "Maanu", "rect": {"left": 1310, "top": 470, "width": 180, "height": 35}},
+        ],
+    }
+    result = _spotify_cloud_visual_verification("maa", obs)
+    assert result["playing"] is True
+    assert result["query_match"] is False
+    assert result["verified"] is False
+
+
+def test_spotify_cloud_visual_accepts_exact_query_token():
+    obs = {
+        "foreground": {
+            "title": "Spotify",
+            "rect": {"left": 0, "top": 0, "width": 1600, "height": 900},
+        },
+        "elements": [
+            {"label": "Pause", "rect": {"left": 760, "top": 820, "width": 40, "height": 40}},
+            {"label": "Maa", "rect": {"left": 1310, "top": 420, "width": 180, "height": 35}},
+            {"label": "Shankar Mahadevan", "rect": {"left": 1310, "top": 470, "width": 220, "height": 35}},
+        ],
+    }
+    result = _spotify_cloud_visual_verification("maa", obs)
+    assert result["playing"] is True
+    assert result["query_match"] is True
+    assert result["verified"] is True

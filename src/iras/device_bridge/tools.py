@@ -27,6 +27,16 @@ def _spotify_cloud_terms(query: str) -> list[str]:
     return [part for part in normalized.split() if len(part) >= 2 and part not in stop]
 
 
+
+
+def _spotify_cloud_label_matches_query(query: str, label: str) -> bool:
+    terms = _spotify_cloud_terms(query)
+    if not terms:
+        return False
+    normalized = re.sub(r"[^a-z0-9]+", " ", str(label or "").casefold()).strip()
+    tokens = set(normalized.split())
+    return all(term in tokens for term in terms)
+
 def _spotify_cloud_visual_verification(query: str, observation) -> dict:
     """Conservative second-opinion verification from computer_observe output.
 
@@ -62,7 +72,7 @@ def _spotify_cloud_visual_verification(query: str, observation) -> dict:
         rx = (cx - left) / width
         ry = (cy - top) / height
         in_now_playing_region = ry >= 0.74 or rx >= 0.72
-        if in_now_playing_region and terms and any(term in norm for term in terms):
+        if in_now_playing_region and terms and _spotify_cloud_label_matches_query(query, label):
             if label not in evidence:
                 evidence.append(label)
 
@@ -408,13 +418,10 @@ def make_tools(store):
             primary_error = exc
             output = {}
 
-        if isinstance(output, dict) and output.get("verified_playback"):
-            return output
-
-        # The second-opinion observation exists for cloud/remote bridge
-        # compatibility.  The in-process LocalDeviceBridgeStore already runs
-        # the current semantic Spotify controller directly and must keep its
-        # single-action fast path.
+        # The in-process LocalDeviceBridgeStore already runs the current
+        # semantic Spotify controller directly. Cloud/remote stores always take
+        # an independent fresh observation even when the bridge itself claims
+        # verified playback; this prevents stale/legacy false positives.
         if store.__class__.__name__ == "LocalDeviceBridgeStore":
             if primary_error is not None:
                 raise primary_error
@@ -464,6 +471,11 @@ def make_tools(store):
         if isinstance(output, dict):
             output = dict(output)
             output["cloud_visual_verification"] = fallback
+            if output.get("verified_playback"):
+                output["bridge_verified_playback"] = True
+                output["verified_playback"] = False
+                output["now_playing_candidates"] = []
+                output["query_evidence"] = []
         return output
 
     def device_media_control(
