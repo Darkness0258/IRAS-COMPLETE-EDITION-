@@ -13,7 +13,7 @@ def store(tmp_path):
 
 def test_cloud_workspace_is_feature_family():
     assert "unified_cloud_workspace" in FEATURES
-    assert len(FEATURES) == 34
+    assert len(FEATURES) == 36
 
 
 def test_cloud_clients_share_one_active_thread_and_history(tmp_path):
@@ -22,14 +22,14 @@ def test_cloud_clients_share_one_active_thread_and_history(tmp_path):
         client_id="web_test",
         name="IRAS Web",
         platform="web",
-        app_version="5.0.0-rc3",
+        app_version="5.0.0-rc4",
         capabilities=["chat", "cloud-sync"],
     )
     android = state.register_client(
         client_id="android_test",
         name="IRAS Android",
         platform="android",
-        app_version="5.0.0-rc3",
+        app_version="5.0.0-rc4",
         capabilities=["chat", "approvals"],
     )
     assert web["active_thread_id"] == android["active_thread_id"]

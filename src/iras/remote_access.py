@@ -54,6 +54,10 @@ READ_ACTIONS = {
     "clipboard_get",
     "local_llm_complete",
     "local_llm_status",
+    "software_manager_status",
+    "software_search",
+    "software_show",
+    "software_list",
 }
 
 SAFE_ACTIONS = {
@@ -80,6 +84,7 @@ SYSTEM_ACTIONS = {
     "ui_click_text",
     "ui_type_text",
     "ui_scroll_until_text",
+    "software_prepare_url",
 }
 
 CRITICAL_ACTIONS = {
@@ -88,6 +93,8 @@ CRITICAL_ACTIONS = {
     "power_action",
     "run_command",
     "git_restore_checkpoint",
+    "software_install",
+    "software_install_prepared",
 }
 
 
@@ -306,6 +313,11 @@ class RemoteAccessPolicy:
             raise PermissionError("Remote restart/shutdown is disabled by the laptop's local policy.")
         if action == "run_command" and not state.allow_shell:
             raise PermissionError("Remote command execution is disabled by the laptop's local policy.")
+        if action in {"software_install", "software_install_prepared"} and not state.allow_shell:
+            raise PermissionError(
+                "Remote software installation is disabled by the laptop's local command-execution policy. "
+                "Arm full Remote with --remote-allow-shell before installing software."
+            )
         return required
 
     def status(self) -> dict:

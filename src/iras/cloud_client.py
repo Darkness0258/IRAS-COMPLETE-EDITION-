@@ -208,7 +208,7 @@ def main() -> None:
                 f"[bold]IRAS Cloud Client {__version__}[/bold]\n"
                 f"Server: {server}\n"
                 f"Thread: {thread_id}\n"
-                "Shared with web + Android. Commands: /new, /history, /agent, /code <goal>, /code projects, /code use <project>, /code status, /code pause, /code resume, /code cancel, /code diff, /master, /master on, /master off, /exit"
+                "Shared with web + Android. Commands: /new, /history, /agent, /research <question>, /research status|pause|resume|cancel, /install search <software>, /install <software>, /install url <https-url>, /install status|pause|resume|cancel, /code <goal>, /code projects, /code use <project>, /code status, /code pause, /code resume, /code cancel, /code diff, /master, /master on, /master off, /exit"
             )
         )
 
@@ -245,6 +245,130 @@ def main() -> None:
                     console.print(f"[bold red]Agent status failed:[/bold red] {exc}")
                 continue
             lower = text.lower()
+
+            if lower == "/research" or lower.startswith("/research "):
+                remainder = text[len("/research"):].strip()
+                first, _, rest = remainder.partition(" ")
+                command = first.lower() if first else "status"
+                if command in {"status", "pause", "resume", "cancel"}:
+                    run_id = rest.strip() or str(state.get("last_research_run_id") or "")
+                    if command == "status" and not run_id:
+                        try:
+                            data = _request(client, "GET", "/v1/research-agent/status", token=token).json()
+                            console.print_json(data=data)
+                        except Exception as exc:
+                            console.print(f"[bold red]Research Agent status failed:[/bold red] {exc}")
+                        continue
+                    if not run_id:
+                        console.print(f"[yellow]No Research Agent run selected. Use /research <question> first.[/yellow]")
+                        continue
+                    try:
+                        if command == "status":
+                            data = _request(client, "GET", f"/v1/research-agent/runs/{run_id}", token=token).json()
+                        else:
+                            data = _request(client, "POST", f"/v1/research-agent/runs/{run_id}/{command}", token=token, headers={"X-Device-ID": client_id}, json={}).json()
+                        console.print_json(data=data)
+                    except Exception as exc:
+                        console.print(f"[bold red]Research Agent {command} failed:[/bold red] {exc}")
+                    continue
+                question = remainder
+                if not question:
+                    console.print("[yellow]Usage: /research <question>[/yellow]")
+                    continue
+                try:
+                    run = _request(
+                        client, "POST", "/v1/research-agent/runs", token=token,
+                        headers={"X-Device-ID": client_id},
+                        json={"question": question, "thread_id": thread_id},
+                    ).json()
+                    run_id = str(run.get("run_id") or "")
+                    if run_id:
+                        state["last_research_run_id"] = run_id
+                        _save_state(state)
+                    console.print(f"[bold green]Research Agent started[/bold green] · run {run_id or 'unknown'}")
+                except Exception as exc:
+                    console.print(f"[bold red]Research Agent failed to start:[/bold red] {exc}")
+                continue
+
+            if lower == "/install" or lower.startswith("/install "):
+                remainder = text[len("/install"):].strip()
+                first, _, rest = remainder.partition(" ")
+                command = first.lower() if first else "status"
+                if command == "search":
+                    if not rest.strip():
+                        console.print("[yellow]Usage: /install search <software>[/yellow]")
+                        continue
+                    if not remote_session:
+                        console.print("[yellow]/install search needs a live Remote session. Use /master on first.[/yellow]")
+                        continue
+                    try:
+                        data = _request(
+                            client, "GET", "/v1/software-installer/search", token=token,
+                            headers={
+                                "X-Device-ID": client_id,
+                                "X-IRAS-Remote-Session-ID": str(remote_session.get("session_id") or ""),
+                                "X-IRAS-Remote-Token": str(remote_session.get("session_token") or ""),
+                            },
+                            params={"query": rest.strip()},
+                        ).json()
+                        result = data.get("result") or {}
+                        console.print(str(result.get("stdout") or result.get("stderr") or result))
+                    except Exception as exc:
+                        console.print(f"[bold red]Software search failed:[/bold red] {exc}")
+                    continue
+                if command in {"status", "pause", "resume", "cancel"}:
+                    run_id = rest.strip() or str(state.get("last_install_run_id") or "")
+                    if command == "status" and not run_id:
+                        try:
+                            data = _request(client, "GET", "/v1/software-installer/status", token=token).json()
+                            console.print_json(data=data)
+                        except Exception as exc:
+                            console.print(f"[bold red]Software Installer status failed:[/bold red] {exc}")
+                        continue
+                    if not run_id:
+                        console.print("[yellow]No Software Installer run selected. Use /install <software> first.[/yellow]")
+                        continue
+                    headers = {"X-Device-ID": client_id}
+                    if remote_session:
+                        headers.update({
+                            "X-IRAS-Remote-Session-ID": str(remote_session.get("session_id") or ""),
+                            "X-IRAS-Remote-Token": str(remote_session.get("session_token") or ""),
+                        })
+                    try:
+                        if command == "status":
+                            data = _request(client, "GET", f"/v1/software-installer/runs/{run_id}", token=token).json()
+                        else:
+                            data = _request(client, "POST", f"/v1/software-installer/runs/{run_id}/{command}", token=token, headers=headers, json={}).json()
+                        console.print_json(data=data)
+                    except Exception as exc:
+                        console.print(f"[bold red]Software Installer {command} failed:[/bold red] {exc}")
+                    continue
+                direct_url = command == "url"
+                target = rest.strip() if direct_url else remainder
+                if not target:
+                    console.print("[yellow]Usage: /install <software-or-package-id> OR /install url <https-installer-url>[/yellow]")
+                    continue
+                if not remote_session:
+                    console.print("[yellow]Software installation needs a live Remote session. Use /master on first.[/yellow]")
+                    continue
+                try:
+                    run = _request(
+                        client, "POST", "/v1/software-installer/runs", token=token,
+                        headers={
+                            "X-Device-ID": client_id,
+                            "X-IRAS-Remote-Session-ID": str(remote_session.get("session_id") or ""),
+                            "X-IRAS-Remote-Token": str(remote_session.get("session_token") or ""),
+                        },
+                        json={"target": target, "thread_id": thread_id, "direct_url": direct_url},
+                    ).json()
+                    run_id = str(run.get("run_id") or "")
+                    if run_id:
+                        state["last_install_run_id"] = run_id
+                        _save_state(state)
+                    console.print(f"[bold green]Software Installer started[/bold green] · run {run_id or 'unknown'}")
+                except Exception as exc:
+                    console.print(f"[bold red]Software Installer failed to start:[/bold red] {exc}")
+                continue
 
             if lower == "/code projects" or lower.startswith("/code projects "):
                 query = text[len("/code projects"):].strip()

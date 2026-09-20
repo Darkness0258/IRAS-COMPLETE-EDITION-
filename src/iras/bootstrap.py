@@ -38,6 +38,8 @@ from iras.tools.master import make_tools as master_tools
 from iras.vision.omniparser_runtime import OmniParserRuntimeManager
 from iras.orchestration import OrchestrationManager
 from iras.coding_agent import build_coding_agent_graph, coding_agent_role_allowlist
+from iras.research_agent import RESEARCH_AGENT_TOOLS
+from iras.software_installer import installer_role_allowlist
 
 class Runtime:
     def __init__(self,settings,agent,registry,memory,audit,browser,automations,personality,v5=None,vision=None,master=None):
@@ -130,6 +132,10 @@ def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.
         worker_agent = IRASAgent(worker_provider, worker_reg, memory, audit, worker_steps, system_prompt=build_system_prompt(s.voice_profile), personality=personality, voice_profile=s.voice_profile)
         if context.get("coding_agent"):
             worker_agent.tool_allowlist = coding_agent_role_allowlist(context.get("agent_role"))
+        elif context.get("software_installer"):
+            worker_agent.tool_allowlist = installer_role_allowlist(context.get("agent_role"))
+        elif context.get("research_agent"):
+            worker_agent.tool_allowlist = set() if str(context.get("agent_role") or "").lower() == "coordinator" else set(RESEARCH_AGENT_TOOLS)
         try:
             return {
                 "result": worker_agent.handle(worker_prompt),

@@ -419,7 +419,7 @@ async function initCloudSession({renderHistory=true}={}){
   const headers={"Authorization":"Bearer "+c.token,"Content-Type":"application/json"};
   const reg=await fetch(base+"/v1/cloud/clients/register",{
     method:"POST",headers,
-    body:JSON.stringify({client_id:cloudClientId(),name:"IRAS Web",platform:"web",app_version:"5.0.0-rc3",capabilities:["chat","cloud-sync","remote-control","voice"]})
+    body:JSON.stringify({client_id:cloudClientId(),name:"IRAS Web",platform:"web",app_version:"5.0.0-rc4",capabilities:["chat","cloud-sync","remote-control","voice"]})
   });
   if(!reg.ok)throw new Error((await reg.text())||("HTTP "+reg.status));
   const registered=await reg.json();

@@ -39,16 +39,76 @@
       "ui_scroll_until_text"
     ]
   },
+  "coding_agent": {
+    "ambiguity_policy": "genuine close matches fail closed and require /code use selection",
+    "chat_auto_routing": true,
+    "cloud_requires_live_remote_session": true,
+    "cloud_run_endpoint": "/v1/coding-agent/runs",
+    "cloud_status_endpoint": "/v1/coding-agent/status",
+    "critical_run_command": "shell=False and allowed only when active Remote/Master policy permits CRITICAL command execution",
+    "default_exclusions": [
+      "power_action",
+      "kill_process",
+      "delete_path"
+    ],
+    "followup_project_memory": "thread/client-scoped non-secret project path; revalidated through bridge Git read before use",
+    "fuzzy_project_names": "typo-tolerant conservative matching; portfoilo resolves to Portfolio",
+    "local_requires_master_autonomous": true,
+    "mode": "dedicated_engineering_agent",
+    "nested_repo_guard": "real project roots outrank and weak nested artifact/mockup/test path matches are rejected",
+    "permissioned_windows_control": true,
+    "project_list_endpoint": "/v1/coding-agent/projects",
+    "project_resolution": "explicit Windows path > named/fuzzy identity > remembered verified project > single discovered project",
+    "project_root_and_remote_enforcement_unchanged": true,
+    "project_select_endpoint": "/v1/coding-agent/project",
+    "run_controls": [
+      "/code status [run-id]",
+      "/code pause [run-id]",
+      "/code resume [run-id]",
+      "/code cancel [run-id]",
+      "/code diff [run-id]",
+      "/code projects [query]",
+      "/code use <project-name-or-path>"
+    ],
+    "windows_client_command": "/code <goal>",
+    "windows_controls": [
+      "open/focus VS Code",
+      "UIA/OmniParser observe",
+      "grounded computer actions",
+      "semantic UI actions",
+      "clipboard",
+      "process listing",
+      "integrated terminal"
+    ],
+    "workflow": [
+      "inspect",
+      "implement",
+      "test",
+      "repair_if_needed",
+      "final_test",
+      "review",
+      "coordinate"
+    ]
+  },
   "completion_hardening": {
     "android_companion": "register/heartbeat/events/per-device-ack/approval-resolution",
+    "clean_tree_virtualenv": "validator ignores .venv/VCS/dependency trees while continuing to reject source caches and build debris",
+    "coding_agent_terminal_truth": "permission/device blockers cannot be recorded as successful; dedicated state-changing runs require explicit coordinator OUTCOME: COMPLETE",
     "connectors": "authorization/expiry fail-closed with fixed-host vault-backed adapters",
     "control_surfaces": "complete model-facing v5 tool surface plus web status matrix",
     "local_orchestration": "separate READ-capped worker registry",
+    "research_agent": "dedicated read-only web evidence workflow with source discovery, retrieval, cross-check and review",
     "schema_migrations": "persistent migration ledger",
     "signed_skills": "manifest plus every package file hash is Ed25519 authenticated",
+    "software_installer": "WinGet-first exact-ID install plus signed HTTPS installer receipts; CRITICAL Remote/local-policy/UAC enforcement preserved",
     "unified_cloud_workspace": "shared restart-safe client presence, active thread, transcript and non-secret preferences across Windows/web/Android"
   },
-  "feature_count": 34,
+  "feature_count": 36,
+  "features": {
+    "spotify_cloud_independent_reverify": "Cloud/remote Spotify execution always takes an independent fresh computer_observe verification instead of blindly trusting bridge verified_playback claims.",
+    "spotify_evidence_reporting": "Verified playback messages report query-matching evidence before generic now-playing candidates.",
+    "spotify_exact_token_truth": "Spotify search and now-playing verification use whole normalized query tokens; short queries such as 'maa' cannot match Maanu, Maand, or Maahi by substring."
+  },
   "hotfixes": {
     "approval_input": "interactive risky-action prompts accept common affirmative forms such as yes/yep/okay/approve",
     "cloud_thread_context": "Direct cloud chat uses request-scoped cloud thread history instead of leaking recent messages from another cloud thread.",
@@ -83,7 +143,7 @@
   "local_regression": {
     "android_companion_compile": "static-contract-validated; Android SDK/Gradle build is host-side",
     "failed": 0,
-    "passed": 878
+    "passed": 886
   },
   "managed_omniparser": {
     "authenticated_lifecycle": true,
@@ -158,7 +218,7 @@
     "src/iras/device_bridge/agent.py"
   ],
   "release_date": "2026-09-20",
-  "release_name": "Complete Operating Layer - Cloud AI Agent + Emergency Master Control",
+  "release_name": "RC4 Research + Permissioned Software Installation + Reliable Coding Agent",
   "release_notes": [
     "Unified cloud workspace shared across Windows, web and Android clients.",
     "Professional adaptive UI/UX and motion system across web/PWA, Windows desktop and Android.",
@@ -176,7 +236,12 @@
     "Cloud AI Agent now extends provider failover to the paired Windows PC's Ollama after the configured cloud provider pool is exhausted or rate-limited.",
     "Cloud Spotify execution takes an OmniParser-backed second visual observation when a legacy/unverified bridge response lacks playback proof, and rejects unrelated playback.",
     "Windows cloud client exposes /agent status for cloud-agent routing, device Ollama fallback readiness and deterministic executor visibility.",
-    "Coding Agent project resolution now honors explicit Windows paths, fuzzy project names, root-over-artifact ranking, fail-closed ambiguity, remembered follow-up selection, and /code projects/use/status/pause/resume/cancel/diff controls."
+    "Coding Agent project resolution now honors explicit Windows paths, fuzzy project names, root-over-artifact ranking, fail-closed ambiguity, remembered follow-up selection, and /code projects/use/status/pause/resume/cancel/diff controls.",
+    "Dedicated Web Research Agent adds /research run/status/pause/resume/cancel with read-only public-web evidence collection, cross-checking and review.",
+    "Permissioned Software Installer Agent adds /install search/run/url/status/pause/resume/cancel; WinGet exact-ID is preferred and direct web installers require public HTTPS, SHA-256 continuity and valid Authenticode.",
+    "Software installation remains CRITICAL and requires authenticated Remote authority plus laptop-local allow_shell; emergency stop, audit and Windows/UAC remain non-bypassable.",
+    "Coding/Installer orchestration no longer marks explicit permission/device blockers as successful and requires a verified COMPLETE coordinator outcome.",
+    "Clean-tree validation excludes legitimate .venv contents, fixing false failures caused by dependency __pycache__ files."
   ],
   "remote_protocol": 1,
   "render_health_hotfix": {
@@ -185,6 +250,57 @@
     "health_get": true,
     "health_head": true,
     "root_head": true
+  },
+  "research_agent": {
+    "cloud_run_endpoint": "/v1/research-agent/runs",
+    "cloud_status_endpoint": "/v1/research-agent/status",
+    "mode": "dedicated_web_research_agent",
+    "read_only": true,
+    "tool_allowlist": [
+      "web_search",
+      "http_get",
+      "api_request"
+    ],
+    "windows_client_commands": [
+      "/research <question>",
+      "/research status",
+      "/research pause",
+      "/research resume",
+      "/research cancel"
+    ],
+    "windows_mutation_authority": false,
+    "workflow": [
+      "scope",
+      "discover",
+      "collect_evidence",
+      "crosscheck",
+      "review",
+      "coordinate"
+    ]
+  },
+  "software_installer": {
+    "arbitrary_local_executable_path": false,
+    "cloud_run_endpoint": "/v1/software-installer/runs",
+    "cloud_search_endpoint": "/v1/software-installer/search",
+    "cloud_status_endpoint": "/v1/software-installer/status",
+    "direct_url_path": "public HTTPS .exe/.msi only; IRAS cache receipt; SHA-256 continuity; Authenticode Valid at prepare and execution",
+    "emergency_stop_preserved": true,
+    "local_policy_requires_allow_shell": true,
+    "mode": "permissioned_software_installer_agent",
+    "permission": "CRITICAL for installation",
+    "preferred_path": "WinGet search/show/list plus exact-ID install",
+    "remote_protocol": 1,
+    "shell_execution": "fixed argv / shell=False",
+    "windows_client_commands": [
+      "/install search <software>",
+      "/install <software-or-package-id>",
+      "/install url <https-url>",
+      "/install status",
+      "/install pause",
+      "/install resume",
+      "/install cancel"
+    ],
+    "windows_uac_bypassed": false
   },
   "unified_cloud_workspace": {
     "clients": [
@@ -202,61 +318,5 @@
     "stable_client_ids": true,
     "thread_scoped_direct_chat_context": true
   },
-  "version": "5.0.0-rc3",
-  "features": {
-    "spotify_exact_token_truth": "Spotify search and now-playing verification use whole normalized query tokens; short queries such as 'maa' cannot match Maanu, Maand, or Maahi by substring.",
-    "spotify_cloud_independent_reverify": "Cloud/remote Spotify execution always takes an independent fresh computer_observe verification instead of blindly trusting bridge verified_playback claims.",
-    "spotify_evidence_reporting": "Verified playback messages report query-matching evidence before generic now-playing candidates."
-  },
-  "coding_agent": {
-    "mode": "dedicated_engineering_agent",
-    "workflow": [
-      "inspect",
-      "implement",
-      "test",
-      "repair_if_needed",
-      "final_test",
-      "review",
-      "coordinate"
-    ],
-    "cloud_status_endpoint": "/v1/coding-agent/status",
-    "cloud_run_endpoint": "/v1/coding-agent/runs",
-    "windows_client_command": "/code <goal>",
-    "chat_auto_routing": true,
-    "cloud_requires_live_remote_session": true,
-    "local_requires_master_autonomous": true,
-    "permissioned_windows_control": true,
-    "windows_controls": [
-      "open/focus VS Code",
-      "UIA/OmniParser observe",
-      "grounded computer actions",
-      "semantic UI actions",
-      "clipboard",
-      "process listing",
-      "integrated terminal"
-    ],
-    "critical_run_command": "shell=False and allowed only when active Remote/Master policy permits CRITICAL command execution",
-    "default_exclusions": [
-      "power_action",
-      "kill_process",
-      "delete_path"
-    ],
-    "project_root_and_remote_enforcement_unchanged": true,
-    "project_resolution": "explicit Windows path > named/fuzzy identity > remembered verified project > single discovered project",
-    "fuzzy_project_names": "typo-tolerant conservative matching; portfoilo resolves to Portfolio",
-    "nested_repo_guard": "real project roots outrank and weak nested artifact/mockup/test path matches are rejected",
-    "ambiguity_policy": "genuine close matches fail closed and require /code use selection",
-    "followup_project_memory": "thread/client-scoped non-secret project path; revalidated through bridge Git read before use",
-    "project_list_endpoint": "/v1/coding-agent/projects",
-    "project_select_endpoint": "/v1/coding-agent/project",
-    "run_controls": [
-      "/code status [run-id]",
-      "/code pause [run-id]",
-      "/code resume [run-id]",
-      "/code cancel [run-id]",
-      "/code diff [run-id]",
-      "/code projects [query]",
-      "/code use <project-name-or-path>"
-    ]
-  }
+  "version": "5.0.0-rc4"
 }

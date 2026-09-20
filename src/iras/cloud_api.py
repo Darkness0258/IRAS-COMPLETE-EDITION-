@@ -89,6 +89,18 @@ from iras.coding_agent import (
     extract_windows_project_path,
     project_query_from_objective,
 )
+from iras.research_agent import (
+    RESEARCH_AGENT_TOOLS,
+    build_research_agent_graph,
+    parse_research_command,
+    research_agent_status,
+)
+from iras.software_installer import (
+    build_software_install_graph,
+    installer_role_allowlist,
+    parse_installer_command,
+    software_installer_status,
+)
 from iras.config import Settings
 from iras.v5 import build_v5_runtime
 from iras.voice.humanize import (
@@ -233,6 +245,17 @@ class CodingAgentIn(BaseModel):
 class CodingAgentProjectIn(BaseModel):
     project: str = Field(min_length=1, max_length=1000)
     thread_id: str = Field(default="", max_length=128)
+
+
+class ResearchAgentIn(BaseModel):
+    question: str = Field(min_length=1, max_length=12000)
+    thread_id: str = Field(default="", max_length=128)
+
+
+class SoftwareInstallIn(BaseModel):
+    target: str = Field(min_length=1, max_length=4096)
+    thread_id: str = Field(default="", max_length=128)
+    direct_url: bool = False
 
 
 class TTSIn(BaseModel):
@@ -590,6 +613,16 @@ _ORCHESTRATION_ROLE_TOOLS = {
         "device_git_status", "device_git_diff", "device_git_log", "device_run_tests",
         "web_search", "http_get",
     },
+    "installer": {
+        "web_search", "http_get",
+        "device_software_manager_status", "device_software_search", "device_software_show",
+        "device_software_list", "device_software_install", "device_software_prepare_url",
+        "device_software_install_prepared", "device_detect_apps", "device_list_processes",
+        "device_computer_status", "device_computer_observe", "device_computer_action",
+        "device_computer_verify", "device_verify_state", "device_open_app", "device_app_control",
+        "device_observe_ui", "device_ui_find_text", "device_ui_click_text", "device_ui_type_text",
+        "device_ui_wait_text",
+    },
     "coordinator": set(),
 }
 
@@ -687,11 +720,14 @@ def _multitask_worker(prompt: str, context: dict[str, Any]) -> dict[str, Any]:
         worker.agent.max_steps = max(worker.agent.max_steps, _orchestration_agent_step_budget(context))
         if master_execution_limits_for_context(context).get("active"):
             worker.agent.master_execution_override = True
-        role_tools = (
-            coding_agent_role_allowlist(role)
-            if context.get("coding_agent")
-            else _ORCHESTRATION_ROLE_TOOLS.get(role)
-        )
+        if context.get("coding_agent"):
+            role_tools = coding_agent_role_allowlist(role)
+        elif context.get("software_installer"):
+            role_tools = installer_role_allowlist(role)
+        elif context.get("research_agent"):
+            role_tools = set() if role == "coordinator" else set(RESEARCH_AGENT_TOOLS)
+        else:
+            role_tools = _ORCHESTRATION_ROLE_TOOLS.get(role)
         if role_tools is not None:
             worker.agent.tool_allowlist = set(role_tools)
     remote_session = context.get("remote_session")
@@ -1386,6 +1422,153 @@ def _coding_agent_control_text(
         return diff.rstrip() or f"Coding Agent run {run_id} has no working-tree diff."
 
     raise ValueError(f"Unknown Coding Agent command: {command}")
+
+
+def _agent_run_pref_key(kind: str, *, thread_id: str, requester_device: str) -> str:
+    scope = str(thread_id or "").strip() or str(requester_device or "cloud-agent").strip()
+    scope = re.sub(r"[^A-Za-z0-9_.:-]+", "_", scope)[:120]
+    return f"{kind}_last_run:" + (scope or "default")
+
+
+def _remember_agent_run(kind: str, *, thread_id: str, requester_device: str, run_id: str) -> None:
+    cloud_state.set_preference(
+        _agent_run_pref_key(kind, thread_id=thread_id, requester_device=requester_device),
+        str(run_id or ""),
+    )
+
+
+def _last_agent_run(kind: str, *, thread_id: str, requester_device: str) -> str:
+    return str(cloud_state.get_preference(
+        _agent_run_pref_key(kind, thread_id=thread_id, requester_device=requester_device), ""
+    ) or "").strip()
+
+
+def _start_research_agent(question: str, *, requester_device: str, thread_id: str = "") -> dict[str, Any]:
+    context = _multitask_context(remote_session=None, requester_device=requester_device, thread_id=thread_id)
+    context.update({"research_agent": True, "default_permission": "read_only"})
+    run = orchestration_manager.submit_graph(
+        question, build_research_agent_graph(question), context=context,
+        requester_device=requester_device, add_coordinator=True,
+    )
+    _remember_agent_run("research_agent", thread_id=thread_id, requester_device=requester_device, run_id=str(run.get("run_id") or ""))
+    runtime.audit.record("research_agent_run_started", {
+        "run_id": run.get("run_id"), "question": str(question)[:500], "requester_device": requester_device,
+    })
+    return run
+
+
+def _research_agent_control_text(command: str, argument: str, *, requester_device: str, thread_id: str) -> str:
+    command = str(command or "status").casefold()
+    run_id = str(argument or "").strip() or _last_agent_run(
+        "research_agent", thread_id=thread_id, requester_device=requester_device
+    )
+    if command == "status" and not run_id:
+        base = research_agent_status()
+        return f"Research Agent mode: {base.get('mode')}. No research run is selected. Use /research <question>."
+    if not run_id:
+        raise ValueError(f"No Research Agent run selected for /research {command}.")
+    run = orchestration_manager.get(run_id)
+    if not run:
+        raise ValueError(f"Research Agent run {run_id!r} was not found.")
+    if command == "status":
+        return (
+            f"Research Agent run {run_id}: state={run.get('state')}, "
+            f"completed={run.get('completed_count')}/{run.get('task_count')}, paused={bool(run.get('paused'))}."
+        )
+    if command == "pause":
+        updated = orchestration_manager.pause(run_id) or run
+        return f"Research Agent run {run_id} is {updated.get('state')}."
+    if command == "cancel":
+        updated = orchestration_manager.cancel(run_id) or run
+        return f"Research Agent run {run_id} is {updated.get('state')}."
+    if command == "resume":
+        context = _multitask_context(remote_session=None, requester_device=requester_device, thread_id=thread_id)
+        context.update({"research_agent": True, "default_permission": "read_only"})
+        updated = orchestration_manager.resume(run_id, context_update=context) or run
+        return f"Research Agent run {run_id} resumed with state={updated.get('state')}."
+    raise ValueError(f"Unknown Research Agent command: {command}")
+
+
+def _software_search_text(query: str, *, remote_session: dict | None, requester_device: str, thread_id: str) -> str:
+    if not remote_session:
+        raise PermissionError("/install search requires a live IRAS Remote session.")
+    context = _multitask_context(remote_session=remote_session, requester_device=requester_device, thread_id=thread_id)
+    result = _deterministic_device_request(
+        context, "software_search", {"query": str(query or "").strip(), "source": "winget", "count": 20}, 75
+    )
+    if not isinstance(result, dict):
+        return str(result or "")
+    stdout = str(result.get("stdout") or "").rstrip()
+    stderr = str(result.get("stderr") or "").rstrip()
+    return stdout or stderr or "WinGet search returned no visible results."
+
+
+def _start_software_installer(
+    target: str, *, direct_url: bool, remote_session: dict | None, requester_device: str, thread_id: str = ""
+) -> dict[str, Any]:
+    if not remote_session:
+        raise PermissionError(
+            "The Software Installer Agent requires a live full IRAS Remote session because installation changes Windows state."
+        )
+    context = _multitask_context(remote_session=remote_session, requester_device=requester_device, thread_id=thread_id)
+    context.update({
+        "software_installer": True,
+        "installer_direct_url": bool(direct_url),
+        "installer_target": str(target),
+    })
+    run = orchestration_manager.submit_graph(
+        target, build_software_install_graph(target, direct_url=direct_url), context=context,
+        requester_device=requester_device, add_coordinator=True,
+    )
+    _remember_agent_run("software_installer", thread_id=thread_id, requester_device=requester_device, run_id=str(run.get("run_id") or ""))
+    runtime.audit.record("software_installer_run_started", {
+        "run_id": run.get("run_id"), "target": str(target)[:500], "direct_url": bool(direct_url),
+        "requester_device": requester_device, "remote_session_id": remote_session.get("session_id"),
+    })
+    return run
+
+
+def _software_installer_control_text(
+    command: str, argument: str, *, remote_session: dict | None, requester_device: str, thread_id: str
+) -> str:
+    command = str(command or "status").casefold()
+    argument = str(argument or "").strip()
+    if command == "search":
+        if not argument:
+            raise ValueError("Usage: /install search <software>")
+        return _software_search_text(
+            argument, remote_session=remote_session, requester_device=requester_device, thread_id=thread_id
+        )
+    run_id = argument or _last_agent_run(
+        "software_installer", thread_id=thread_id, requester_device=requester_device
+    )
+    if command == "status" and not run_id:
+        base = software_installer_status()
+        return f"Software Installer Agent mode: {base.get('mode')}. No install run is selected. Use /install <software>."
+    if not run_id:
+        raise ValueError(f"No Software Installer run selected for /install {command}.")
+    run = orchestration_manager.get(run_id)
+    if not run:
+        raise ValueError(f"Software Installer run {run_id!r} was not found.")
+    if command == "status":
+        return (
+            f"Software Installer run {run_id}: state={run.get('state')}, "
+            f"completed={run.get('completed_count')}/{run.get('task_count')}, paused={bool(run.get('paused'))}."
+        )
+    if command == "pause":
+        updated = orchestration_manager.pause(run_id) or run
+        return f"Software Installer run {run_id} is {updated.get('state')}."
+    if command == "cancel":
+        updated = orchestration_manager.cancel(run_id) or run
+        return f"Software Installer run {run_id} is {updated.get('state')}."
+    if command == "resume":
+        if not remote_session:
+            raise PermissionError("/install resume requires a live IRAS Remote session.")
+        context = _multitask_context(remote_session=remote_session, requester_device=requester_device, thread_id=thread_id)
+        context["software_installer"] = True
+        updated = orchestration_manager.resume(run_id, context_update=context) or run
+        return f"Software Installer run {run_id} resumed with state={updated.get('state')}."
+    raise ValueError(f"Unknown Software Installer command: {command}")
 
 
 def _start_multitask(
@@ -2140,6 +2323,176 @@ def diff_coding_agent_run(
     }
 
 
+@app.get("/v1/research-agent/status")
+def get_research_agent_status(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return research_agent_status()
+
+
+@app.post("/v1/research-agent/runs")
+def create_research_agent_run(
+    body: ResearchAgentIn,
+    authorization: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
+):
+    _authorized(authorization)
+    run = _start_research_agent(
+        body.question, requester_device=str(x_device_id or "web")[:128], thread_id=body.thread_id
+    )
+    result = dict(run)
+    result["agent_type"] = "research_agent"
+    result["read_only"] = True
+    return result
+
+
+@app.get("/v1/research-agent/runs/{run_id}")
+def get_research_agent_run(run_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    run = orchestration_manager.get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Research Agent run not found.")
+    result = dict(run)
+    result["agent_type"] = "research_agent"
+    return result
+
+
+@app.post("/v1/research-agent/runs/{run_id}/pause")
+def pause_research_agent_run(run_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    run = orchestration_manager.pause(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Research Agent run not found.")
+    return run
+
+
+@app.post("/v1/research-agent/runs/{run_id}/cancel")
+def cancel_research_agent_run(run_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    run = orchestration_manager.cancel(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Research Agent run not found.")
+    return run
+
+
+@app.post("/v1/research-agent/runs/{run_id}/resume")
+def resume_research_agent_run(
+    run_id: str, authorization: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
+):
+    _authorized(authorization)
+    existing = orchestration_manager.get(run_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Research Agent run not found.")
+    context = _multitask_context(remote_session=None, requester_device=x_device_id or "web")
+    context.update({"research_agent": True, "default_permission": "read_only"})
+    return orchestration_manager.resume(run_id, context_update=context) or existing
+
+
+@app.get("/v1/software-installer/status")
+def get_software_installer_status(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return software_installer_status()
+
+
+@app.get("/v1/software-installer/search")
+def search_software_installer(
+    query: str,
+    authorization: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
+    x_iras_remote_session_id: str | None = Header(default=None, alias="X-IRAS-Remote-Session-ID"),
+    x_iras_remote_token: str | None = Header(default=None, alias="X-IRAS-Remote-Token"),
+):
+    _authorized(authorization)
+    remote_session = _authorize_remote_session(x_iras_remote_session_id, x_iras_remote_token)
+    if not remote_session:
+        raise HTTPException(status_code=403, detail="Software search requires a live IRAS Remote session.")
+    context = _multitask_context(remote_session=remote_session, requester_device=x_device_id or "web")
+    try:
+        result = _deterministic_device_request(
+            context, "software_search", {"query": query, "source": "winget", "count": 20}, 75
+        )
+        return {"query": query, "result": result}
+    except (RuntimeError, PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/v1/software-installer/runs")
+def create_software_installer_run(
+    body: SoftwareInstallIn,
+    authorization: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
+    x_iras_remote_session_id: str | None = Header(default=None, alias="X-IRAS-Remote-Session-ID"),
+    x_iras_remote_token: str | None = Header(default=None, alias="X-IRAS-Remote-Token"),
+):
+    _authorized(authorization)
+    remote_session = _authorize_remote_session(x_iras_remote_session_id, x_iras_remote_token)
+    if not remote_session:
+        raise HTTPException(
+            status_code=403,
+            detail="The Software Installer Agent requires a live full IRAS Remote session.",
+        )
+    try:
+        run = _start_software_installer(
+            body.target, direct_url=body.direct_url, remote_session=remote_session,
+            requester_device=str(x_device_id or "web")[:128], thread_id=body.thread_id,
+        )
+    except (RuntimeError, PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    result = dict(run)
+    result["agent_type"] = "software_installer"
+    result["direct_url"] = bool(body.direct_url)
+    return result
+
+
+@app.get("/v1/software-installer/runs/{run_id}")
+def get_software_installer_run(run_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    run = orchestration_manager.get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Software Installer run not found.")
+    result = dict(run)
+    result["agent_type"] = "software_installer"
+    return result
+
+
+@app.post("/v1/software-installer/runs/{run_id}/pause")
+def pause_software_installer_run(run_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    run = orchestration_manager.pause(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Software Installer run not found.")
+    return run
+
+
+@app.post("/v1/software-installer/runs/{run_id}/cancel")
+def cancel_software_installer_run(run_id: str, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    run = orchestration_manager.cancel(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Software Installer run not found.")
+    return run
+
+
+@app.post("/v1/software-installer/runs/{run_id}/resume")
+def resume_software_installer_run(
+    run_id: str,
+    authorization: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
+    x_iras_remote_session_id: str | None = Header(default=None, alias="X-IRAS-Remote-Session-ID"),
+    x_iras_remote_token: str | None = Header(default=None, alias="X-IRAS-Remote-Token"),
+):
+    _authorized(authorization)
+    remote_session = _authorize_remote_session(x_iras_remote_session_id, x_iras_remote_token)
+    if not remote_session:
+        raise HTTPException(status_code=403, detail="Resuming a software installation requires a live IRAS Remote session.")
+    existing = orchestration_manager.get(run_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Software Installer run not found.")
+    context = _multitask_context(remote_session=remote_session, requester_device=x_device_id or "web")
+    context["software_installer"] = True
+    return orchestration_manager.resume(run_id, context_update=context) or existing
+
+
 @app.post("/v1/orchestration/runs")
 def create_orchestration_run(
     body: OrchestrationIn,
@@ -2432,9 +2785,15 @@ def chat(
         explicit_code = code_command is not None
         code_action, code_argument = code_command if code_command else ("", "")
         coding_objective = code_argument if code_action == "run" else ""
+        research_command = parse_research_command(raw_message)
+        explicit_research = research_command is not None
+        research_action, research_argument = research_command if research_command else ("", "")
+        install_command = parse_installer_command(raw_message)
+        explicit_install = install_command is not None
+        install_action, install_argument = install_command if install_command else ("", "")
         goal_objective = parse_goal_command(body.message)
         parallel_tasks = parse_parallel_command(body.message)
-        decision = None if (goal_objective or parallel_tasks or explicit_code) else _auto_decision(body.message)
+        decision = None if (goal_objective or parallel_tasks or explicit_code or explicit_research or explicit_install) else _auto_decision(body.message)
         if goal_objective and exact_file_plan(goal_objective) is not None and not remote_session:
             response = (
                 "This goal changes Windows state and needs a live IRAS Remote session. "
@@ -2509,6 +2868,59 @@ def chat(
                 except (RuntimeError, ValueError, PermissionError) as exc:
                     response = str(exc)
                 metrics = {"model": "coding-agent-control", "total_ms": 0, "model_ms": 0, "tool_schema_count": 0}
+        elif explicit_research:
+            if research_action == "run":
+                try:
+                    run = _start_research_agent(
+                        research_argument, requester_device=device_id, thread_id=cloud_thread_id
+                    )
+                    response = (
+                        f"Started Research Agent run {run['run_id']} for: {research_argument}. "
+                        "It will scope, discover sources, read evidence, cross-check, review, and synthesize."
+                    )
+                    metrics = {"model": "research-agent-coordinator", "total_ms": 0, "model_ms": 0, "tool_schema_count": 0}
+                except (RuntimeError, ValueError, PermissionError) as exc:
+                    response = str(exc)
+                    metrics = {"model": "research-agent-preflight", "total_ms": 0, "model_ms": 0, "tool_schema_count": 0}
+            else:
+                try:
+                    response = _research_agent_control_text(
+                        research_action, research_argument, requester_device=device_id, thread_id=cloud_thread_id
+                    )
+                except (RuntimeError, ValueError, PermissionError) as exc:
+                    response = str(exc)
+                metrics = {"model": "research-agent-control", "total_ms": 0, "model_ms": 0, "tool_schema_count": 0}
+        elif explicit_install:
+            if install_action in {"run", "url"}:
+                if not remote_session:
+                    response = (
+                        "The Software Installer Agent needs a live full IRAS Remote session. "
+                        "Enable Remote or Master Control, then send the /install request again."
+                    )
+                    metrics = {"model": "software-installer-safety-gate", "total_ms": 0, "model_ms": 0, "tool_schema_count": 0}
+                else:
+                    try:
+                        run = _start_software_installer(
+                            install_argument, direct_url=(install_action == "url"), remote_session=remote_session,
+                            requester_device=device_id, thread_id=cloud_thread_id,
+                        )
+                        response = (
+                            f"Started Software Installer run {run['run_id']} for: {install_argument}. "
+                            "IRAS will resolve/verify the package, install only through the protected Windows device path, and verify the result."
+                        )
+                        metrics = {"model": "software-installer-coordinator", "total_ms": 0, "model_ms": 0, "tool_schema_count": 0}
+                    except (RuntimeError, ValueError, PermissionError) as exc:
+                        response = str(exc)
+                        metrics = {"model": "software-installer-preflight", "total_ms": 0, "model_ms": 0, "tool_schema_count": 0}
+            else:
+                try:
+                    response = _software_installer_control_text(
+                        install_action, install_argument, remote_session=remote_session,
+                        requester_device=device_id, thread_id=cloud_thread_id,
+                    )
+                except (RuntimeError, ValueError, PermissionError) as exc:
+                    response = str(exc)
+                metrics = {"model": "software-installer-control", "total_ms": 0, "model_ms": 0, "tool_schema_count": 0}
         elif parallel_tasks:
             run = _start_multitask(
                 parallel_tasks,
@@ -2767,16 +3179,22 @@ def chat_stream(
     explicit_code = code_command is not None
     code_action, code_argument = code_command if code_command else ("", "")
     coding_objective = code_argument if code_action == "run" else ""
+    research_command = parse_research_command(raw_message)
+    explicit_research = research_command is not None
+    research_action, research_argument = research_command if research_command else ("", "")
+    install_command = parse_installer_command(raw_message)
+    explicit_install = install_command is not None
+    install_action, install_argument = install_command if install_command else ("", "")
     goal_objective = parse_goal_command(body.message)
     parallel_tasks = parse_parallel_command(body.message)
-    decision = None if (goal_objective or parallel_tasks or explicit_code) else _auto_decision(body.message)
+    decision = None if (goal_objective or parallel_tasks or explicit_code or explicit_research or explicit_install) else _auto_decision(body.message)
     direct_deterministic_candidate = parse_exact_file_objective(body.message) is not None
     autonomous_non_direct = bool(
         decision is not None and decision.mode in {"parallel", "orchestrate", "deterministic"}
     )
     direct_stream = (
         False
-        if (parallel_tasks or goal_objective or explicit_code or direct_deterministic_candidate or autonomous_non_direct)
+        if (parallel_tasks or goal_objective or explicit_code or explicit_research or explicit_install or direct_deterministic_candidate or autonomous_non_direct)
         else runtime.agent.can_stream(body.message)
     )
 
@@ -2933,6 +3351,90 @@ def chat_stream(
                 yield _sse("token", {"text": text})
                 yield _sse("done", {
                     "request_id": request_id, "model": "coding-agent-control", "timing_ms": 0,
+                    "model_ms": 0, "first_token_ms": 0, "tool_schema_count": 0, "streamed": False,
+                    "queue_wait_ms": 0, "execution_mode": mode,
+                })
+                return
+            if explicit_research:
+                if research_action == "run":
+                    research_run = None
+                    try:
+                        research_run = _start_research_agent(
+                            research_argument, requester_device=device_id, thread_id=cloud_thread_id
+                        )
+                        text = f"Started Research Agent run {research_run['run_id']}. It will research and cross-check the question with web evidence."
+                        mode = "research_agent"
+                    except (RuntimeError, ValueError, PermissionError) as exc:
+                        text = str(exc)
+                        mode = "research_agent_preflight_failed"
+                    yield _sse("token", {"text": text})
+                    yield _sse("done", {
+                        "request_id": request_id, "model": "research-agent-coordinator", "timing_ms": 0,
+                        "model_ms": 0, "first_token_ms": 0, "tool_schema_count": 0, "streamed": False,
+                        "queue_wait_ms": 0,
+                        "orchestration_run_id": research_run.get("run_id") if isinstance(research_run, dict) else None,
+                        "execution_mode": mode,
+                    })
+                    return
+                try:
+                    text = _research_agent_control_text(
+                        research_action, research_argument, requester_device=device_id, thread_id=cloud_thread_id
+                    )
+                    mode = "research_agent_control"
+                except (RuntimeError, ValueError, PermissionError) as exc:
+                    text = str(exc)
+                    mode = "research_agent_control_failed"
+                yield _sse("token", {"text": text})
+                yield _sse("done", {
+                    "request_id": request_id, "model": "research-agent-control", "timing_ms": 0,
+                    "model_ms": 0, "first_token_ms": 0, "tool_schema_count": 0, "streamed": False,
+                    "queue_wait_ms": 0, "execution_mode": mode,
+                })
+                return
+            if explicit_install:
+                if install_action in {"run", "url"}:
+                    if not remote_session:
+                        text = (
+                            "The Software Installer Agent needs a live full IRAS Remote session. "
+                            "Enable Remote or Master Control, then retry."
+                        )
+                        yield _sse("token", {"text": text})
+                        yield _sse("done", {
+                            "request_id": request_id, "model": "software-installer-safety-gate", "timing_ms": 0,
+                            "model_ms": 0, "first_token_ms": 0, "tool_schema_count": 0, "streamed": False,
+                            "queue_wait_ms": 0, "execution_mode": "authorization_required",
+                        })
+                        return
+                    try:
+                        install_run = _start_software_installer(
+                            install_argument, direct_url=(install_action == "url"), remote_session=remote_session,
+                            requester_device=device_id, thread_id=cloud_thread_id,
+                        )
+                        text = f"Started Software Installer run {install_run['run_id']}. IRAS will verify package identity before installation."
+                        mode = "software_installer"
+                    except (RuntimeError, ValueError, PermissionError) as exc:
+                        text = str(exc)
+                        install_run = {}
+                        mode = "software_installer_preflight_failed"
+                    yield _sse("token", {"text": text})
+                    yield _sse("done", {
+                        "request_id": request_id, "model": "software-installer-coordinator", "timing_ms": 0,
+                        "model_ms": 0, "first_token_ms": 0, "tool_schema_count": 0, "streamed": False,
+                        "queue_wait_ms": 0, "orchestration_run_id": install_run.get("run_id"), "execution_mode": mode,
+                    })
+                    return
+                try:
+                    text = _software_installer_control_text(
+                        install_action, install_argument, remote_session=remote_session,
+                        requester_device=device_id, thread_id=cloud_thread_id,
+                    )
+                    mode = "software_installer_control"
+                except (RuntimeError, ValueError, PermissionError) as exc:
+                    text = str(exc)
+                    mode = "software_installer_control_failed"
+                yield _sse("token", {"text": text})
+                yield _sse("done", {
+                    "request_id": request_id, "model": "software-installer-control", "timing_ms": 0,
                     "model_ms": 0, "first_token_ms": 0, "tool_schema_count": 0, "streamed": False,
                     "queue_wait_ms": 0, "execution_mode": mode,
                 })

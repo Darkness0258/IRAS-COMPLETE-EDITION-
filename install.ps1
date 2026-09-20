@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-Write-Host "Installing IRAS v5.0.0 RC3 Complete Operating Layer..." -ForegroundColor Cyan
+Write-Host "Installing IRAS v5.0.0 RC4 Complete Operating Layer..." -ForegroundColor Cyan
 if (-not (Test-Path .\.venv\Scripts\python.exe)) {
     Write-Host "Creating IRAS virtual environment..." -ForegroundColor Cyan
     python -m venv .venv

@@ -39,6 +39,15 @@ from iras.device_bridge.primitives import VerifiedUIPrimitives
 from iras.device_bridge.verifiers import SemanticVerifier
 from iras.remote_access import is_sensitive_path
 from iras.safety_runtime import EmergencyStop
+from iras.device_bridge.software_install import (
+    manager_status as software_manager_status_impl,
+    search as software_search_impl,
+    show as software_show_impl,
+    list_installed as software_list_impl,
+    install as software_install_impl,
+    prepare_url as software_prepare_url_impl,
+    install_prepared as software_install_prepared_impl,
+)
 
 
 DEFAULT_CAPABILITIES = [
@@ -92,6 +101,13 @@ DEFAULT_CAPABILITIES = [
     "ui_scroll_until_text",
     "verify_state",
     "power_action",
+    "software_manager_status",
+    "software_search",
+    "software_show",
+    "software_list",
+    "software_install",
+    "software_prepare_url",
+    "software_install_prepared",
     "run_command",
 ]
 
@@ -289,6 +305,13 @@ class DeviceExecutor:
             "ui_scroll_until_text": self.ui_scroll_until_text,
             "verify_state": self.verify_state,
             "power_action": self.power_action,
+            "software_manager_status": self.software_manager_status,
+            "software_search": self.software_search,
+            "software_show": self.software_show,
+            "software_list": self.software_list,
+            "software_install": self.software_install,
+            "software_prepare_url": self.software_prepare_url,
+            "software_install_prepared": self.software_install_prepared,
             "run_command": self.run_command,
         }
 
@@ -1767,6 +1790,27 @@ class DeviceExecutor:
         process = subprocess.Popen(command, shell=False)
         return {"action": action, "requested": True, "pid": process.pid, "delay_seconds": 5}
 
+
+    def software_manager_status(self):
+        return software_manager_status_impl()
+
+    def software_search(self, query: str, source: str = "winget", count: int = 20):
+        return software_search_impl(query, source=source, count=count)
+
+    def software_show(self, package_id: str, source: str = "winget"):
+        return software_show_impl(package_id, source=source)
+
+    def software_list(self, query: str = "", package_id: str = ""):
+        return software_list_impl(query=query, package_id=package_id)
+
+    def software_install(self, package_id: str, source: str = "winget", version: str = "", scope: str = ""):
+        return software_install_impl(package_id, source=source, version=version, scope=scope)
+
+    def software_prepare_url(self, url: str):
+        return software_prepare_url_impl(url)
+
+    def software_install_prepared(self, receipt_id: str):
+        return software_install_prepared_impl(receipt_id)
 
     def run_command(
         self,

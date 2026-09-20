@@ -1,11 +1,25 @@
-# IRAS 5.0.0 RC3 — Complete Autonomous Operating Layer
+# IRAS 5.0.0 RC4 — Research, Installation & Reliable Autonomous Engineering
 
-IRAS v5 builds on the frozen v4.4 permissioned Windows/control core and adds a modular autonomous operating layer with **33 validated feature families**: persistent schedules, proactive monitoring, managed multimodal vision, dedicated browser workflows, project knowledge, isolated coding workspaces, semantic memory, workflow recording/replay, lifecycle-managed connectors, full-duplex voice coordination, mobile/Android approvals, notifications, artifacts, encrypted secrets/sync, sandboxed capability learning, research/debate agents, resource-aware routing, rollback/audit, signed skills, home adapters, multi-user profiles, schema migrations, a Control Center, and deterministic release engineering.
+IRAS v5 builds on the frozen v4.4 permissioned Windows/control core and now exposes **36 validated operating-layer feature families**. RC4 adds a dedicated evidence-driven Web Research Agent and a permissioned Software Installer Agent while retaining the RC3 Coding Agent resolver and the existing autonomous operating layer.
 
-**Dedicated Coding Agent (RC3):** repository-scale coding tasks now use an inspect → implement → test → repair → final-test → review graph. The Coder can use permissioned Windows/VS Code controls, UIA/OmniParser grounding, project/Git/test tools, and CRITICAL `shell=False` command execution only when the active Remote/Master policy permits it. `/code <goal>` is available in Cloud/Windows and local desktop/CLI; ordinary engineering chat can auto-route to the Coding Agent. Cloud/Windows control commands include `/code projects`, `/code use <project-name-or-path>`, `/code status`, `/code pause`, `/code resume`, `/code cancel`, and `/code diff`. Named project resolution is typo-tolerant (for example `portfoilo` → `Portfolio`), prefers real project roots over nested artifact/mockup/test repositories, refuses genuine ambiguity, honors explicit Windows paths, and remembers the verified project for follow-up Coding Agent commands.
+**Dedicated Coding Agent:** `/code <goal>` uses inspect → implement → test → repair → final-test → review → coordinate. Project resolution honors explicit Windows paths, conservative fuzzy names such as `portfoilo` → `Portfolio`, prefers real roots over nested artifact/mockup/test repositories, refuses genuine ambiguity, and remembers/revalidates the chosen project. RC4 also prevents permission/device-blocked work from being falsely recorded as successful.
 
+**Dedicated Web Research Agent:** `/research <question>` uses scope → discover → collect evidence → cross-check → review → synthesis. Its worker registry is read-only and limited to public web retrieval; it does not inherit Windows mutation authority.
 
-**Release status:** `5.0.0-rc3`. The remote protocol remains `1`; v5 does not weaken the v4.4 device bridge, Remote-session, local-policy, emergency-stop, or ToolRegistry boundaries.
+**Permissioned Software Installer Agent:** `/install search <software>` discovers packages; `/install <software-or-package-id>` prefers WinGet exact-ID installation; `/install url <https://official-installer.exe|msi>` uses a bounded direct-download path. Direct installers must be public HTTPS, cached by IRAS, SHA-256 checked, and Authenticode-valid before execution. Installation remains CRITICAL and continues through Remote authentication, local Remote policy, ToolRegistry authorization, emergency stop, audit, and Windows/UAC.
+
+**Release status:** `5.0.0-rc4`. **Remote protocol remains `1`.** RC4 does not weaken or replace the protected Remote/session, local-policy, device-executor, emergency-stop, filesystem-root, ToolRegistry, or Windows/UAC boundaries.
+
+## v5.0 RC4 release surface
+
+- **36 feature families** with the existing 100+ v5 model-facing tools plus dedicated Coding, Research and Installer lifecycle APIs/commands.
+- **Research controls:** `/research <question>`, `/research status`, `/research pause`, `/research resume`, `/research cancel`.
+- **Installer controls:** `/install search <software>`, `/install <target>`, `/install url <https-url>`, `/install status`, `/install pause`, `/install resume`, `/install cancel`.
+- **Coding controls:** `/code projects`, `/code use <project-name-or-path>`, `/code status`, `/code pause`, `/code resume`, `/code cancel`, `/code diff`.
+- **Release hardening:** clean-tree validation ignores legitimate `.venv` contents while continuing to reject source caches/build debris; dedicated state-changing agents require verified completion semantics.
+- **Cloud deployment parity:** Windows Cloud Client and Render must run the same RC4 source or new server routes will correctly return 404.
+
+See `RC4-FEATURE-MATRIX.md` and `docs/V5_0_RC4_NOTES.md` for the current capability and security inventory.
 
 ## Professional UI/UX & motion system
 

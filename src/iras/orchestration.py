@@ -17,7 +17,7 @@ from iras.master_control import master_execution_limits_for_context
 
 TERMINAL_TASK_STATES = {"succeeded", "failed", "cancelled", "blocked", "interrupted"}
 RUN_TERMINAL_STATES = {"succeeded", "partial_failure", "failed", "cancelled", "interrupted"}
-AGENT_ROLES = {"planner", "researcher", "coder", "tester", "reviewer", "coordinator", "general"}
+AGENT_ROLES = {"planner", "researcher", "installer", "coder", "tester", "reviewer", "coordinator", "general"}
 
 ROLE_DIRECTIVES = {
     "planner": (
@@ -30,6 +30,13 @@ ROLE_DIRECTIVES = {
         "to extract readable page text. Do not use browser/UI automation for ordinary web research unless the user "
         "explicitly asked to manipulate the browser. Cite source URLs in your result and do not perform unrelated "
         "state-changing actions."
+    ),
+    "installer": (
+        "You are the Software Installer Agent in an IRAS multi-agent run. Install only the software the user requested. "
+        "Prefer exact WinGet package IDs and verify package identity before installation. For direct web installers, use only "
+        "the dedicated HTTPS download/verification tools and require a valid Authenticode signature before execution. Never "
+        "bypass ToolRegistry, Remote authorization, local policy, Emergency Stop, Windows/UAC, SmartScreen, or signature checks. "
+        "If package identity is ambiguous or verification fails, stop and report the blocker rather than choosing silently."
     ),
     "coder": (
         "You are the Coding Agent in an IRAS multi-agent run. Implement the requested change using only authorized "
@@ -101,6 +108,34 @@ def _infer_verified_outcome(text: str) -> str:
         return "complete"
     if re.search(r"\b(final )?result\s*:\s*failed\b", lower):
         return "failed"
+    return ""
+
+
+def _infer_task_blocker(text: str) -> str:
+    """Detect explicit no-work/blocker responses from autonomous workers.
+
+    Models occasionally return a polite blocker as ordinary text. For dedicated
+    engineering/installer workflows that must not be recorded as successful work.
+    Keep this deliberately conservative and evidence based.
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return "Worker returned no result."
+    lower = raw.casefold()
+    patterns = (
+        r"\bi can(?:not|'t) (?:proceed|continue|access|run|install|complete|perform)\b",
+        r"\b(?:cannot|can't) proceed\b",
+        r"\bblocked by (?:a |the )?(?:permission|remote|device|authorization|access)\b",
+        r"\bdevice tools? (?:are|is) (?:still )?blocked\b",
+        r"\bremote access is locally disarmed\b",
+        r"\bpermission (?:error|denied|failure)\b",
+        r"\brequires? (?:a )?live iras remote session\b",
+        r"\bplease (?:open .* and )?run [`']?iras remote arm\b",
+        r"\bnot (?:actually )?(?:installed|implemented|tested|verified|completed)\b",
+    )
+    for pattern in patterns:
+        if re.search(pattern, lower):
+            return raw[:1000]
     return ""
 
 
@@ -1067,9 +1102,15 @@ class OrchestrationManager:
                 record.result = ""
                 record.error = "Run was cancelled while this task was in flight; late result discarded."
             else:
-                record.state = "succeeded"
-                record.result = result
-                record.error = ""
+                blocker = _infer_task_blocker(result) if (run.context.get("coding_agent") or run.context.get("software_installer")) else ""
+                if blocker and record.spec.role != "coordinator":
+                    record.state = "failed"
+                    record.result = result
+                    record.error = "Worker reported a hard blocker instead of completing the assigned task: " + blocker[:700]
+                else:
+                    record.state = "succeeded"
+                    record.result = result
+                    record.error = ""
                 record.metrics = metrics
                 record.metrics.setdefault("total_ms", int((time.perf_counter() - started) * 1000))
                 if record.spec.role == "coordinator":
@@ -1115,6 +1156,11 @@ class OrchestrationManager:
         elif run.verified_outcome == "failed":
             run.state = "failed"
         elif run.verified_outcome == "incomplete":
+            run.state = "partial_failure"
+        elif (run.context.get("coding_agent") or run.context.get("software_installer")) and run.verified_outcome != "complete":
+            # Dedicated state-changing workflows fail closed when the coordinator
+            # did not explicitly verify completion. This prevents a generic or
+            # malformed final answer from turning blocked work into success.
             run.state = "partial_failure"
         else:
             run.state = "succeeded"

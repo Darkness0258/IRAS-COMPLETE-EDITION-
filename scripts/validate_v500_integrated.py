@@ -45,17 +45,17 @@ REQUIRED_TOOL_SURFACE = {
 
 
 def main() -> None:
-    print("=== IRAS v5.0 RC3 COMPLETE OPERATING LAYER INTEGRATED VALIDATION ===")
-    assert __version__ == "5.0.0-rc3"
+    print("=== IRAS v5.0 RC4 RESEARCH + INSTALLER INTEGRATED VALIDATION ===")
+    assert __version__ == "5.0.0-rc4"
     assert REMOTE_PROTOCOL_VERSION == 1
-    assert len(FEATURES) == 34
-    assert len(set(FEATURES)) == 34
+    assert len(FEATURES) == 36
+    assert len(set(FEATURES)) == 36
 
     with tempfile.TemporaryDirectory() as td:
         os.environ["IRAS_VAULT_MASTER_KEY"] = EncryptedSync.new_key()
         rt = V5Runtime(td)
         status = rt.status()
-        assert status["feature_count"] == 34
+        assert status["feature_count"] == 36
         assert {x["feature"] for x in status["feature_status"]} == set(FEATURES)
         assert status["remote_protocol"] == 1
         assert status["migrations"]["complete"] is True
@@ -87,6 +87,8 @@ def main() -> None:
         "/v1/v5/goals", "/v1/v5/mobile/register", "/v1/v5/mobile/{mobile_id}/heartbeat",
         "/v1/v5/mobile/{mobile_id}/events", "/v1/v5/artifacts", "/v1/v5/recovery",
         "/v1/v5/capabilities", "/v1/v5/home-adapters",
+        "/v1/research-agent/status", "/v1/research-agent/runs",
+        "/v1/software-installer/status", "/v1/software-installer/search", "/v1/software-installer/runs",
     ):
         assert endpoint in cloud
     assert "IRAS Autonomy Control Center" in web and "Feature matrix" in web
@@ -98,7 +100,7 @@ def main() -> None:
     assert "v5_tools(runtime.v5)" in boot
     assert "OrchestrationManager" in local_boot and "PermissionLevel.READ" in local_boot
     assert "/v1/v5/mobile/register" in android and "showCompanionApproval" in android
-    assert re.search(r"versionName\s+['\"]5\.0\.0-rc3['\"]", android_gradle)
+    assert re.search(r"versionName\s+['\"]5\.0\.0-rc4['\"]", android_gradle)
 
     docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     render = (ROOT / "render.yaml").read_text(encoding="utf-8")
@@ -107,7 +109,7 @@ def main() -> None:
     assert "IRAS_VAULT_MASTER_KEY" in render and "IRAS_V5_SCHEDULER_ENABLED" in render
 
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "IRAS v5.0 RC3" in ci and r".\run-v500-validation.ps1" in ci
+    assert "IRAS v5.0 RC4" in ci and r".\run-v500-validation.ps1" in ci
 
     env = (ROOT / ".env.example").read_text(encoding="utf-8")
     launcher = (ROOT / "run-iras.ps1").read_text(encoding="utf-8")
@@ -136,14 +138,17 @@ def main() -> None:
     assert "v5_schema_migrations" in migrations
 
     manifest = json.loads((ROOT / "RELEASE-MANIFEST.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == "5.0.0-rc3"
+    assert manifest["version"] == "5.0.0-rc4"
     assert manifest["remote_protocol"] == 1
-    assert manifest["feature_count"] == 34
+    assert manifest["feature_count"] == 36
     assert manifest["managed_omniparser"]["default_eager_start"] is True
     assert manifest["managed_omniparser"]["preserves_unmanaged_legacy_tree"] is True
     assert manifest["cloud_model_acceptance_used"] is False
-    assert (ROOT / "RC3-FEATURE-MATRIX.md").is_file()
-    assert (ROOT / "scripts/package_v500_rc3.py").is_file()
+    assert manifest["research_agent"]["mode"] == "dedicated_web_research_agent"
+    assert manifest["software_installer"]["mode"] == "permissioned_software_installer_agent"
+    assert manifest["software_installer"]["remote_protocol"] == 1
+    assert (ROOT / "RC4-FEATURE-MATRIX.md").is_file()
+    assert (ROOT / "scripts/package_v500_rc4.py").is_file()
 
     for feature in FEATURES:
         print(f"{feature.upper()}: True")

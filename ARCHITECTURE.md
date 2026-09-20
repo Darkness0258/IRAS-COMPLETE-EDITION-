@@ -33,13 +33,16 @@ The dedicated Coding Agent resolves one verified Windows project root before its
 - **Network/home:** adapter allowlists; no ambient scanning; state changes need approval.
 - **Sync:** ciphertext-only bundles; transport does not receive plaintext state.
 
-## v5.0 RC3 complete operating-layer surface
+## v5.0 RC4 operating-layer surface
 
-RC3's completion boundary is broader than the internal module graph. The operating layer exposes 32 feature families through 104 permissioned v5 tools plus API/UI/lifecycle surfaces. Local scheduled/research/debate work is delegated to an independent READ-capped ToolRegistry rather than inheriting the interactive session's permissions. Connectors are lifecycle-managed and vault-backed; signed skills authenticate their full file set; profiles use encrypted sync; home adapters are allowlisted; and schema migrations are journaled.
+RC4 declares 36 feature families. It retains the complete RC3 operating layer and adds two dedicated agents outside the generic worker path:
 
-The Android companion participates in the same event/approval plane (registration, heartbeat, per-device delivery ACK and approval resolution). The Windows visual chain treats a reachable but unowned local OmniParser as unmanaged by default; provisioning preserves that legacy tree and creates a separately owned bridge so watchdog/restart semantics remain truthful.
+- **Web Research Agent:** read-only public-web workflow with source discovery, bounded retrieval, evidence cross-checking and review before synthesis. It receives only `web_search`, `http_get` and `api_request`; it cannot inherit Windows mutation tools.
+- **Software Installer Agent:** package-manager-first Windows installation. WinGet search/show/list/install uses fixed argument vectors with exact package IDs. Direct URLs are restricted to public HTTPS `.exe`/`.msi`, cached under IRAS control, SHA-256 pinned, and Authenticode revalidated immediately before execution. Arbitrary executable paths are not accepted.
 
-The authoritative feature-to-surface mapping is `RC3-FEATURE-MATRIX.md`. None of these additions changes Remote protocol `1` or bypasses the v4.4 ToolRegistry, Remote authorization, emergency stop, device-bridge executor/agent or bridge-root restrictions.
+Coding Agent project selection remains explicit-path-first, typo-tolerant and fail-closed on ambiguity. RC4 additionally treats permission/device blockers as failed tasks and requires an explicit verified coordinator completion signal before Coding/Installer runs may end as `succeeded`.
+
+The authoritative feature mapping is `RC4-FEATURE-MATRIX.md`. Remote protocol remains `1`. ToolRegistry authorization, authenticated Remote sessions, laptop-local Remote policy, configured filesystem roots, device bridge/executor, emergency stop, audit and Windows/UAC remain the enforcement boundary. Installer support extends these boundaries; it does not bypass them.
 
 
 ```text

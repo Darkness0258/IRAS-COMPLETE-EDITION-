@@ -60,6 +60,8 @@ FEATURES = (
     "secure_secrets_vault",
     "sandbox_execution",
     "autonomous_research_projects",
+    "dedicated_web_research_agent",
+    "permissioned_software_installer_agent",
     "agent_debate_review",
     "resource_aware_intelligence",
     "rollback_timeline",
@@ -316,7 +318,7 @@ class V5Runtime:
             )
         self.monitoring.start(poll_seconds=float(os.getenv("IRAS_V5_MONITOR_POLL_SECONDS", "15")))
         self._started = True
-        self.bus.publish("v5.started", version="5.0.0-rc3")
+        self.bus.publish("v5.started", version="5.0.0-rc4")
 
     def stop_services(self) -> None:
         self.scheduler.stop()
@@ -327,7 +329,7 @@ class V5Runtime:
         except Exception:
             pass
         self._started = False
-        self.bus.publish("v5.stopped", version="5.0.0-rc3")
+        self.bus.publish("v5.stopped", version="5.0.0-rc4")
 
     def start_scheduled_autonomy(self) -> None:
         self.start_services()
@@ -375,7 +377,7 @@ class V5Runtime:
     def status(self) -> dict[str, Any]:
         feature_status = self.feature_status()
         return {
-            "version": "5.0.0-rc3",
+            "version": "5.0.0-rc4",
             "features": list(FEATURES),
             "feature_count": len(FEATURES),
             "feature_status": feature_status,

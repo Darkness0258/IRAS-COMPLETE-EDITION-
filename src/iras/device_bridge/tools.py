@@ -913,6 +913,57 @@ def make_tools(store):
     def device_power_action(action, device_id=None):
         return request("power_action", {"action": action}, device_id, timeout=30)
 
+    def device_software_manager_status(device_id=None):
+        return request("software_manager_status", {}, device_id, timeout=30)
+
+    def device_software_search(query, source="winget", count=20, device_id=None):
+        return request(
+            "software_search",
+            {"query": query, "source": source, "count": count},
+            device_id,
+            timeout=75,
+        )
+
+    def device_software_show(package_id, source="winget", device_id=None):
+        return request(
+            "software_show",
+            {"package_id": package_id, "source": source},
+            device_id,
+            timeout=75,
+        )
+
+    def device_software_list(query="", package_id="", device_id=None):
+        return request(
+            "software_list",
+            {"query": query, "package_id": package_id},
+            device_id,
+            timeout=75,
+        )
+
+    def device_software_install(package_id, source="winget", version="", scope="", device_id=None):
+        return request(
+            "software_install",
+            {"package_id": package_id, "source": source, "version": version, "scope": scope},
+            device_id,
+            timeout=360,
+        )
+
+    def device_software_prepare_url(url, device_id=None):
+        return request(
+            "software_prepare_url",
+            {"url": url},
+            device_id,
+            timeout=240,
+        )
+
+    def device_software_install_prepared(receipt_id, device_id=None):
+        return request(
+            "software_install_prepared",
+            {"receipt_id": receipt_id},
+            device_id,
+            timeout=360,
+        )
+
     def device_run_command(executable, args=None, cwd="", timeout=60.0, device_id=None):
         return request(
             "run_command",
@@ -1916,6 +1967,56 @@ def make_tools(store):
         ),
 
         Tool(
+            "device_software_manager_status",
+            "Check whether the paired Windows PC has WinGet available and report its version.",
+            {"type": "object", "properties": {**optional_device}},
+            device_software_manager_status,
+            PermissionLevel.READ,
+        ),
+        Tool(
+            "device_software_search",
+            "Search WinGet/MS Store package catalogs on the paired Windows PC. Read-only; use this before any install to resolve exact package identity.",
+            {"type": "object", "properties": {"query": {"type": "string", "minLength": 1, "maxLength": 300}, "source": {"type": "string", "enum": ["winget", "msstore"]}, "count": {"type": "integer", "minimum": 1, "maximum": 50}, **optional_device}, "required": ["query"]},
+            device_software_search,
+            PermissionLevel.READ,
+        ),
+        Tool(
+            "device_software_show",
+            "Show metadata for one exact WinGet package ID before installation.",
+            {"type": "object", "properties": {"package_id": {"type": "string", "minLength": 2, "maxLength": 200}, "source": {"type": "string", "enum": ["winget", "msstore"]}, **optional_device}, "required": ["package_id"]},
+            device_software_show,
+            PermissionLevel.READ,
+        ),
+        Tool(
+            "device_software_list",
+            "Read installed software state using WinGet, optionally by exact package ID or query.",
+            {"type": "object", "properties": {"query": {"type": "string", "maxLength": 300}, "package_id": {"type": "string", "maxLength": 200}, **optional_device}},
+            device_software_list,
+            PermissionLevel.READ,
+        ),
+        Tool(
+            "device_software_install",
+            "Install one exact verified WinGet package ID. CRITICAL: requires full Remote authorization and the laptop's local command-execution opt-in; Windows/UAC remain authoritative.",
+            {"type": "object", "properties": {"package_id": {"type": "string", "minLength": 2, "maxLength": 200}, "source": {"type": "string", "enum": ["winget", "msstore"]}, "version": {"type": "string", "maxLength": 80}, "scope": {"type": "string", "enum": ["", "user", "machine"]}, **optional_device}, "required": ["package_id"]},
+            device_software_install,
+            PermissionLevel.CRITICAL,
+        ),
+        Tool(
+            "device_software_prepare_url",
+            "Download an explicitly selected HTTPS .exe/.msi installer into the IRAS cache, compute SHA-256, and inspect Authenticode. This does not execute the installer.",
+            {"type": "object", "properties": {"url": {"type": "string", "minLength": 8, "maxLength": 4096}, **optional_device}, "required": ["url"]},
+            device_software_prepare_url,
+            PermissionLevel.SYSTEM_ACTION,
+        ),
+        Tool(
+            "device_software_install_prepared",
+            "Execute only an IRAS-cached installer receipt whose hash is unchanged and Authenticode status is Valid. CRITICAL; never accepts arbitrary file paths and never bypasses UAC/SmartScreen.",
+            {"type": "object", "properties": {"receipt_id": {"type": "string", "minLength": 24, "maxLength": 24}, **optional_device}, "required": ["receipt_id"]},
+            device_software_install_prepared,
+            PermissionLevel.CRITICAL,
+        ),
+
+        Tool(
             "device_run_command",
             "Run one explicitly named executable with an argv list and shell=False. Critical: requires a full remote session plus the laptop's local command-execution opt-in.",
             {"type": "object", "properties": {"executable": {"type": "string"}, "args": {"type": "array", "items": {"type": "string"}, "maxItems": 64}, "cwd": {"type": "string"}, "timeout": {"type": "number", "minimum": 1, "maximum": 300}, **optional_device}, "required": ["executable"]},
@@ -1952,6 +2053,11 @@ def make_tools(store):
         "device_ui_click_text": "ui_click_text", "device_ui_type_text": "ui_type_text",
         "device_ui_wait_text": "ui_wait_text", "device_ui_scroll_until_text": "ui_scroll_until_text",
         "device_verify_state": "verify_state", "device_power_action": "power_action",
+        "device_software_manager_status": "software_manager_status",
+        "device_software_search": "software_search", "device_software_show": "software_show",
+        "device_software_list": "software_list", "device_software_install": "software_install",
+        "device_software_prepare_url": "software_prepare_url",
+        "device_software_install_prepared": "software_install_prepared",
         "device_run_command": "run_command",
     }
 

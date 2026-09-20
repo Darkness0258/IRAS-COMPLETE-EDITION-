@@ -1544,7 +1544,7 @@ public class MainActivity extends Activity {
                 registration.put("client_id", cloudClientId());
                 registration.put("name", "IRAS Android - " + Build.MODEL);
                 registration.put("platform", "android");
-                registration.put("app_version", "5.0.0-rc3");
+                registration.put("app_version", "5.0.0-rc4");
                 JSONArray caps = new JSONArray();
                 caps.put("chat");
                 caps.put("cloud-sync");
