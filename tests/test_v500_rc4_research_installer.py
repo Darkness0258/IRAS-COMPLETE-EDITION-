@@ -46,6 +46,7 @@ def test_installer_agent_supports_winget_and_verified_direct_url_paths():
     ]
     status = software_installer_status()
     assert status['package_manager'] == 'winget'
+    assert status['mode'] == 'permissioned_software_lifecycle_agent'
     assert status['direct_url']['requires_valid_authenticode'] is True
     assert status['direct_url']['cache_receipt_required'] is True
 

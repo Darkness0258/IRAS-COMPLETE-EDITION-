@@ -44,7 +44,10 @@ from iras.device_bridge.software_install import (
     search as software_search_impl,
     show as software_show_impl,
     list_installed as software_list_impl,
+    available_upgrades as software_upgrades_impl,
     install as software_install_impl,
+    upgrade as software_upgrade_impl,
+    uninstall as software_uninstall_impl,
     prepare_url as software_prepare_url_impl,
     install_prepared as software_install_prepared_impl,
 )
@@ -105,7 +108,10 @@ DEFAULT_CAPABILITIES = [
     "software_search",
     "software_show",
     "software_list",
+    "software_upgrades",
     "software_install",
+    "software_upgrade",
+    "software_uninstall",
     "software_prepare_url",
     "software_install_prepared",
     "run_command",
@@ -309,7 +315,10 @@ class DeviceExecutor:
             "software_search": self.software_search,
             "software_show": self.software_show,
             "software_list": self.software_list,
+            "software_upgrades": self.software_upgrades,
             "software_install": self.software_install,
+            "software_upgrade": self.software_upgrade,
+            "software_uninstall": self.software_uninstall,
             "software_prepare_url": self.software_prepare_url,
             "software_install_prepared": self.software_install_prepared,
             "run_command": self.run_command,
@@ -1803,8 +1812,17 @@ class DeviceExecutor:
     def software_list(self, query: str = "", package_id: str = ""):
         return software_list_impl(query=query, package_id=package_id)
 
+    def software_upgrades(self, package_id: str = "", source: str = "winget"):
+        return software_upgrades_impl(package_id=package_id, source=source)
+
     def software_install(self, package_id: str, source: str = "winget", version: str = "", scope: str = ""):
         return software_install_impl(package_id, source=source, version=version, scope=scope)
+
+    def software_upgrade(self, package_id: str = "", source: str = "winget", all_packages: bool = False):
+        return software_upgrade_impl(package_id, source=source, all_packages=all_packages)
+
+    def software_uninstall(self, package_id: str, source: str = "winget"):
+        return software_uninstall_impl(package_id, source=source)
 
     def software_prepare_url(self, url: str):
         return software_prepare_url_impl(url)

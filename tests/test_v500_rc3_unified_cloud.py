@@ -22,14 +22,14 @@ def test_cloud_clients_share_one_active_thread_and_history(tmp_path):
         client_id="web_test",
         name="IRAS Web",
         platform="web",
-        app_version="5.0.0-rc4",
+        app_version="5.0.0-rc5",
         capabilities=["chat", "cloud-sync"],
     )
     android = state.register_client(
         client_id="android_test",
         name="IRAS Android",
         platform="android",
-        app_version="5.0.0-rc4",
+        app_version="5.0.0-rc5",
         capabilities=["chat", "approvals"],
     )
     assert web["active_thread_id"] == android["active_thread_id"]

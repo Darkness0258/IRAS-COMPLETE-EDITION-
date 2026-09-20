@@ -33,6 +33,14 @@ The dedicated Coding Agent resolves one verified Windows project root before its
 - **Network/home:** adapter allowlists; no ambient scanning; state changes need approval.
 - **Sync:** ciphertext-only bundles; transport does not receive plaintext state.
 
+## v5.0 RC5 operating-layer surface
+
+RC5 preserves the 36-family v5 operating layer and extends the permissioned Software Installer Agent into a **Software Lifecycle Agent**. WinGet remains the preferred package identity/control plane. Read-only update discovery is separate from CRITICAL update/uninstall execution.
+
+Lifecycle commands resolve exact installed package identity, fail closed on ambiguity, require authenticated Remote authority plus laptop-local `allow_shell` for state changes, and verify the post-action state. `update all` exists only as an explicit user command; IRAS does not infer it from a vague update request. Direct HTTPS receipt execution remains installation-only and keeps SHA-256 + Authenticode continuity.
+
+Remote protocol remains `1`. ToolRegistry authorization, authenticated Remote sessions, laptop-local Remote policy, configured filesystem roots, device bridge/executor, emergency stop, audit, SmartScreen/UAC and Windows security remain authoritative.
+
 ## v5.0 RC4 operating-layer surface
 
 RC4 declares 36 feature families. It retains the complete RC3 operating layer and adds two dedicated agents outside the generic worker path:

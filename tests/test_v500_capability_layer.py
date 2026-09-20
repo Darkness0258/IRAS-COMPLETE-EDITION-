@@ -65,7 +65,7 @@ def test_v5_feature_inventory(tmp_path, monkeypatch):
     monkeypatch.setenv("IRAS_VAULT_MASTER_KEY", EncryptedSync.new_key())
     rt = V5Runtime(tmp_path / "v5")
     status = rt.status()
-    assert status["version"] == "5.0.0-rc4"
+    assert status["version"] == "5.0.0-rc5"
     assert status["feature_count"] == 36
     assert set(status["features"]) == set(FEATURES)
     assert status["persistent_backend"] == "sqlite"

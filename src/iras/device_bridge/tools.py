@@ -940,12 +940,36 @@ def make_tools(store):
             timeout=75,
         )
 
+    def device_software_upgrades(package_id="", source="winget", device_id=None):
+        return request(
+            "software_upgrades",
+            {"package_id": package_id, "source": source},
+            device_id,
+            timeout=105,
+        )
+
     def device_software_install(package_id, source="winget", version="", scope="", device_id=None):
         return request(
             "software_install",
             {"package_id": package_id, "source": source, "version": version, "scope": scope},
             device_id,
             timeout=360,
+        )
+
+    def device_software_upgrade(package_id="", source="winget", all_packages=False, device_id=None):
+        return request(
+            "software_upgrade",
+            {"package_id": package_id, "source": source, "all_packages": bool(all_packages)},
+            device_id,
+            timeout=660,
+        )
+
+    def device_software_uninstall(package_id, source="winget", device_id=None):
+        return request(
+            "software_uninstall",
+            {"package_id": package_id, "source": source},
+            device_id,
+            timeout=660,
         )
 
     def device_software_prepare_url(url, device_id=None):
@@ -1995,10 +2019,31 @@ def make_tools(store):
             PermissionLevel.READ,
         ),
         Tool(
+            "device_software_upgrades",
+            "List available WinGet upgrades, optionally for one exact package ID. Read-only.",
+            {"type": "object", "properties": {"package_id": {"type": "string", "maxLength": 200}, "source": {"type": "string", "enum": ["winget", "msstore"]}, **optional_device}},
+            device_software_upgrades,
+            PermissionLevel.READ,
+        ),
+        Tool(
             "device_software_install",
             "Install one exact verified WinGet package ID. CRITICAL: requires full Remote authorization and the laptop's local command-execution opt-in; Windows/UAC remain authoritative.",
             {"type": "object", "properties": {"package_id": {"type": "string", "minLength": 2, "maxLength": 200}, "source": {"type": "string", "enum": ["winget", "msstore"]}, "version": {"type": "string", "maxLength": 80}, "scope": {"type": "string", "enum": ["", "user", "machine"]}, **optional_device}, "required": ["package_id"]},
             device_software_install,
+            PermissionLevel.CRITICAL,
+        ),
+        Tool(
+            "device_software_upgrade",
+            "Update one exact installed WinGet package, or all packages only when all_packages=true is explicitly requested. CRITICAL; Remote/UAC/local policy remain authoritative.",
+            {"type": "object", "properties": {"package_id": {"type": "string", "maxLength": 200}, "source": {"type": "string", "enum": ["winget", "msstore"]}, "all_packages": {"type": "boolean"}, **optional_device}},
+            device_software_upgrade,
+            PermissionLevel.CRITICAL,
+        ),
+        Tool(
+            "device_software_uninstall",
+            "Uninstall one exact currently installed WinGet package ID and verify removal. CRITICAL; Remote/UAC/local policy remain authoritative.",
+            {"type": "object", "properties": {"package_id": {"type": "string", "minLength": 2, "maxLength": 200}, "source": {"type": "string", "enum": ["winget", "msstore"]}, **optional_device}, "required": ["package_id"]},
+            device_software_uninstall,
             PermissionLevel.CRITICAL,
         ),
         Tool(
@@ -2055,7 +2100,9 @@ def make_tools(store):
         "device_verify_state": "verify_state", "device_power_action": "power_action",
         "device_software_manager_status": "software_manager_status",
         "device_software_search": "software_search", "device_software_show": "software_show",
-        "device_software_list": "software_list", "device_software_install": "software_install",
+        "device_software_list": "software_list", "device_software_upgrades": "software_upgrades",
+        "device_software_install": "software_install", "device_software_upgrade": "software_upgrade",
+        "device_software_uninstall": "software_uninstall",
         "device_software_prepare_url": "software_prepare_url",
         "device_software_install_prepared": "software_install_prepared",
         "device_run_command": "run_command",

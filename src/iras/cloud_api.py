@@ -256,6 +256,7 @@ class SoftwareInstallIn(BaseModel):
     target: str = Field(min_length=1, max_length=4096)
     thread_id: str = Field(default="", max_length=128)
     direct_url: bool = False
+    operation: str = Field(default="install", pattern="^(install|update|uninstall)$")
 
 
 class TTSIn(BaseModel):
@@ -1504,7 +1505,7 @@ def _software_search_text(query: str, *, remote_session: dict | None, requester_
 
 
 def _start_software_installer(
-    target: str, *, direct_url: bool, remote_session: dict | None, requester_device: str, thread_id: str = ""
+    target: str, *, direct_url: bool, operation: str = "install", remote_session: dict | None, requester_device: str, thread_id: str = ""
 ) -> dict[str, Any]:
     if not remote_session:
         raise PermissionError(
@@ -1514,15 +1515,16 @@ def _start_software_installer(
     context.update({
         "software_installer": True,
         "installer_direct_url": bool(direct_url),
+        "installer_operation": str(operation),
         "installer_target": str(target),
     })
     run = orchestration_manager.submit_graph(
-        target, build_software_install_graph(target, direct_url=direct_url), context=context,
+        target, build_software_install_graph(target, direct_url=direct_url, operation=operation), context=context,
         requester_device=requester_device, add_coordinator=True,
     )
     _remember_agent_run("software_installer", thread_id=thread_id, requester_device=requester_device, run_id=str(run.get("run_id") or ""))
     runtime.audit.record("software_installer_run_started", {
-        "run_id": run.get("run_id"), "target": str(target)[:500], "direct_url": bool(direct_url),
+        "run_id": run.get("run_id"), "target": str(target)[:500], "direct_url": bool(direct_url), "operation": str(operation),
         "requester_device": requester_device, "remote_session_id": remote_session.get("session_id"),
     })
     return run
@@ -1539,12 +1541,21 @@ def _software_installer_control_text(
         return _software_search_text(
             argument, remote_session=remote_session, requester_device=requester_device, thread_id=thread_id
         )
+    if command == "updates":
+        if not remote_session:
+            raise PermissionError("/install updates requires a live IRAS Remote session.")
+        context = _multitask_context(remote_session=remote_session, requester_device=requester_device, thread_id=thread_id)
+        package_id = argument if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+\-]{1,199}", argument or "") else ""
+        result = _deterministic_device_request(context, "software_upgrades", {"package_id": package_id, "source": "winget"}, 105)
+        if isinstance(result, dict):
+            return str(result.get("stdout") or result.get("stderr") or result)
+        return str(result or "")
     run_id = argument or _last_agent_run(
         "software_installer", thread_id=thread_id, requester_device=requester_device
     )
     if command == "status" and not run_id:
         base = software_installer_status()
-        return f"Software Installer Agent mode: {base.get('mode')}. No install run is selected. Use /install <software>."
+        return f"Software Lifecycle Agent mode: {base.get('mode')}. No software lifecycle run is selected. Use /install <software>, /install update <software>, or /install uninstall <software>."
     if not run_id:
         raise ValueError(f"No Software Installer run selected for /install {command}.")
     run = orchestration_manager.get(run_id)
@@ -2433,7 +2444,7 @@ def create_software_installer_run(
         )
     try:
         run = _start_software_installer(
-            body.target, direct_url=body.direct_url, remote_session=remote_session,
+            body.target, direct_url=body.direct_url, operation=body.operation, remote_session=remote_session,
             requester_device=str(x_device_id or "web")[:128], thread_id=body.thread_id,
         )
     except (RuntimeError, PermissionError, ValueError) as exc:
@@ -2441,6 +2452,7 @@ def create_software_installer_run(
     result = dict(run)
     result["agent_type"] = "software_installer"
     result["direct_url"] = bool(body.direct_url)
+    result["operation"] = body.operation
     return result
 
 
@@ -2891,7 +2903,7 @@ def chat(
                     response = str(exc)
                 metrics = {"model": "research-agent-control", "total_ms": 0, "model_ms": 0, "tool_schema_count": 0}
         elif explicit_install:
-            if install_action in {"run", "url"}:
+            if install_action in {"run", "url", "update", "uninstall"}:
                 if not remote_session:
                     response = (
                         "The Software Installer Agent needs a live full IRAS Remote session. "
@@ -2901,12 +2913,12 @@ def chat(
                 else:
                     try:
                         run = _start_software_installer(
-                            install_argument, direct_url=(install_action == "url"), remote_session=remote_session,
+                            install_argument, direct_url=(install_action == "url"), operation=("install" if install_action in {"run", "url"} else install_action), remote_session=remote_session,
                             requester_device=device_id, thread_id=cloud_thread_id,
                         )
                         response = (
-                            f"Started Software Installer run {run['run_id']} for: {install_argument}. "
-                            "IRAS will resolve/verify the package, install only through the protected Windows device path, and verify the result."
+                            f"Started Software Lifecycle run {run['run_id']} for {install_action}: {install_argument}. "
+                            "IRAS will resolve/verify exact package identity, perform the requested protected Windows lifecycle action, and verify the result."
                         )
                         metrics = {"model": "software-installer-coordinator", "total_ms": 0, "model_ms": 0, "tool_schema_count": 0}
                     except (RuntimeError, ValueError, PermissionError) as exc:
@@ -3392,7 +3404,7 @@ def chat_stream(
                 })
                 return
             if explicit_install:
-                if install_action in {"run", "url"}:
+                if install_action in {"run", "url", "update", "uninstall"}:
                     if not remote_session:
                         text = (
                             "The Software Installer Agent needs a live full IRAS Remote session. "
@@ -3407,10 +3419,10 @@ def chat_stream(
                         return
                     try:
                         install_run = _start_software_installer(
-                            install_argument, direct_url=(install_action == "url"), remote_session=remote_session,
+                            install_argument, direct_url=(install_action == "url"), operation=("install" if install_action in {"run", "url"} else install_action), remote_session=remote_session,
                             requester_device=device_id, thread_id=cloud_thread_id,
                         )
-                        text = f"Started Software Installer run {install_run['run_id']}. IRAS will verify package identity before installation."
+                        text = f"Started Software Lifecycle run {install_run['run_id']}. IRAS will verify exact package identity before the requested action."
                         mode = "software_installer"
                     except (RuntimeError, ValueError, PermissionError) as exc:
                         text = str(exc)

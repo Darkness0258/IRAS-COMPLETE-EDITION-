@@ -100,7 +100,7 @@
     "research_agent": "dedicated read-only web evidence workflow with source discovery, retrieval, cross-check and review",
     "schema_migrations": "persistent migration ledger",
     "signed_skills": "manifest plus every package file hash is Ed25519 authenticated",
-    "software_installer": "WinGet-first exact-ID install plus signed HTTPS installer receipts; CRITICAL Remote/local-policy/UAC enforcement preserved",
+    "software_installer": "WinGet-first exact-ID install/update/uninstall plus signed HTTPS install receipts; CRITICAL Remote/local-policy/UAC enforcement preserved",
     "unified_cloud_workspace": "shared restart-safe client presence, active thread, transcript and non-secret preferences across Windows/web/Android"
   },
   "feature_count": 36,
@@ -143,7 +143,7 @@
   "local_regression": {
     "android_companion_compile": "static-contract-validated; Android SDK/Gradle build is host-side",
     "failed": 0,
-    "passed": 886
+    "passed": 892
   },
   "managed_omniparser": {
     "authenticated_lifecycle": true,
@@ -218,7 +218,7 @@
     "src/iras/device_bridge/agent.py"
   ],
   "release_date": "2026-09-20",
-  "release_name": "RC4 Research + Permissioned Software Installation + Reliable Coding Agent",
+  "release_name": "RC5 Research + Permissioned Software Lifecycle + Reliable Coding Agent",
   "release_notes": [
     "Unified cloud workspace shared across Windows, web and Android clients.",
     "Professional adaptive UI/UX and motion system across web/PWA, Windows desktop and Android.",
@@ -241,7 +241,9 @@
     "Permissioned Software Installer Agent adds /install search/run/url/status/pause/resume/cancel; WinGet exact-ID is preferred and direct web installers require public HTTPS, SHA-256 continuity and valid Authenticode.",
     "Software installation remains CRITICAL and requires authenticated Remote authority plus laptop-local allow_shell; emergency stop, audit and Windows/UAC remain non-bypassable.",
     "Coding/Installer orchestration no longer marks explicit permission/device blockers as successful and requires a verified COMPLETE coordinator outcome.",
-    "Clean-tree validation excludes legitimate .venv contents, fixing false failures caused by dependency __pycache__ files."
+    "Clean-tree validation excludes legitimate .venv contents, fixing false failures caused by dependency __pycache__ files.",
+    "RC5 extends the Software Installer into a permissioned Software Lifecycle Agent with read-only update discovery, exact-package update, explicit update-all, uninstall, and post-action verification.",
+    "Software update/uninstall are CRITICAL Remote actions and require laptop-local allow_shell; fixed argv shell=False execution, emergency stop, audit, Remote Protocol 1, and Windows/UAC remain enforced."
   ],
   "remote_protocol": 1,
   "render_health_hotfix": {
@@ -286,21 +288,29 @@
     "direct_url_path": "public HTTPS .exe/.msi only; IRAS cache receipt; SHA-256 continuity; Authenticode Valid at prepare and execution",
     "emergency_stop_preserved": true,
     "local_policy_requires_allow_shell": true,
-    "mode": "permissioned_software_installer_agent",
-    "permission": "CRITICAL for installation",
-    "preferred_path": "WinGet search/show/list plus exact-ID install",
+    "mode": "permissioned_software_lifecycle_agent",
+    "permission": "CRITICAL for install/update/uninstall; READ for search/list/update discovery",
+    "preferred_path": "WinGet search/show/list/upgrades plus exact-ID install/update/uninstall",
     "remote_protocol": 1,
     "shell_execution": "fixed argv / shell=False",
     "windows_client_commands": [
       "/install search <software>",
       "/install <software-or-package-id>",
       "/install url <https-url>",
+      "/install updates [package-id]",
+      "/install update <software-or-package-id>",
+      "/install update all",
+      "/install uninstall <software-or-package-id>",
       "/install status",
       "/install pause",
       "/install resume",
       "/install cancel"
     ],
-    "windows_uac_bypassed": false
+    "windows_uac_bypassed": false,
+    "targeted_update": true,
+    "explicit_update_all": true,
+    "uninstall": true,
+    "post_action_verification": true
   },
   "unified_cloud_workspace": {
     "clients": [
@@ -318,5 +328,5 @@
     "stable_client_ids": true,
     "thread_scoped_direct_chat_context": true
   },
-  "version": "5.0.0-rc4"
+  "version": "5.0.0-rc5"
 }

@@ -208,7 +208,7 @@ def main() -> None:
                 f"[bold]IRAS Cloud Client {__version__}[/bold]\n"
                 f"Server: {server}\n"
                 f"Thread: {thread_id}\n"
-                "Shared with web + Android. Commands: /new, /history, /agent, /research <question>, /research status|pause|resume|cancel, /install search <software>, /install <software>, /install url <https-url>, /install status|pause|resume|cancel, /code <goal>, /code projects, /code use <project>, /code status, /code pause, /code resume, /code cancel, /code diff, /master, /master on, /master off, /exit"
+                "Shared with web + Android. Commands: /new, /history, /agent, /research <question>, /research status|pause|resume|cancel, /install search <software>, /install <software>, /install url <https-url>, /install updates [id], /install update <software|id|all>, /install uninstall <software|id>, /install status|pause|resume|cancel, /code <goal>, /code projects, /code use <project>, /code status, /code pause, /code resume, /code cancel, /code diff, /master, /master on, /master off, /exit"
             )
         )
 
@@ -316,6 +316,24 @@ def main() -> None:
                     except Exception as exc:
                         console.print(f"[bold red]Software search failed:[/bold red] {exc}")
                     continue
+                if command == "updates":
+                    if not remote_session:
+                        console.print("[yellow]/install updates needs a live Remote session. Use /master on first.[/yellow]")
+                        continue
+                    headers = {
+                        "X-Device-ID": client_id,
+                        "X-IRAS-Remote-Session-ID": str(remote_session.get("session_id") or ""),
+                        "X-IRAS-Remote-Token": str(remote_session.get("session_token") or ""),
+                    }
+                    try:
+                        # Reuse chat command processing so package-name vs exact-id handling stays server-side.
+                        data = _request(client, "POST", "/v1/chat", token=token, headers=headers, json={
+                            "message": text, "thread_id": thread_id, "client_id": client_id, "device_id": client_id
+                        }).json()
+                        console.print(str(data.get("response") or data))
+                    except Exception as exc:
+                        console.print(f"[bold red]Software update check failed:[/bold red] {exc}")
+                    continue
                 if command in {"status", "pause", "resume", "cancel"}:
                     run_id = rest.strip() or str(state.get("last_install_run_id") or "")
                     if command == "status" and not run_id:
@@ -344,12 +362,13 @@ def main() -> None:
                         console.print(f"[bold red]Software Installer {command} failed:[/bold red] {exc}")
                     continue
                 direct_url = command == "url"
-                target = rest.strip() if direct_url else remainder
+                operation = command if command in {"update", "uninstall"} else "install"
+                target = rest.strip() if command in {"url", "update", "uninstall"} else remainder
                 if not target:
-                    console.print("[yellow]Usage: /install <software-or-package-id> OR /install url <https-installer-url>[/yellow]")
+                    console.print("[yellow]Usage: /install <software-or-package-id> | /install update <software-or-id|all> | /install uninstall <software-or-id> | /install url <https-installer-url>[/yellow]")
                     continue
                 if not remote_session:
-                    console.print("[yellow]Software installation needs a live Remote session. Use /master on first.[/yellow]")
+                    console.print("[yellow]Software lifecycle changes need a live Remote session. Use /master on first.[/yellow]")
                     continue
                 try:
                     run = _request(
@@ -359,15 +378,15 @@ def main() -> None:
                             "X-IRAS-Remote-Session-ID": str(remote_session.get("session_id") or ""),
                             "X-IRAS-Remote-Token": str(remote_session.get("session_token") or ""),
                         },
-                        json={"target": target, "thread_id": thread_id, "direct_url": direct_url},
+                        json={"target": target, "thread_id": thread_id, "direct_url": direct_url, "operation": operation},
                     ).json()
                     run_id = str(run.get("run_id") or "")
                     if run_id:
                         state["last_install_run_id"] = run_id
                         _save_state(state)
-                    console.print(f"[bold green]Software Installer started[/bold green] · run {run_id or 'unknown'}")
+                    console.print(f"[bold green]Software Lifecycle Agent started[/bold green] · run {run_id or 'unknown'}")
                 except Exception as exc:
-                    console.print(f"[bold red]Software Installer failed to start:[/bold red] {exc}")
+                    console.print(f"[bold red]Software Lifecycle Agent failed to start:[/bold red] {exc}")
                 continue
 
             if lower == "/code projects" or lower.startswith("/code projects "):

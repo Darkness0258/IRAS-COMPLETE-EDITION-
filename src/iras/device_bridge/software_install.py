@@ -147,6 +147,81 @@ def install(package_id: str, *, source: str = "winget", version: str = "", scope
     }
 
 
+
+def available_upgrades(*, package_id: str = "", source: str = "winget") -> dict:
+    package_id = str(package_id or "").strip()
+    source = str(source or "winget").strip().casefold()
+    if source not in {"winget", "msstore"}:
+        raise ValueError("Software source must be 'winget' or 'msstore'.")
+    path = _winget_path()
+    argv = [path, "upgrade", "--source", source, "--accept-source-agreements", "--disable-interactivity"]
+    if package_id:
+        if not _PACKAGE_ID_RE.fullmatch(package_id):
+            raise ValueError("A valid exact WinGet package ID is required.")
+        argv.extend(["--id", package_id, "--exact"])
+    result = _run(argv, timeout=90)
+    return {"package_id": package_id, "source": source, **result}
+
+
+def upgrade(package_id: str = "", *, source: str = "winget", all_packages: bool = False) -> dict:
+    package_id = str(package_id or "").strip()
+    source = str(source or "winget").strip().casefold()
+    if source not in {"winget", "msstore"}:
+        raise ValueError("Software source must be 'winget' or 'msstore'.")
+    if bool(all_packages):
+        if package_id:
+            raise ValueError("Do not combine an exact package ID with all_packages=true.")
+    elif not _PACKAGE_ID_RE.fullmatch(package_id):
+        raise ValueError("Update requires an exact WinGet package ID unless all_packages=true is explicitly requested.")
+    path = _winget_path()
+    argv = [path, "upgrade"]
+    if all_packages:
+        argv.append("--all")
+    else:
+        argv.extend(["--id", package_id, "--exact"])
+    argv.extend([
+        "--source", source, "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity",
+    ])
+    result = _run(argv, timeout=600)
+    verification = available_upgrades(package_id=package_id, source=source) if package_id else available_upgrades(source=source)
+    installed = list_installed(package_id=package_id) if package_id else None
+    return {
+        "package_id": package_id or None,
+        "source": source,
+        "all_packages": bool(all_packages),
+        "verification": verification,
+        "installed_state": installed,
+        **result,
+    }
+
+
+def uninstall(package_id: str, *, source: str = "winget") -> dict:
+    package_id = str(package_id or "").strip()
+    if not _PACKAGE_ID_RE.fullmatch(package_id):
+        raise ValueError("Uninstall requires an exact WinGet package ID.")
+    source = str(source or "winget").strip().casefold()
+    if source not in {"winget", "msstore"}:
+        raise ValueError("Software source must be 'winget' or 'msstore'.")
+    before = list_installed(package_id=package_id)
+    before_present = before.get("returncode") == 0 and package_id.casefold() in str(before.get("stdout") or "").casefold()
+    if not before_present:
+        raise ValueError(f"Package {package_id!r} is not currently installed according to WinGet.")
+    path = _winget_path()
+    result = _run([
+        path, "uninstall", "--id", package_id, "--exact", "--source", source,
+        "--accept-source-agreements", "--disable-interactivity",
+    ], timeout=600)
+    after = list_installed(package_id=package_id)
+    still_present = after.get("returncode") == 0 and package_id.casefold() in str(after.get("stdout") or "").casefold()
+    return {
+        "package_id": package_id,
+        "source": source,
+        "verified_removed": not still_present,
+        "before": before,
+        "verification": after,
+        **result,
+    }
+
 def _validate_public_https(url: str) -> str:
     current = str(url or "").strip()
     parsed = urlparse(current)

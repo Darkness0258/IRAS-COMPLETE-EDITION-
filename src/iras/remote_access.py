@@ -58,6 +58,7 @@ READ_ACTIONS = {
     "software_search",
     "software_show",
     "software_list",
+    "software_upgrades",
 }
 
 SAFE_ACTIONS = {
@@ -94,6 +95,8 @@ CRITICAL_ACTIONS = {
     "run_command",
     "git_restore_checkpoint",
     "software_install",
+    "software_upgrade",
+    "software_uninstall",
     "software_install_prepared",
 }
 
@@ -313,10 +316,10 @@ class RemoteAccessPolicy:
             raise PermissionError("Remote restart/shutdown is disabled by the laptop's local policy.")
         if action == "run_command" and not state.allow_shell:
             raise PermissionError("Remote command execution is disabled by the laptop's local policy.")
-        if action in {"software_install", "software_install_prepared"} and not state.allow_shell:
+        if action in {"software_install", "software_upgrade", "software_uninstall", "software_install_prepared"} and not state.allow_shell:
             raise PermissionError(
-                "Remote software installation is disabled by the laptop's local command-execution policy. "
-                "Arm full Remote with --remote-allow-shell before installing software."
+                "Remote software lifecycle changes are disabled by the laptop's local command-execution policy. "
+                "Arm full Remote with --remote-allow-shell before installing, updating, or uninstalling software."
             )
         return required
 

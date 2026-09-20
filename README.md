@@ -1,6 +1,6 @@
-# IRAS 5.0.0 RC4 — Research, Installation & Reliable Autonomous Engineering
+# IRAS 5.0.0 RC5 — Research, Software Lifecycle & Reliable Autonomous Engineering
 
-IRAS v5 builds on the frozen v4.4 permissioned Windows/control core and now exposes **36 validated operating-layer feature families**. RC4 adds a dedicated evidence-driven Web Research Agent and a permissioned Software Installer Agent while retaining the RC3 Coding Agent resolver and the existing autonomous operating layer.
+IRAS v5 builds on the frozen v4.4 permissioned Windows/control core and exposes **36 validated operating-layer feature families**. RC5 extends the dedicated Web Research Agent and permissioned Software Installer into a full Software Lifecycle Agent with exact-package install, update, update-all (explicit only), uninstall, and verification while retaining the Coding Agent resolver and autonomous operating layer.
 
 **Dedicated Coding Agent:** `/code <goal>` uses inspect → implement → test → repair → final-test → review → coordinate. Project resolution honors explicit Windows paths, conservative fuzzy names such as `portfoilo` → `Portfolio`, prefers real roots over nested artifact/mockup/test repositories, refuses genuine ambiguity, and remembers/revalidates the chosen project. RC4 also prevents permission/device-blocked work from being falsely recorded as successful.
 
@@ -8,18 +8,19 @@ IRAS v5 builds on the frozen v4.4 permissioned Windows/control core and now expo
 
 **Permissioned Software Installer Agent:** `/install search <software>` discovers packages; `/install <software-or-package-id>` prefers WinGet exact-ID installation; `/install url <https://official-installer.exe|msi>` uses a bounded direct-download path. Direct installers must be public HTTPS, cached by IRAS, SHA-256 checked, and Authenticode-valid before execution. Installation remains CRITICAL and continues through Remote authentication, local Remote policy, ToolRegistry authorization, emergency stop, audit, and Windows/UAC.
 
-**Release status:** `5.0.0-rc4`. **Remote protocol remains `1`.** RC4 does not weaken or replace the protected Remote/session, local-policy, device-executor, emergency-stop, filesystem-root, ToolRegistry, or Windows/UAC boundaries.
+**Release status:** `5.0.0-rc5`. **Remote protocol remains `1`.** RC5 does not weaken or replace the protected Remote/session, local-policy, device-executor, emergency-stop, filesystem-root, ToolRegistry, or Windows/UAC boundaries.
 
-## v5.0 RC4 release surface
+## v5.0 RC5 release surface
 
 - **36 feature families** with the existing 100+ v5 model-facing tools plus dedicated Coding, Research and Installer lifecycle APIs/commands.
 - **Research controls:** `/research <question>`, `/research status`, `/research pause`, `/research resume`, `/research cancel`.
 - **Installer controls:** `/install search <software>`, `/install <target>`, `/install url <https-url>`, `/install status`, `/install pause`, `/install resume`, `/install cancel`.
 - **Coding controls:** `/code projects`, `/code use <project-name-or-path>`, `/code status`, `/code pause`, `/code resume`, `/code cancel`, `/code diff`.
 - **Release hardening:** clean-tree validation ignores legitimate `.venv` contents while continuing to reject source caches/build debris; dedicated state-changing agents require verified completion semantics.
-- **Cloud deployment parity:** Windows Cloud Client and Render must run the same RC4 source or new server routes will correctly return 404.
+- **Software lifecycle:** `/install updates [id]`, `/install update <software|id>`, explicit `/install update all`, and `/install uninstall <software|id>` use exact WinGet identity and post-action verification.
+- **Cloud deployment parity:** Windows Cloud Client and Render must run the same RC5 source or new server routes will correctly return 404.
 
-See `RC4-FEATURE-MATRIX.md` and `docs/V5_0_RC4_NOTES.md` for the current capability and security inventory.
+See `RC5-FEATURE-MATRIX.md` and `docs/V5_0_RC5_NOTES.md` for the current capability and security inventory.
 
 ## Professional UI/UX & motion system
 
