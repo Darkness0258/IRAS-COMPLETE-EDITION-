@@ -1,5 +1,5 @@
 {
-  "baseline_commit": "c37d8a5",
+  "baseline_commit": "2781946",
   "build_mode": "build-first-local",
   "cloud_ai_agent": {
     "agent_mode": "cloud_tool_agent",
@@ -83,7 +83,7 @@
   "local_regression": {
     "android_companion_compile": "static-contract-validated; Android SDK/Gradle build is host-side",
     "failed": 0,
-    "passed": 873
+    "passed": 878
   },
   "managed_omniparser": {
     "authenticated_lifecycle": true,
@@ -175,7 +175,8 @@
     "Quick Code follow-up context remembers the last verified source file and can run it directly inside VS Code's integrated terminal.",
     "Cloud AI Agent now extends provider failover to the paired Windows PC's Ollama after the configured cloud provider pool is exhausted or rate-limited.",
     "Cloud Spotify execution takes an OmniParser-backed second visual observation when a legacy/unverified bridge response lacks playback proof, and rejects unrelated playback.",
-    "Windows cloud client exposes /agent status for cloud-agent routing, device Ollama fallback readiness and deterministic executor visibility."
+    "Windows cloud client exposes /agent status for cloud-agent routing, device Ollama fallback readiness and deterministic executor visibility.",
+    "Coding Agent project resolution now honors explicit Windows paths, fuzzy project names, root-over-artifact ranking, fail-closed ambiguity, remembered follow-up selection, and /code projects/use/status/pause/resume/cancel/diff controls."
   ],
   "remote_protocol": 1,
   "render_health_hotfix": {
@@ -240,6 +241,22 @@
       "kill_process",
       "delete_path"
     ],
-    "project_root_and_remote_enforcement_unchanged": true
+    "project_root_and_remote_enforcement_unchanged": true,
+    "project_resolution": "explicit Windows path > named/fuzzy identity > remembered verified project > single discovered project",
+    "fuzzy_project_names": "typo-tolerant conservative matching; portfoilo resolves to Portfolio",
+    "nested_repo_guard": "real project roots outrank and weak nested artifact/mockup/test path matches are rejected",
+    "ambiguity_policy": "genuine close matches fail closed and require /code use selection",
+    "followup_project_memory": "thread/client-scoped non-secret project path; revalidated through bridge Git read before use",
+    "project_list_endpoint": "/v1/coding-agent/projects",
+    "project_select_endpoint": "/v1/coding-agent/project",
+    "run_controls": [
+      "/code status [run-id]",
+      "/code pause [run-id]",
+      "/code resume [run-id]",
+      "/code cancel [run-id]",
+      "/code diff [run-id]",
+      "/code projects [query]",
+      "/code use <project-name-or-path>"
+    ]
   }
 }

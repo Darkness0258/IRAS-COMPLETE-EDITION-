@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from pathlib import PureWindowsPath
 import re
 
 
@@ -54,6 +55,86 @@ CODING_AGENT_WINDOWS_TOOLS = {
 }
 
 CODING_AGENT_TOOL_ALLOWLIST = CODING_AGENT_CORE_TOOLS | CODING_AGENT_WINDOWS_TOOLS
+
+
+_WINDOWS_QUOTED_PROJECT_PATH_RE = re.compile(r"[\"'](?P<path>[A-Za-z]:\\[^\r\n\"']+)[\"']")
+_WINDOWS_PROJECT_PATH_RE = re.compile(r"(?P<path>[A-Za-z]:\\[^\r\n\"']+)")
+_PROJECT_NAME_STOPWORDS = {
+    "my", "the", "this", "that", "our", "your", "a", "an", "current", "existing",
+    "login", "bug", "code", "source", "development", "windows", "local",
+    "and", "then", "run", "test", "tests", "fix", "in", "for", "on",
+}
+
+
+def extract_windows_project_path(objective: str) -> str:
+    """Extract an explicit Windows path while avoiding trailing task prose."""
+    text = str(objective or "")
+    match = _WINDOWS_QUOTED_PROJECT_PATH_RE.search(text) or _WINDOWS_PROJECT_PATH_RE.search(text)
+    if not match:
+        return ""
+    raw = str(match.group("path") or "").strip()
+    raw = re.split(
+        r"\s+(?=(?:and|then|where|which|that|with|run|test|fix|build|review|implement|change|update)\b)",
+        raw,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    return raw.rstrip(" .,:;)")
+
+
+def project_query_from_objective(objective: str) -> str:
+    """Extract a named project identity from an engineering objective."""
+    text = str(objective or "")
+    explicit_path = extract_windows_project_path(text)
+    if explicit_path:
+        try:
+            return PureWindowsPath(explicit_path).name or ""
+        except Exception:
+            return ""
+    if re.search(r"\bIRAS\b", text, flags=re.IGNORECASE):
+        return "IRAS"
+    patterns = (
+        r"\b(?:my\s+|the\s+|this\s+|our\s+)?(?P<name>[A-Za-z0-9_.-]{2,80})\s+(?:project|repo(?:sitory)?|codebase)\b",
+        r"\b(?:project|repo(?:sitory)?|codebase)\s+(?:named\s+|called\s+)?(?P<name>[A-Za-z0-9_.-]{2,80})",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        name = str(match.group("name") or "").strip(" .,:;)")
+        if name and name.casefold() not in _PROJECT_NAME_STOPWORDS:
+            return name
+    return ""
+
+
+CODING_AGENT_COMMANDS = (
+    "projects",
+    "use",
+    "status",
+    "cancel",
+    "pause",
+    "resume",
+    "diff",
+)
+
+
+def parse_coding_agent_command(text: str) -> tuple[str, str] | None:
+    """Parse `/code` control commands while leaving ordinary objectives intact."""
+    raw = str(text or "").strip()
+    if not raw.lower().startswith("/code"):
+        return None
+    if raw.lower() == "/code":
+        return ("status", "")
+    if not raw.lower().startswith("/code "):
+        return None
+    remainder = raw[6:].strip()
+    if not remainder:
+        return ("status", "")
+    first, _, rest = remainder.partition(" ")
+    command = first.casefold()
+    if command in CODING_AGENT_COMMANDS:
+        return (command, rest.strip())
+    return ("run", remainder)
 
 CODING_AGENT_READ_TOOLS = {
     "device_computer_status",
@@ -239,4 +320,14 @@ def coding_agent_status() -> dict[str, Any]:
             ),
         },
         "core_tools": sorted(CODING_AGENT_CORE_TOOLS),
+        "commands": [
+            "/code <goal>",
+            "/code projects [query]",
+            "/code use <project-name-or-path>",
+            "/code status [run-id]",
+            "/code pause [run-id]",
+            "/code resume [run-id]",
+            "/code cancel [run-id]",
+            "/code diff [run-id]",
+        ],
     }

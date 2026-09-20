@@ -22,6 +22,8 @@ Memory  Monitor  Research  Coding    Workflow
 
 The v5 layer organizes long-lived goals, schedules, knowledge, connectors, artifacts, and recovery. It does not replace the v4.4 enforcement boundary. Every real external action still descends through the existing permissioned tools.
 
+The dedicated Coding Agent resolves one verified Windows project root before its engineering DAG starts. Resolution uses explicit-path precedence, named/fuzzy identity matching, root-over-artifact ranking, and fail-closed ambiguity handling. A selected project may be remembered for follow-up `/code` commands, but the remembered path is re-validated through the existing bridge/Git read path before use. Selection never bypasses ToolRegistry permissions, the active Remote/Master session, local Remote policy, configured filesystem roots, emergency stop, or Windows/UAC. Remote protocol remains `1`.
+
 ## V5 subsystem boundaries
 
 - **State:** PostgreSQL on cloud deployments when configured; SQLite locally.

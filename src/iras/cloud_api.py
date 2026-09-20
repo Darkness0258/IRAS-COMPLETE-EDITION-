@@ -8,7 +8,7 @@ from contextlib import contextmanager
 import threading
 import time
 import uuid
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import edge_tts
@@ -77,6 +77,7 @@ from iras.execution_router import (
     needs_project_workspace,
     parallel_graph,
     rank_matching_project_candidates,
+    project_candidates_are_ambiguous,
 )
 from iras.coding_agent import (
     CODING_AGENT_TOOL_ALLOWLIST,
@@ -84,6 +85,9 @@ from iras.coding_agent import (
     coding_agent_role_allowlist,
     coding_agent_status,
     is_coding_agent_objective,
+    parse_coding_agent_command,
+    extract_windows_project_path,
+    project_query_from_objective,
 )
 from iras.config import Settings
 from iras.v5 import build_v5_runtime
@@ -223,6 +227,11 @@ class OrchestrationIn(BaseModel):
 
 class CodingAgentIn(BaseModel):
     objective: str = Field(min_length=1, max_length=12000)
+    thread_id: str = Field(default="", max_length=128)
+
+
+class CodingAgentProjectIn(BaseModel):
+    project: str = Field(min_length=1, max_length=1000)
     thread_id: str = Field(default="", max_length=128)
 
 
@@ -957,26 +966,66 @@ def _multitask_context(
     }
 
 
-_WINDOWS_PATH_RE = re.compile(r"(?P<path>[A-Za-z]:\\[^\r\n\"']+)")
+def _explicit_windows_project_path(objective: str) -> str:
+    return extract_windows_project_path(objective)
 
 
 def _project_query_from_objective(objective: str) -> str:
-    text = str(objective or "")
-    if re.search(r"\bIRAS\b", text, flags=re.IGNORECASE):
-        return "IRAS"
-    explicit = _WINDOWS_PATH_RE.search(text)
-    if explicit:
-        raw = explicit.group("path").rstrip(" .,:;)")
-        try:
-            return Path(raw).name or ""
-        except Exception:
-            pass
-    match = re.search(
-        r"\b(?:project|repo(?:sitory)?|codebase)\s+(?:named\s+|called\s+)?([A-Za-z0-9_.-]{2,80})",
-        text,
-        flags=re.IGNORECASE,
+    return project_query_from_objective(objective)
+
+
+
+def _coding_project_preference_key(*, thread_id: str, requester_device: str) -> str:
+    scope = str(thread_id or "").strip() or str(requester_device or "cloud-agent").strip()
+    scope = re.sub(r"[^A-Za-z0-9_.:-]+", "_", scope)[:120]
+    return "coding_agent_project:" + (scope or "default")
+
+
+def _remembered_coding_project(*, thread_id: str, requester_device: str) -> dict[str, Any]:
+    value = cloud_state.get_preference(
+        _coding_project_preference_key(thread_id=thread_id, requester_device=requester_device),
+        {},
     )
-    return match.group(1) if match else ""
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _remember_coding_project(
+    *,
+    thread_id: str,
+    requester_device: str,
+    project_root: str,
+    project_name: str,
+    device_id: str,
+) -> None:
+    cloud_state.set_preference(
+        _coding_project_preference_key(thread_id=thread_id, requester_device=requester_device),
+        {
+            "path": str(project_root),
+            "name": str(project_name or PureWindowsPath(project_root).name),
+            "device_id": str(device_id or ""),
+            "selected_at": time.time(),
+        },
+    )
+
+
+def _coding_last_run_preference_key(*, thread_id: str, requester_device: str) -> str:
+    scope = str(thread_id or "").strip() or str(requester_device or "cloud-agent").strip()
+    scope = re.sub(r"[^A-Za-z0-9_.:-]+", "_", scope)[:120]
+    return "coding_agent_last_run:" + (scope or "default")
+
+
+def _remember_coding_run(*, thread_id: str, requester_device: str, run_id: str) -> None:
+    cloud_state.set_preference(
+        _coding_last_run_preference_key(thread_id=thread_id, requester_device=requester_device),
+        str(run_id or ""),
+    )
+
+
+def _last_coding_run_id(*, thread_id: str, requester_device: str) -> str:
+    return str(cloud_state.get_preference(
+        _coding_last_run_preference_key(thread_id=thread_id, requester_device=requester_device),
+        "",
+    ) or "").strip()
 
 
 def _prepare_orchestration_context(
@@ -985,6 +1034,8 @@ def _prepare_orchestration_context(
     remote_session: dict | None,
     requester_device: str,
     thread_id: str = "",
+    force_project: bool = False,
+    project_hint: str = "",
 ) -> dict[str, Any]:
     """Build orchestration context and resolve a concrete Windows workspace.
 
@@ -998,9 +1049,15 @@ def _prepare_orchestration_context(
         requester_device=requester_device,
         thread_id=thread_id,
     )
-    if parse_exact_file_objective(objective) is not None:
+    if parse_exact_file_objective(objective) is not None and not force_project:
         return context
-    if not needs_project_workspace(objective):
+    selected_hint = str(project_hint or "").strip().strip('"').strip("'")
+    explicit_project_path = (
+        _explicit_windows_project_path(selected_hint)
+        if selected_hint
+        else _explicit_windows_project_path(objective)
+    )
+    if not force_project and not explicit_project_path and not needs_project_workspace(objective):
         return context
     if not remote_session:
         # Read-only project inspection can theoretically run without a remote
@@ -1017,69 +1074,118 @@ def _prepare_orchestration_context(
             "wait a few seconds, then retry the project task."
         ) from exc
 
-    query = _project_query_from_objective(objective)
-    discovery = _deterministic_device_request(
-        context,
-        "find_projects",
-        {"query": query, "max_depth": 3, "max_results": 20},
-        45,
-    )
-    projects = list((discovery or {}).get("projects") or []) if isinstance(discovery, dict) else []
-    if query:
-        projects = rank_matching_project_candidates(query, projects)
+    if selected_hint and not explicit_project_path:
+        query = selected_hint
+    elif explicit_project_path:
+        query = PureWindowsPath(explicit_project_path).name
+    else:
+        query = _project_query_from_objective(objective)
+    current_device_id = str(device.get("device_id") or device_id or "")
+    remembered = _remembered_coding_project(
+        thread_id=thread_id, requester_device=requester_device
+    ) if force_project else {}
+    project_root = ""
+    project_name = ""
+    selection_source = ""
+    discovery: dict[str, Any] = {}
+    projects: list[dict[str, object]] = []
 
-    if not projects and query:
-        # Retry unfiltered only for diagnostics/aliases, but still require a
-        # positive identity match. Never substitute an unrelated repository.
-        all_discovery = _deterministic_device_request(
+    if explicit_project_path:
+        # Explicit user paths have highest precedence. The later Git read still
+        # passes through the normal bridge root/policy checks, so this is not an
+        # authorization bypass.
+        project_root = explicit_project_path
+        project_name = PureWindowsPath(project_root).name
+        selection_source = "explicit_path"
+    elif query:
+        discovery = _deterministic_device_request(
             context,
             "find_projects",
-            {"query": "", "max_depth": 3, "max_results": 30},
+            {"query": query, "max_depth": 3, "max_results": 20},
             45,
-        )
-        all_projects = (
-            list((all_discovery or {}).get("projects") or [])
-            if isinstance(all_discovery, dict)
-            else []
-        )
-        projects = rank_matching_project_candidates(query, all_projects)
+        ) or {}
+        projects = list(discovery.get("projects") or []) if isinstance(discovery, dict) else []
+        projects = rank_matching_project_candidates(query, projects)
+
         if not projects:
-            roots = (
-                list((all_discovery or {}).get("allowed_roots") or [])
+            # Typo-tolerant ranking needs the unfiltered candidate set because
+            # the device-side fast path intentionally uses strict substring
+            # filtering. No unrelated repo is accepted without a positive match.
+            all_discovery = _deterministic_device_request(
+                context,
+                "find_projects",
+                {"query": "", "max_depth": 3, "max_results": 40},
+                45,
+            ) or {}
+            all_projects = (
+                list(all_discovery.get("projects") or [])
                 if isinstance(all_discovery, dict)
                 else []
             )
-            candidate_names = ", ".join(
-                str(item.get("path") or item.get("name") or "")
-                for item in all_projects[:6]
-                if isinstance(item, dict)
-            ) or "none"
+            projects = rank_matching_project_candidates(query, all_projects)
+            discovery = all_discovery if isinstance(all_discovery, dict) else {}
+            if not projects:
+                roots = list(discovery.get("allowed_roots") or [])
+                candidate_names = ", ".join(
+                    str(item.get("path") or item.get("name") or "")
+                    for item in all_projects[:8]
+                    if isinstance(item, dict)
+                ) or "none"
+                root_text = ", ".join(str(item) for item in roots[:6]) or "none reported"
+                raise RuntimeError(
+                    f"IRAS could not find a project matching {query!r} inside the Windows bridge roots. "
+                    f"Configured roots: {root_text}. Candidates found: {candidate_names}. "
+                    "Use /code projects, then /code use <project-name-or-path>."
+                )
+
+        if project_candidates_are_ambiguous(query, projects):
+            choices = ", ".join(
+                str(item.get("path") or item.get("name") or "") for item in projects[:6]
+            )
+            raise RuntimeError(
+                f"IRAS found multiple plausible matches for {query!r}: {choices}. "
+                "Select one with /code use <project-name-or-path>; IRAS will not guess."
+            )
+        project_root = str(projects[0].get("path") or "").strip()
+        project_name = str(projects[0].get("name") or PureWindowsPath(project_root).name)
+        selection_source = "named_match"
+    elif remembered and (
+        not str(remembered.get("device_id") or "")
+        or str(remembered.get("device_id") or "") == current_device_id
+    ):
+        project_root = str(remembered.get("path") or "").strip()
+        project_name = str(remembered.get("name") or PureWindowsPath(project_root).name)
+        selection_source = "remembered"
+    else:
+        discovery = _deterministic_device_request(
+            context,
+            "find_projects",
+            {"query": "", "max_depth": 3, "max_results": 40},
+            45,
+        ) or {}
+        projects = rank_matching_project_candidates(
+            "", list(discovery.get("projects") or []) if isinstance(discovery, dict) else []
+        )
+        if not projects:
+            roots = list(discovery.get("allowed_roots") or []) if isinstance(discovery, dict) else []
             root_text = ", ".join(str(item) for item in roots[:6]) or "none reported"
             raise RuntimeError(
-                f"IRAS could not find a project matching {query!r} inside the Windows bridge roots. "
-                f"Configured roots: {root_text}. Candidates found: {candidate_names}. "
-                "Name the intended Windows project path explicitly or update the bridge roots, then retry."
+                "IRAS could not resolve a development project inside the Windows bridge roots. "
+                f"Configured roots: {root_text}. Add the project parent directory to the bridge roots "
+                "or select one with /code use <project-name-or-path>."
             )
+        if len(projects) > 1:
+            names = ", ".join(str(item.get("name") or item.get("path") or "") for item in projects[:8])
+            raise RuntimeError(
+                "IRAS found multiple development projects and no project was named or selected. "
+                f"Candidates: {names}. Use /code use <project-name-or-path>; IRAS will not silently choose one."
+            )
+        project_root = str(projects[0].get("path") or "").strip()
+        project_name = str(projects[0].get("name") or PureWindowsPath(project_root).name)
+        selection_source = "single_discovered"
 
-    if not projects:
-        roots = list((discovery or {}).get("allowed_roots") or []) if isinstance(discovery, dict) else []
-        root_text = ", ".join(str(item) for item in roots[:6]) or "none reported"
-        raise RuntimeError(
-            "IRAS could not resolve a development project inside the Windows bridge roots. "
-            f"Configured roots: {root_text}. Add the project parent directory to IRAS_BRIDGE_ROOTS/setup roots "
-            "or name the Windows project path explicitly, then retry."
-        )
-
-    if not query and len(projects) > 1:
-        names = ", ".join(str(item.get("name") or item.get("path") or "") for item in projects[:6])
-        raise RuntimeError(
-            "IRAS found multiple development projects on the paired Windows computer but the objective did not "
-            f"identify which one to use. Candidates: {names}. Name the project or give its Windows path, then retry."
-        )
-
-    project_root = str(projects[0].get("path") or "").strip()
     if not project_root:
-        raise RuntimeError("IRAS project discovery returned an empty project path.")
+        raise RuntimeError("IRAS project resolution returned an empty project path.")
 
     # One real Git read proves both path authorization and device availability.
     git_check = _deterministic_device_request(
@@ -1112,8 +1218,18 @@ def _prepare_orchestration_context(
     context["project_device_name"] = str(device.get("display_name") or "Windows PC")
     context["project_preflight"] = {
         "query": query,
+        "selection_source": selection_source,
+        "project_name": project_name,
         "git_status_returncode": (git_check or {}).get("returncode") if isinstance(git_check, dict) else None,
     }
+    if force_project:
+        _remember_coding_project(
+            thread_id=thread_id,
+            requester_device=requester_device,
+            project_root=project_root,
+            project_name=project_name,
+            device_id=context["project_device_id"],
+        )
     runtime.audit.record(
         "orchestration_project_preflight",
         {
@@ -1122,6 +1238,7 @@ def _prepare_orchestration_context(
             "device_id": context["project_device_id"],
             "project_root": project_root,
             "query": query,
+            "selection_source": selection_source,
         },
     )
     return context
@@ -1144,6 +1261,7 @@ def _start_coding_agent(
         remote_session=remote_session,
         requester_device=requester_device,
         thread_id=thread_id,
+        force_project=True,
     )
     context["coding_agent"] = True
     context["coding_windows_control"] = True
@@ -1153,6 +1271,9 @@ def _start_coding_agent(
         context=context,
         requester_device=requester_device,
         add_coordinator=True,
+    )
+    _remember_coding_run(
+        thread_id=thread_id, requester_device=requester_device, run_id=str(run.get("run_id") or "")
     )
     runtime.audit.record(
         "coding_agent_run_started",
@@ -1166,6 +1287,105 @@ def _start_coding_agent(
         },
     )
     return run
+
+
+def _coding_agent_control_text(
+    command: str,
+    argument: str,
+    *,
+    remote_session: dict | None,
+    requester_device: str,
+    thread_id: str,
+) -> str:
+    command = str(command or "status").casefold()
+    argument = str(argument or "").strip()
+
+    if command == "projects":
+        data = _list_coding_projects(
+            remote_session=remote_session, requester_device=requester_device,
+            thread_id=thread_id, query=argument,
+        )
+        projects = list(data.get("projects") or [])
+        if not projects:
+            return "No matching Coding Agent projects were found inside the configured Windows bridge roots."
+        lines = ["Coding Agent projects:"]
+        for item in projects[:20]:
+            marker = " *selected*" if item.get("selected") else ""
+            lines.append(f"- {item.get('name') or 'project'} — {item.get('path')}{marker}")
+        return "\n".join(lines)
+
+    if command == "use":
+        data = _select_coding_project(
+            argument, remote_session=remote_session, requester_device=requester_device, thread_id=thread_id
+        )
+        return (
+            f"Coding Agent project selected: {data.get('project_name') or data.get('project_root')} "
+            f"({data.get('project_root')}). Follow-up /code commands will reuse this verified project."
+        )
+
+    run_id = argument or _last_coding_run_id(
+        thread_id=thread_id, requester_device=requester_device
+    )
+    if command == "status" and not run_id:
+        selected = _remembered_coding_project(
+            thread_id=thread_id, requester_device=requester_device
+        )
+        base = coding_agent_status()
+        selected_text = str(selected.get("path") or "none")
+        return (
+            f"Coding Agent mode: {base.get('mode')}. No Coding Agent run is selected. "
+            f"Selected project: {selected_text}. Use /code <goal> to start a run."
+        )
+    if not run_id:
+        raise ValueError(f"No Coding Agent run selected for /code {command}.")
+
+    run = orchestration_manager.get(run_id)
+    if not run:
+        raise ValueError(f"Coding Agent run {run_id!r} was not found.")
+    if command == "status":
+        checkpoint = dict(run.get("checkpoint") or {})
+        return (
+            f"Coding Agent run {run_id}: state={run.get('state')}, "
+            f"completed={run.get('completed_count')}/{run.get('task_count')}, "
+            f"project={checkpoint.get('project_root') or 'unresolved'}, paused={bool(run.get('paused'))}."
+        )
+    if command == "pause":
+        updated = orchestration_manager.pause(run_id) or run
+        return f"Coding Agent run {run_id} is {updated.get('state')}."
+    if command == "cancel":
+        updated = orchestration_manager.cancel(run_id) or run
+        return f"Coding Agent run {run_id} is {updated.get('state')}."
+
+    if command in {"resume", "diff"}:
+        if not remote_session:
+            raise PermissionError(f"/code {command} requires a live IRAS Remote session.")
+        checkpoint = dict(run.get("checkpoint") or {})
+        run_device = str(checkpoint.get("project_device_id") or "")
+        session_device = str(remote_session.get("device_id") or "")
+        if run_device and session_device and run_device != session_device:
+            raise RuntimeError("The Remote session targets a different device than this Coding Agent run.")
+        project_root = str(checkpoint.get("project_root") or "").strip()
+        if not project_root:
+            raise RuntimeError("This Coding Agent run has no resolved project root.")
+        context = _multitask_context(
+            remote_session=remote_session, requester_device=requester_device, thread_id=thread_id
+        )
+        context.update({
+            "project_root": project_root,
+            "project_device_id": checkpoint.get("project_device_id"),
+            "project_device_name": checkpoint.get("project_device_name"),
+            "rollback_checkpoint": dict(checkpoint.get("rollback_checkpoint") or {}),
+            "coding_agent": True,
+            "coding_windows_control": True,
+        })
+        if command == "resume":
+            updated = orchestration_manager.resume(run_id, context_update=context) or run
+            return f"Coding Agent run {run_id} resumed with state={updated.get('state')}."
+        result = _deterministic_device_request(context, "git_diff", {"repo": project_root}, 45)
+        diff = str((result or {}).get("stdout") or "") if isinstance(result, dict) else str(result or "")
+        return diff.rstrip() or f"Coding Agent run {run_id} has no working-tree diff."
+
+    raise ValueError(f"Unknown Coding Agent command: {command}")
 
 
 def _start_multitask(
@@ -1656,6 +1876,122 @@ def get_coding_agent_status(
     return status
 
 
+def _list_coding_projects(
+    *,
+    remote_session: dict | None,
+    requester_device: str,
+    thread_id: str = "",
+    query: str = "",
+) -> dict[str, Any]:
+    if not remote_session:
+        raise PermissionError("Coding Agent project discovery requires a live IRAS Remote session.")
+    context = _multitask_context(
+        remote_session=remote_session, requester_device=requester_device, thread_id=thread_id
+    )
+    discovery = _deterministic_device_request(
+        context, "find_projects", {"query": "", "max_depth": 3, "max_results": 50}, 45
+    ) or {}
+    projects = list(discovery.get("projects") or []) if isinstance(discovery, dict) else []
+    requested = str(query or "").strip()
+    if requested:
+        projects = rank_matching_project_candidates(requested, projects)
+    else:
+        projects = rank_matching_project_candidates("", projects)
+    selected = _remembered_coding_project(
+        thread_id=thread_id, requester_device=requester_device
+    )
+    selected_path = str(selected.get("path") or "").casefold()
+    rows = []
+    for item in projects:
+        row = dict(item)
+        row["selected"] = bool(selected_path and str(row.get("path") or "").casefold() == selected_path)
+        rows.append(row)
+    return {
+        "query": requested,
+        "projects": rows,
+        "project_count": len(rows),
+        "selected_project": selected or None,
+        "allowed_roots": list(discovery.get("allowed_roots") or []) if isinstance(discovery, dict) else [],
+    }
+
+
+def _select_coding_project(
+    selector: str,
+    *,
+    remote_session: dict | None,
+    requester_device: str,
+    thread_id: str = "",
+) -> dict[str, Any]:
+    raw = str(selector or "").strip().strip('"').strip("'")
+    if not raw:
+        raise ValueError("Project name or Windows path is required.")
+    objective = f'project "{raw}"' if re.match(r"^[A-Za-z]:\\", raw) else f"project {raw}"
+    context = _prepare_orchestration_context(
+        objective,
+        remote_session=remote_session,
+        requester_device=requester_device,
+        thread_id=thread_id,
+        force_project=True,
+        project_hint=raw,
+    )
+    return {
+        "selected": True,
+        "project_root": context.get("project_root"),
+        "project_name": (context.get("project_preflight") or {}).get("project_name"),
+        "selection_source": (context.get("project_preflight") or {}).get("selection_source"),
+        "device_id": context.get("project_device_id"),
+    }
+
+
+@app.get("/v1/coding-agent/projects")
+def list_coding_agent_projects(
+    query: str = "",
+    thread_id: str = "",
+    authorization: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
+    x_iras_remote_session_id: str | None = Header(default=None, alias="X-IRAS-Remote-Session-ID"),
+    x_iras_remote_token: str | None = Header(default=None, alias="X-IRAS-Remote-Token"),
+):
+    _authorized(authorization)
+    remote_session = _authorize_remote_session(x_iras_remote_session_id, x_iras_remote_token)
+    try:
+        return _list_coding_projects(
+            remote_session=remote_session,
+            requester_device=str(x_device_id or "web")[:128],
+            thread_id=thread_id,
+            query=query,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/v1/coding-agent/project")
+def select_coding_agent_project(
+    body: CodingAgentProjectIn,
+    authorization: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
+    x_iras_remote_session_id: str | None = Header(default=None, alias="X-IRAS-Remote-Session-ID"),
+    x_iras_remote_token: str | None = Header(default=None, alias="X-IRAS-Remote-Token"),
+):
+    _authorized(authorization)
+    remote_session = _authorize_remote_session(x_iras_remote_session_id, x_iras_remote_token)
+    if not remote_session:
+        raise HTTPException(status_code=403, detail="Selecting a Coding Agent project requires a live IRAS Remote session.")
+    try:
+        return _select_coding_project(
+            body.project,
+            remote_session=remote_session,
+            requester_device=str(x_device_id or "web")[:128],
+            thread_id=body.thread_id,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/v1/coding-agent/runs")
 def create_coding_agent_run(
     body: CodingAgentIn,
@@ -1707,6 +2043,101 @@ def get_coding_agent_run(
     result = dict(run)
     result["agent_type"] = "coding_agent"
     return result
+
+
+def _coding_agent_run_or_404(run_id: str) -> dict[str, Any]:
+    run = orchestration_manager.get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Coding Agent run not found.")
+    return run
+
+
+@app.post("/v1/coding-agent/runs/{run_id}/pause")
+def pause_coding_agent_run(
+    run_id: str, authorization: str | None = Header(default=None)
+):
+    _authorized(authorization)
+    run = orchestration_manager.pause(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Coding Agent run not found.")
+    return run
+
+
+@app.post("/v1/coding-agent/runs/{run_id}/cancel")
+def cancel_coding_agent_run(
+    run_id: str, authorization: str | None = Header(default=None)
+):
+    _authorized(authorization)
+    run = orchestration_manager.cancel(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Coding Agent run not found.")
+    return run
+
+
+@app.post("/v1/coding-agent/runs/{run_id}/resume")
+def resume_coding_agent_run(
+    run_id: str,
+    authorization: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
+    x_iras_remote_session_id: str | None = Header(default=None, alias="X-IRAS-Remote-Session-ID"),
+    x_iras_remote_token: str | None = Header(default=None, alias="X-IRAS-Remote-Token"),
+):
+    _authorized(authorization)
+    remote_session = _authorize_remote_session(x_iras_remote_session_id, x_iras_remote_token)
+    if not remote_session:
+        raise HTTPException(status_code=403, detail="Resuming a Coding Agent run requires a live IRAS Remote session.")
+    existing = _coding_agent_run_or_404(run_id)
+    checkpoint = dict(existing.get("checkpoint") or {})
+    run_device = str(checkpoint.get("project_device_id") or "")
+    session_device = str(remote_session.get("device_id") or "")
+    if run_device and session_device and run_device != session_device:
+        raise HTTPException(status_code=409, detail="The Remote session targets a different device than this Coding Agent run.")
+    context_update = _multitask_context(
+        remote_session=remote_session, requester_device=x_device_id or "web"
+    )
+    for key in ("project_root", "project_device_id", "project_device_name"):
+        if checkpoint.get(key):
+            context_update[key] = checkpoint[key]
+    if checkpoint.get("rollback_checkpoint"):
+        context_update["rollback_checkpoint"] = dict(checkpoint["rollback_checkpoint"])
+    context_update["coding_agent"] = True
+    context_update["coding_windows_control"] = True
+    run = orchestration_manager.resume(run_id, context_update=context_update)
+    return run or existing
+
+
+@app.get("/v1/coding-agent/runs/{run_id}/diff")
+def diff_coding_agent_run(
+    run_id: str,
+    authorization: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None, alias="X-Device-ID"),
+    x_iras_remote_session_id: str | None = Header(default=None, alias="X-IRAS-Remote-Session-ID"),
+    x_iras_remote_token: str | None = Header(default=None, alias="X-IRAS-Remote-Token"),
+):
+    _authorized(authorization)
+    remote_session = _authorize_remote_session(x_iras_remote_session_id, x_iras_remote_token)
+    if not remote_session:
+        raise HTTPException(status_code=403, detail="Reading a live Coding Agent diff requires a live IRAS Remote session.")
+    run = _coding_agent_run_or_404(run_id)
+    checkpoint = dict(run.get("checkpoint") or {})
+    project_root = str(checkpoint.get("project_root") or "").strip()
+    if not project_root:
+        raise HTTPException(status_code=409, detail="This Coding Agent run has no resolved project root.")
+    run_device = str(checkpoint.get("project_device_id") or "")
+    session_device = str(remote_session.get("device_id") or "")
+    if run_device and session_device and run_device != session_device:
+        raise HTTPException(status_code=409, detail="The Remote session targets a different device than this Coding Agent run.")
+    context = _multitask_context(
+        remote_session=remote_session, requester_device=x_device_id or "web"
+    )
+    context["project_root"] = project_root
+    result = _deterministic_device_request(context, "git_diff", {"repo": project_root}, 45)
+    return {
+        "run_id": run_id,
+        "project_root": project_root,
+        "diff": str((result or {}).get("stdout") or "") if isinstance(result, dict) else str(result or ""),
+        "returncode": (result or {}).get("returncode") if isinstance(result, dict) else None,
+    }
 
 
 @app.post("/v1/orchestration/runs")
@@ -1997,8 +2428,10 @@ def chat(
 
     try:
         raw_message = str(body.message or "").strip()
-        explicit_code = raw_message.lower().startswith("/code ")
-        coding_objective = raw_message[6:].strip() if explicit_code else ""
+        code_command = parse_coding_agent_command(raw_message)
+        explicit_code = code_command is not None
+        code_action, code_argument = code_command if code_command else ("", "")
+        coding_objective = code_argument if code_action == "run" else ""
         goal_objective = parse_goal_command(body.message)
         parallel_tasks = parse_parallel_command(body.message)
         decision = None if (goal_objective or parallel_tasks or explicit_code) else _auto_decision(body.message)
@@ -2046,44 +2479,36 @@ def chat(
                     "tool_schema_count": 0,
                 }
         elif explicit_code:
-            if not remote_session:
-                response = (
-                    "The Coding Agent needs a live IRAS Remote session because it can edit project files and operate "
-                    "permissioned Windows controls. Enable Remote or Master Control, then send the /code request again."
-                )
-                metrics = {
-                    "model": "coding-agent-safety-gate",
-                    "total_ms": 0,
-                    "model_ms": 0,
-                    "tool_schema_count": 0,
-                }
+            if code_action == "run":
+                if not remote_session:
+                    response = (
+                        "The Coding Agent needs a live IRAS Remote session because it can edit project files and operate "
+                        "permissioned Windows controls. Enable Remote or Master Control, then send the /code request again."
+                    )
+                    metrics = {"model": "coding-agent-safety-gate", "total_ms": 0, "model_ms": 0, "tool_schema_count": 0}
+                else:
+                    try:
+                        run = _start_coding_agent(
+                            coding_objective, remote_session=remote_session, requester_device=device_id, thread_id=cloud_thread_id
+                        )
+                    except (RuntimeError, ValueError, PermissionError) as exc:
+                        response = str(exc)
+                        metrics = {"model": "coding-agent-preflight", "total_ms": 0, "model_ms": 0, "tool_schema_count": 0}
+                    else:
+                        response = (
+                            f"Started Coding Agent run {run['run_id']} for: {coding_objective}. "
+                            "It will inspect, implement, test, repair if needed, run final verification, and review the diff."
+                        )
+                        metrics = {"model": "coding-agent-coordinator", "total_ms": 0, "model_ms": 0, "tool_schema_count": 0}
             else:
                 try:
-                    run = _start_coding_agent(
-                        coding_objective,
-                        remote_session=remote_session,
-                        requester_device=device_id,
-                        thread_id=cloud_thread_id,
+                    response = _coding_agent_control_text(
+                        code_action, code_argument, remote_session=remote_session,
+                        requester_device=device_id, thread_id=cloud_thread_id,
                     )
                 except (RuntimeError, ValueError, PermissionError) as exc:
                     response = str(exc)
-                    metrics = {
-                        "model": "coding-agent-preflight",
-                        "total_ms": 0,
-                        "model_ms": 0,
-                        "tool_schema_count": 0,
-                    }
-                else:
-                    response = (
-                        f"Started Coding Agent run {run['run_id']} for: {coding_objective}. "
-                        "It will inspect, implement, test, repair if needed, run final verification, and review the diff."
-                    )
-                    metrics = {
-                        "model": "coding-agent-coordinator",
-                        "total_ms": 0,
-                        "model_ms": 0,
-                        "tool_schema_count": 0,
-                    }
+                metrics = {"model": "coding-agent-control", "total_ms": 0, "model_ms": 0, "tool_schema_count": 0}
         elif parallel_tasks:
             run = _start_multitask(
                 parallel_tasks,
@@ -2338,8 +2763,10 @@ def chat_stream(
     )
 
     raw_message = str(body.message or "").strip()
-    explicit_code = raw_message.lower().startswith("/code ")
-    coding_objective = raw_message[6:].strip() if explicit_code else ""
+    code_command = parse_coding_agent_command(raw_message)
+    explicit_code = code_command is not None
+    code_action, code_argument = code_command if code_command else ("", "")
+    coding_objective = code_argument if code_action == "run" else ""
     goal_objective = parse_goal_command(body.message)
     parallel_tasks = parse_parallel_command(body.message)
     decision = None if (goal_objective or parallel_tasks or explicit_code) else _auto_decision(body.message)
@@ -2457,72 +2884,58 @@ def chat_stream(
                 )
                 return
             if explicit_code:
-                if not remote_session:
+                if code_action == "run":
+                    if not remote_session:
+                        text = (
+                            "The Coding Agent needs a live IRAS Remote session because it can edit project files and operate "
+                            "permissioned Windows controls. Enable Remote or Master Control, then send the /code request again."
+                        )
+                        yield _sse("token", {"text": text})
+                        yield _sse("done", {
+                            "request_id": request_id, "model": "coding-agent-safety-gate", "timing_ms": 0,
+                            "model_ms": 0, "first_token_ms": 0, "tool_schema_count": 0, "streamed": False,
+                            "queue_wait_ms": 0, "execution_mode": "authorization_required",
+                        })
+                        return
+                    try:
+                        run = _start_coding_agent(
+                            coding_objective, remote_session=remote_session, requester_device=device_id, thread_id=cloud_thread_id
+                        )
+                    except (RuntimeError, ValueError, PermissionError) as exc:
+                        text = str(exc)
+                        yield _sse("token", {"text": text})
+                        yield _sse("done", {
+                            "request_id": request_id, "model": "coding-agent-preflight", "timing_ms": 0,
+                            "model_ms": 0, "first_token_ms": 0, "tool_schema_count": 0, "streamed": False,
+                            "queue_wait_ms": 0, "execution_mode": "preflight_failed",
+                        })
+                        return
                     text = (
-                        "The Coding Agent needs a live IRAS Remote session because it can edit project files and operate "
-                        "permissioned Windows controls. Enable Remote or Master Control, then send the /code request again."
+                        f"Started Coding Agent run {run['run_id']}. It will inspect, implement, test, repair if needed, "
+                        "run final verification, and review the diff."
                     )
                     yield _sse("token", {"text": text})
-                    yield _sse(
-                        "done",
-                        {
-                            "request_id": request_id,
-                            "model": "coding-agent-safety-gate",
-                            "timing_ms": 0,
-                            "model_ms": 0,
-                            "first_token_ms": 0,
-                            "tool_schema_count": 0,
-                            "streamed": False,
-                            "queue_wait_ms": 0,
-                            "execution_mode": "authorization_required",
-                        },
-                    )
+                    yield _sse("done", {
+                        "request_id": request_id, "model": "coding-agent-coordinator", "timing_ms": 0,
+                        "model_ms": 0, "first_token_ms": 0, "tool_schema_count": 0, "streamed": False,
+                        "queue_wait_ms": 0, "orchestration_run_id": run.get("run_id"), "execution_mode": "coding_agent",
+                    })
                     return
                 try:
-                    run = _start_coding_agent(
-                        coding_objective,
-                        remote_session=remote_session,
-                        requester_device=device_id,
-                        thread_id=cloud_thread_id,
+                    text = _coding_agent_control_text(
+                        code_action, code_argument, remote_session=remote_session,
+                        requester_device=device_id, thread_id=cloud_thread_id,
                     )
+                    mode = "coding_agent_control"
                 except (RuntimeError, ValueError, PermissionError) as exc:
                     text = str(exc)
-                    yield _sse("token", {"text": text})
-                    yield _sse(
-                        "done",
-                        {
-                            "request_id": request_id,
-                            "model": "coding-agent-preflight",
-                            "timing_ms": 0,
-                            "model_ms": 0,
-                            "first_token_ms": 0,
-                            "tool_schema_count": 0,
-                            "streamed": False,
-                            "queue_wait_ms": 0,
-                            "execution_mode": "preflight_failed",
-                        },
-                    )
-                    return
-                text = (
-                    f"Started Coding Agent run {run['run_id']}. It will inspect, implement, test, repair if needed, "
-                    "run final verification, and review the diff."
-                )
+                    mode = "coding_agent_control_failed"
                 yield _sse("token", {"text": text})
-                yield _sse(
-                    "done",
-                    {
-                        "request_id": request_id,
-                        "model": "coding-agent-coordinator",
-                        "timing_ms": 0,
-                        "model_ms": 0,
-                        "first_token_ms": 0,
-                        "tool_schema_count": 0,
-                        "streamed": False,
-                        "queue_wait_ms": 0,
-                        "orchestration_run_id": run.get("run_id"),
-                        "execution_mode": "coding_agent",
-                    },
-                )
+                yield _sse("done", {
+                    "request_id": request_id, "model": "coding-agent-control", "timing_ms": 0,
+                    "model_ms": 0, "first_token_ms": 0, "tool_schema_count": 0, "streamed": False,
+                    "queue_wait_ms": 0, "execution_mode": mode,
+                })
                 return
             if parallel_tasks:
                 run = _start_multitask(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 import re
 
 from iras.deterministic_orchestration import parse_exact_file_objective
@@ -104,11 +105,25 @@ def _project_identity_tokens(value: str) -> tuple[str, ...]:
     )
 
 
-def project_candidate_identity_score(query: str, candidate: dict[str, object]) -> int:
-    """Return a strict lexical identity score, or -1 when the candidate does not match.
+def _project_identity_compact(value: str) -> str:
+    return "".join(_project_identity_tokens(value))
 
-    Project preflight is a safety boundary: a named objective must never silently
-    bind to an unrelated repository merely because it happened to rank first.
+
+_NESTED_PROJECT_NOISE = {
+    "artifact", "artifacts", "mock", "mocks", "mockup", "mockups", "sandbox",
+    "fixture", "fixtures", "test", "tests", "testing", "example", "examples",
+    "sample", "samples", "demo", "demos", "tmp", "temp", "build", "dist",
+    "generated", "output", "outputs", "coverage", "node_modules", "vendor",
+}
+
+
+def project_candidate_identity_score(query: str, candidate: dict[str, object]) -> int:
+    """Return a conservative typo-tolerant identity score, or -1 when unrelated.
+
+    Candidate *names* are authoritative. Path components are secondary evidence so
+    a nested repo such as ``Portfolio/artifacts/mockup-sandbox`` cannot outrank
+    the real ``Portfolio`` project root merely because the parent path contains
+    the requested name.
     """
     cleaned = _clean(query).casefold()
     if not cleaned:
@@ -118,28 +133,86 @@ def project_candidate_identity_score(query: str, candidate: dict[str, object]) -
     path = str(candidate.get("path") or "").strip().casefold()
     if not name and not path:
         return -1
-    if cleaned == name:
-        return 1000
-    if cleaned and cleaned in name:
-        return 900 - min(200, abs(len(name) - len(cleaned)))
-    if cleaned and cleaned in path:
-        return 700
 
-    query_tokens = set(_project_identity_tokens(cleaned))
-    candidate_tokens = set(_project_identity_tokens(name + " " + path))
-    if query_tokens and query_tokens.issubset(candidate_tokens):
-        return 500 + min(100, len(query_tokens) * 10)
-    return -1
+    query_compact = _project_identity_compact(cleaned)
+    name_compact = _project_identity_compact(name)
+    if not query_compact:
+        return -1
+
+    score = -1
+    if query_compact == name_compact:
+        score = 1400
+    elif cleaned == name:
+        score = 1380
+    elif cleaned and cleaned in name:
+        score = 1180 - min(180, abs(len(name) - len(cleaned)) * 4)
+    elif name_compact and query_compact in name_compact:
+        score = 1120 - min(180, abs(len(name_compact) - len(query_compact)) * 4)
+    elif name_compact:
+        ratio = SequenceMatcher(None, query_compact, name_compact).ratio()
+        # Strong enough for ordinary transpositions/one-character typos such as
+        # portfoilo -> Portfolio, but deliberately too strict for generic names.
+        if ratio >= 0.80 and min(len(query_compact), len(name_compact)) >= 5:
+            score = 900 + int(ratio * 160)
+
+    path_tokens = _project_identity_tokens(path)
+    path_parts = [part for part in re.split(r"[\\/]+", path) if part]
+    path_compacts = [_project_identity_compact(part) for part in path_parts]
+    if score < 0:
+        # Secondary path evidence is accepted only when a path component itself
+        # identifies the requested project. It is intentionally weaker than a
+        # matching basename so nested generated/test repos rank below roots.
+        if query_compact in path_compacts:
+            score = 760
+        else:
+            best_ratio = max(
+                (SequenceMatcher(None, query_compact, part).ratio() for part in path_compacts if part),
+                default=0.0,
+            )
+            if best_ratio >= 0.86 and len(query_compact) >= 5:
+                score = 680 + int(best_ratio * 80)
+
+    if score < 0:
+        query_tokens = set(_project_identity_tokens(cleaned))
+        candidate_tokens = set(_project_identity_tokens(name))
+        if query_tokens and query_tokens.issubset(candidate_tokens):
+            score = 820 + min(100, len(query_tokens) * 12)
+
+    if score < 0:
+        return -1
+
+    try:
+        depth = max(0, int(candidate.get("depth") or 0))
+    except (TypeError, ValueError):
+        depth = 0
+    noise_hits = sum(1 for token in path_tokens if token in _NESTED_PROJECT_NOISE)
+    basename_noise = sum(1 for token in _project_identity_tokens(name) if token in _NESTED_PROJECT_NOISE)
+    score -= min(180, depth * 12)
+    score -= min(300, noise_hits * 55)
+    score -= min(260, basename_noise * 100)
+    if bool(candidate.get("git")):
+        score += 18
+    # Weak ancestor-only/path matches are useful as diagnostics, not as an
+    # autonomous binding signal. Failing closed here prevents a nested mockup,
+    # artifact, or test repository from being silently selected.
+    return score if score >= 600 else -1
 
 
 def rank_matching_project_candidates(
     query: str,
     projects: list[dict[str, object]],
 ) -> list[dict[str, object]]:
-    """Return only candidates that actually match the requested project identity."""
+    """Return only candidates that safely match the requested project identity."""
     if not _clean(query):
-        return list(projects)
-    scored: list[tuple[int, int, str, dict[str, object]]] = []
+        return sorted(
+            [item for item in projects if isinstance(item, dict)],
+            key=lambda item: (
+                int(item.get("depth") or 0),
+                -int(item.get("score") or 0),
+                str(item.get("path") or "").casefold(),
+            ),
+        )
+    scored: list[tuple[int, int, int, str, dict[str, object]]] = []
     for item in projects:
         if not isinstance(item, dict):
             continue
@@ -150,16 +223,37 @@ def rank_matching_project_candidates(
             discovery_score = int(item.get("score") or 0)
         except (TypeError, ValueError):
             discovery_score = 0
+        try:
+            depth = int(item.get("depth") or 0)
+        except (TypeError, ValueError):
+            depth = 0
         scored.append(
             (
                 -identity,
+                depth,
                 -discovery_score,
                 str(item.get("path") or "").casefold(),
                 item,
             )
         )
-    scored.sort(key=lambda row: row[:3])
-    return [row[3] for row in scored]
+    scored.sort(key=lambda row: row[:4])
+    return [row[4] for row in scored]
+
+
+def project_candidates_are_ambiguous(
+    query: str,
+    projects: list[dict[str, object]],
+    *,
+    score_margin: int = 90,
+) -> bool:
+    """Return True only when the two strongest named matches are genuinely close."""
+    if not _clean(query) or len(projects) < 2:
+        return False
+    first = project_candidate_identity_score(query, projects[0])
+    second = project_candidate_identity_score(query, projects[1])
+    if first < 0 or second < 0:
+        return False
+    return (first - second) < max(1, int(score_margin))
 
 
 def _strip_list_marker(text: str) -> str:

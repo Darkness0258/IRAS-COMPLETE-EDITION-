@@ -113,3 +113,79 @@ def test_local_cli_and_desktop_expose_code_command_without_bypassing_master_cont
     assert "Local Coding Agent execution requires Master Control" in cli
     assert 'lower.startswith("/code ")' in desktop
     assert "Local Coding Agent execution requires Master Control" in desktop
+
+
+def test_coding_agent_project_name_parser_handles_name_before_project_and_explicit_paths():
+    from iras.coding_agent import extract_windows_project_path, project_query_from_objective
+
+    objective = "fix the login bug in my portfoilo project and run all relevant tests"
+    assert project_query_from_objective(objective) == "portfoilo"
+
+    explicit = r'/code fix login in "D:\Projects\My Portfolio" and run tests'
+    assert extract_windows_project_path(explicit) == r"D:\Projects\My Portfolio"
+    assert project_query_from_objective(explicit) == "My Portfolio"
+
+
+def test_coding_agent_project_ranking_fuzzy_matches_root_and_rejects_nested_artifact_repo():
+    from iras.execution_router import rank_matching_project_candidates
+
+    projects = [
+        {
+            "name": "Digital-Vertox",
+            "path": r"D:\Projects\Digital-Vertox",
+            "depth": 1,
+            "git": True,
+            "score": 50,
+        },
+        {
+            "name": "mockup-sandbox",
+            "path": r"D:\Projects\Portfolio\artifacts\mockup-sandbox",
+            "depth": 3,
+            "git": True,
+            "score": 50,
+        },
+        {
+            "name": "Portfolio",
+            "path": r"D:\Projects\Portfolio",
+            "depth": 1,
+            "git": True,
+            "score": 50,
+        },
+    ]
+    ranked = rank_matching_project_candidates("portfoilo", projects)
+    assert [item["name"] for item in ranked] == ["Portfolio"]
+
+
+def test_coding_agent_project_ranking_detects_genuine_ambiguity():
+    from iras.execution_router import project_candidates_are_ambiguous, rank_matching_project_candidates
+
+    projects = [
+        {"name": "Portfolio", "path": r"C:\Work\Portfolio", "depth": 1, "git": True, "score": 50},
+        {"name": "Portfolio", "path": r"D:\Projects\Portfolio", "depth": 1, "git": True, "score": 50},
+    ]
+    ranked = rank_matching_project_candidates("Portfolio", projects)
+    assert len(ranked) == 2
+    assert project_candidates_are_ambiguous("Portfolio", ranked) is True
+
+
+def test_coding_agent_command_parser_supports_project_and_run_controls():
+    from iras.coding_agent import parse_coding_agent_command
+
+    assert parse_coding_agent_command("/code projects") == ("projects", "")
+    assert parse_coding_agent_command("/code use Portfolio") == ("use", "Portfolio")
+    assert parse_coding_agent_command("/code pause run_123") == ("pause", "run_123")
+    assert parse_coding_agent_command("/code resume") == ("resume", "")
+    assert parse_coding_agent_command("/code diff") == ("diff", "")
+    assert parse_coding_agent_command("/code fix the login bug") == ("run", "fix the login bug")
+
+
+def test_cloud_coding_agent_exposes_project_selection_and_run_control_endpoints():
+    cloud = Path("src/iras/cloud_api.py").read_text(encoding="utf-8")
+    assert '@app.get("/v1/coding-agent/projects")' in cloud
+    assert '@app.post("/v1/coding-agent/project")' in cloud
+    assert '@app.post("/v1/coding-agent/runs/{run_id}/pause")' in cloud
+    assert '@app.post("/v1/coding-agent/runs/{run_id}/resume")' in cloud
+    assert '@app.post("/v1/coding-agent/runs/{run_id}/cancel")' in cloud
+    assert '@app.get("/v1/coding-agent/runs/{run_id}/diff")' in cloud
+    assert "force_project=True" in cloud
+    assert "coding_agent_project:" in cloud
