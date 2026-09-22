@@ -10,6 +10,19 @@ IRAS v5 builds on the frozen v4.4 permissioned Windows/control core and exposes 
 
 **Release status:** `5.0.0-rc5`. **Remote protocol remains `1`.** RC5 does not weaken or replace the protected Remote/session, local-policy, device-executor, emergency-stop, filesystem-root, ToolRegistry, or Windows/UAC boundaries.
 
+
+## RC11 overlay — Perception, Process Awareness & Deliberate Repair
+
+The cleaned RC10 baseline now includes an RC11 operating-layer overlay without changing Remote protocol `1`:
+
+- **Desktop world model:** `device_desktop_context` combines a fresh UIA + OmniParser observation with visible-window inventory, foreground process identity, temporal screen changes, and a structured running-process snapshot.
+- **Temporal perception:** consecutive computer observations now report stable/appeared/disappeared controls, foreground changes, and a bounded visual-change score instead of treating every screenshot as unrelated.
+- **Structured process intelligence:** local/device process tools return typed process records, visible-app counts, categories, responsiveness, memory/CPU-time summaries, and started/exited deltas. Process command lines are deliberately never collected.
+- **Calm deliberate repair:** failures are classified before repair; IRAS ranks materially different routes, avoids repeating a failed route without new evidence, makes one reversible change at a time, and verifies the real requested outcome.
+- **No authority expansion:** screen/process awareness is READ-only. State changes continue through ToolRegistry, Remote/Master policy, emergency stop, audit, and Windows/UAC.
+
+See `docs/V5_0_RC11_PERCEPTION_DELIBERATION.md`.
+
 ## v5.0 RC5 release surface
 
 - **36 feature families** with the existing 100+ v5 model-facing tools plus dedicated Coding, Research and Installer lifecycle APIs/commands.

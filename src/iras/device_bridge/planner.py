@@ -22,6 +22,8 @@ SAFE_DEVICE_PLANNER_TOOLS = (
     "device_semantic_action",
     "device_computer_status",
     "device_computer_observe",
+    "device_desktop_context",
+    "device_list_processes",
     "device_computer_action",
     "device_computer_verify",
     "device_skill_find",
@@ -310,7 +312,10 @@ def planner_system_nudge(
         "expressible with that tool. For unfamiliar GUIs, call "
         "device_observe_ui before clicking. Reason only from returned visible "
         "UI elements. Prefer device_semantic_action for buttons, fields, tabs, "
-        "menus and list items when UIA exposes them. If UIA cannot describe the "
+        "menus and list items when UIA exposes them. When the GUI is failing unexpectedly, the wrong app may be focused, "
+        "or a process may be missing/hung, call device_desktop_context to correlate fresh screen state with visible windows "
+        "and running processes before changing state. Do not rapidly repeat a failed action: re-observe, classify the failure, "
+        "and choose a materially different route. If UIA cannot describe the "
         "interface, or the task spans the desktop rather than one app, switch to "
         "the v3.7 multimodal loop: device_computer_observe -> "
         "device_computer_action -> device_computer_verify. Use scope='desktop' "

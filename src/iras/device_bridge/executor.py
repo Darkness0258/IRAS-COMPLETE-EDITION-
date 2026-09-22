@@ -32,6 +32,7 @@ from iras.device_bridge.visual_control import (
 from iras.device_bridge.computer_use import (
     UniversalComputerController,
 )
+from iras.process_awareness import ProcessAwareness
 from iras.device_bridge.whatsapp_workflow import (
     open_chat_and_verify as open_whatsapp_chat_and_verify,
 )
@@ -80,6 +81,7 @@ DEFAULT_CAPABILITIES = [
     "semantic_action",
     "computer_status",
     "computer_observe",
+    "desktop_context",
     "computer_action",
     "computer_verify",
     "whatsapp_open_chat",
@@ -177,6 +179,7 @@ class DeviceExecutor:
             self.ui,
             self.visual,
         )
+        self.process_awareness = ProcessAwareness()
         self.primitives = VerifiedUIPrimitives(self.ui, self.computer)
         self.verifier = SemanticVerifier(self)
         self.emergency_stop = EmergencyStop()
@@ -287,6 +290,7 @@ class DeviceExecutor:
             "semantic_action": self.semantic_action,
             "computer_status": self.computer_status,
             "computer_observe": self.computer_observe,
+            "desktop_context": self.desktop_context,
             "computer_action": self.computer_action,
             "computer_verify": self.computer_verify,
             "whatsapp_open_chat": self.whatsapp_open_chat,
@@ -1397,6 +1401,62 @@ class DeviceExecutor:
             max_elements=max_elements,
         )
 
+    def desktop_context(
+        self,
+        vision: str = "auto",
+        scope: str = "auto",
+        max_elements: int = 220,
+        process_limit: int = 160,
+        include_process_paths: bool = False,
+    ):
+        """Build a high-fidelity read-only world model of the current desktop."""
+        observation = self.computer.observe(
+            vision=vision,
+            scope=scope,
+            max_elements=max_elements,
+        )
+        processes = self.process_awareness.snapshot(
+            limit=process_limit,
+            sort_by="memory",
+            include_path=bool(include_process_paths),
+            track_changes=True,
+        )
+        foreground = observation.get("foreground") or {}
+        foreground_pid = int(foreground.get("pid") or 0)
+        foreground_process = next(
+            (row for row in processes.get("processes", []) if int(row.get("pid") or 0) == foreground_pid),
+            None,
+        )
+        visible_processes = []
+        seen = set()
+        for window in observation.get("visible_windows") or []:
+            key = (int(window.get("pid") or 0), str(window.get("process") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            visible_processes.append(
+                {
+                    "pid": key[0],
+                    "process": key[1],
+                    "title": str(window.get("title") or "")[:500],
+                    "foreground": bool(window.get("foreground")),
+                }
+            )
+        return {
+            "mode": "rc11_desktop_world_model",
+            "observation": observation,
+            "process_snapshot": processes,
+            "correlation": {
+                "foreground_process": foreground_process,
+                "visible_processes": visible_processes[:40],
+                "process_count": processes.get("process_count"),
+                "visible_app_count": processes.get("visible_app_count"),
+                "not_responding": processes.get("not_responding"),
+                "process_changes": processes.get("changes"),
+                "screen_change": observation.get("temporal"),
+            },
+        }
+
     def computer_action(
         self,
         observation_id: str,
@@ -1563,28 +1623,23 @@ class DeviceExecutor:
             "bytes": len(raw),
         }
 
-    def list_processes(self, limit: int = 300):
-        limit = max(1, min(int(limit), 1000))
-        if os.name == "nt":
-            result = subprocess.run(
-                ["tasklist", "/FO", "CSV", "/NH"],
-                capture_output=True,
-                text=True,
-                errors="replace",
-                timeout=20,
-                shell=False,
-            )
-            lines = [line for line in result.stdout.splitlines() if line.strip()]
-            return {"processes": lines[:limit], "returncode": result.returncode}
-        result = subprocess.run(
-            ["ps", "-eo", "pid,comm,%cpu,%mem"],
-            capture_output=True,
-            text=True,
-            errors="replace",
-            timeout=20,
-            shell=False,
+    def list_processes(
+        self,
+        limit: int = 300,
+        query: str = "",
+        only_apps: bool = False,
+        sort_by: str = "memory",
+        include_path: bool = False,
+        track_changes: bool = True,
+    ):
+        return self.process_awareness.snapshot(
+            limit=limit,
+            query=query,
+            only_apps=bool(only_apps),
+            sort_by=sort_by,
+            include_path=bool(include_path),
+            track_changes=bool(track_changes),
         )
-        return {"processes": result.stdout.splitlines()[:limit], "returncode": result.returncode}
 
     def kill_process(self, pid: int):
         pid = int(pid)

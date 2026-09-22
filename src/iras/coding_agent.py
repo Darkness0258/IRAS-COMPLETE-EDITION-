@@ -37,6 +37,7 @@ CODING_AGENT_WINDOWS_TOOLS = {
     "device_semantic_action",
     "device_interact_app",
     "device_computer_observe",
+    "device_desktop_context",
     "device_computer_action",
     "device_computer_verify",
     "device_capture_screen",
@@ -150,6 +151,7 @@ CODING_AGENT_READ_TOOLS = {
     "device_git_log",
     "device_observe_ui",
     "device_computer_observe",
+    "device_desktop_context",
     "device_computer_verify",
     "device_capture_screen",
     "device_screen_preview",
@@ -257,8 +259,10 @@ def build_coding_agent_graph(objective: str) -> list[dict[str, Any]]:
             "id": "code-repair",
             "title": "Repair failures or confirm clean implementation",
             "prompt": (
-                "Use the implementation and test output as evidence. If tests failed or the objective is incomplete, diagnose and repair "
-                "the smallest relevant cause, then inspect the resulting diff. If tests already passed and the objective is satisfied, make "
+                "Use the implementation and test output as evidence. If tests failed or the objective is incomplete, diagnose before editing: "
+                "classify the failure, compare materially different repair routes, choose the smallest reversible fix, and make one change at a time. "
+                "For GUI/runtime problems, use fresh desktop/process evidence rather than repeating a stale action. Then inspect the resulting diff. "
+                "If tests already passed and the objective is satisfied, make "
                 "no unnecessary edits; only verify the current change. Permissioned Windows/VS Code controls are available when needed. "
                 "Objective: " + goal
             ),

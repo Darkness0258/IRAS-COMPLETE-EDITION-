@@ -32,6 +32,8 @@ READ_VERIFY_TOOLS = {
     "device_observe_ui",
     "device_computer_status",
     "device_computer_observe",
+    "device_desktop_context",
+    "device_list_processes",
     "device_computer_verify",
     "device_capture_screen",
     "device_detect_apps",

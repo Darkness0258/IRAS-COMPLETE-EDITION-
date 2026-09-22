@@ -90,6 +90,18 @@ class UniversalWindowsController(
             or normalized
         )
 
+    def _window_process_id(
+        self,
+        hwnd: int,
+    ) -> int:
+        self._require_windows()
+        pid = wintypes.DWORD()
+        self._user32().GetWindowThreadProcessId(
+            hwnd,
+            ctypes.byref(pid),
+        )
+        return int(pid.value or 0)
+
     def _window_process_name(
         self,
         hwnd: int,
@@ -245,12 +257,14 @@ class UniversalWindowsController(
                     int(hwnd)
                 )
             )
+            pid = self._window_process_id(int(hwnd))
 
             found.append(
                 {
                     "hwnd": int(
                         hwnd
                     ),
+                    "pid": pid,
                     "title": title,
                     "process": process,
                     "area": area,
@@ -265,6 +279,30 @@ class UniversalWindowsController(
         )
 
         return found
+
+    def visible_windows(
+        self,
+        *,
+        limit: int = 80,
+    ) -> list[dict]:
+        """Return visible top-level windows with process identity and foreground state."""
+        limit = max(1, min(int(limit), 250))
+        foreground = int(self._user32().GetForegroundWindow() or 0)
+        rows = list(self._visible_windows())
+        rows.sort(
+            key=lambda item: (
+                not bool(int(item.get("hwnd") or 0) == foreground),
+                -int(item.get("area") or 0),
+                str(item.get("title") or "").casefold(),
+            )
+        )
+        return [
+            {
+                **item,
+                "foreground": int(item.get("hwnd") or 0) == foreground,
+            }
+            for item in rows[:limit]
+        ]
 
     def _find_window(
         self,

@@ -11,6 +11,9 @@ from typing import Any
 
 from iras.models import PermissionLevel
 from iras.tools.base import Tool
+from iras.process_awareness import ProcessAwareness
+
+_PROCESS_AWARENESS = ProcessAwareness()
 
 
 def system_info():
@@ -24,22 +27,21 @@ def system_info():
     }
 
 
-def list_processes():
-    if os.name == 'nt':
-        cp = subprocess.run(
-            ['tasklist', '/FO', 'CSV', '/NH'],
-            capture_output=True,
-            text=True,
-            errors='replace',
-        )
-        return cp.stdout[-30000:]
-    cp = subprocess.run(
-        ['ps', '-eo', 'pid,comm,%cpu,%mem'],
-        capture_output=True,
-        text=True,
-        errors='replace',
+def list_processes(
+    limit: int = 300,
+    query: str = "",
+    only_apps: bool = False,
+    sort_by: str = "memory",
+    include_path: bool = False,
+):
+    return _PROCESS_AWARENESS.snapshot(
+        limit=limit,
+        query=query,
+        only_apps=only_apps,
+        sort_by=sort_by,
+        include_path=include_path,
+        track_changes=True,
     )
-    return cp.stdout[-30000:]
 
 
 def _windows_candidates(alias: str) -> list[Path]:
@@ -199,7 +201,7 @@ def screenshot(path=None):
 
 TOOLS = [
     Tool('system_info', 'Get basic local system information.', {'type': 'object', 'properties': {}}, system_info, PermissionLevel.READ),
-    Tool('list_processes', 'List processes running on the local computer.', {'type': 'object', 'properties': {}}, list_processes, PermissionLevel.READ),
+    Tool('list_processes', 'Return a structured read-only inventory of local processes, visible apps, memory/CPU-time summaries and process deltas. Command lines are never collected.', {'type': 'object', 'properties': {'limit': {'type': 'integer', 'minimum': 1, 'maximum': 1000}, 'query': {'type': 'string', 'maxLength': 300}, 'only_apps': {'type': 'boolean'}, 'sort_by': {'type': 'string', 'enum': ['memory', 'cpu', 'name', 'pid']}, 'include_path': {'type': 'boolean'}}}, list_processes, PermissionLevel.READ),
     Tool(
         'launch_app',
         'Launch an installed desktop application by simple app name or executable path. Do not use shell commands here.',

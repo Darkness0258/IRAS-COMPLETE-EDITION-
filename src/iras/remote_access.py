@@ -46,6 +46,7 @@ READ_ACTIONS = {
     "observe_ui",
     "computer_status",
     "computer_observe",
+    "desktop_context",
     "computer_verify",
     "ui_find_text",
     "ui_wait_text",

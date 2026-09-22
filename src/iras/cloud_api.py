@@ -642,12 +642,12 @@ _ORCHESTRATION_ROLE_TOOLS = {
     },
     "coder": set(CODING_AGENT_TOOL_ALLOWLIST),
     "tester": {
-        "device_computer_status", "device_system_info", "device_find_projects", "device_list_files",
+        "device_computer_status", "device_desktop_context", "device_system_info", "device_find_projects", "device_list_files",
         "device_read_text", "device_read_text_range", "device_search_text", "device_file_info",
         "device_git_status", "device_git_diff", "device_git_log", "device_run_tests", "http_get",
     },
     "reviewer": {
-        "device_computer_status", "device_system_info", "device_find_projects", "device_list_files",
+        "device_computer_status", "device_desktop_context", "device_system_info", "device_find_projects", "device_list_files",
         "device_read_text", "device_read_text_range", "device_search_text", "device_file_info",
         "device_git_status", "device_git_diff", "device_git_log", "device_run_tests",
         "web_search", "http_get",
@@ -657,7 +657,7 @@ _ORCHESTRATION_ROLE_TOOLS = {
         "device_software_manager_status", "device_software_search", "device_software_show",
         "device_software_list", "device_software_install", "device_software_prepare_url",
         "device_software_install_prepared", "device_detect_apps", "device_list_processes",
-        "device_computer_status", "device_computer_observe", "device_computer_action",
+        "device_computer_status", "device_desktop_context", "device_computer_observe", "device_computer_action",
         "device_computer_verify", "device_verify_state", "device_open_app", "device_app_control",
         "device_observe_ui", "device_ui_find_text", "device_ui_click_text", "device_ui_type_text",
         "device_ui_wait_text",

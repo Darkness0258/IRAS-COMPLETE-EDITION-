@@ -19,6 +19,7 @@ from iras.device_bridge.outcome_policy import (
 )
 from iras.vision.omniparser_runtime import OmniParserRuntimeManager
 from iras.vision.scene_graph import build_scene_graph, visual_element_confidence
+from iras.device_bridge.screen_intelligence import temporal_delta, summarize_observation
 
 
 class UniversalComputerController:
@@ -210,8 +211,12 @@ class UniversalComputerController:
                     "height": int(native.bottom - native.top),
                 }
 
+        pid = self.ui._window_process_id(hwnd) if hwnd else 0
+        process = self.ui._window_process_name(hwnd) if hwnd else ""
         return {
             "hwnd": hwnd,
+            "pid": pid,
+            "process": process,
             "title": title,
             "rect": rect,
         }
@@ -987,6 +992,9 @@ class UniversalComputerController:
             "actions": sorted(self.ACTIONS),
             "verification_conditions": sorted(self.VERIFY_CONDITIONS),
             "vision_scopes": ["auto", "foreground", "desktop"],
+            "temporal_screen_memory": True,
+            "visible_window_inventory": True,
+            "foreground_process_identity": True,
         }
         if runtime.get("reason"):
             result["omniparser_error"] = runtime.get("reason")
@@ -1010,6 +1018,10 @@ class UniversalComputerController:
         max_elements = max(1, min(int(max_elements), 300))
         screenshot = self._capture_desktop()
         foreground = self._foreground()
+        try:
+            visible_windows = self.ui.visible_windows(limit=80)
+        except Exception:
+            visible_windows = []
 
         uia_snapshot = {}
         uia_error = ""
@@ -1195,12 +1207,20 @@ class UniversalComputerController:
             "scene_visual_only_count": scene_graph.get("visual_only_count"),
             "element_count": len(elements),
             "elements": elements,
+            "visible_windows": visible_windows,
             "action_policy": (
                 "Use only element_id values from this observation. "
                 "Do not invent raw click coordinates. Re-observe if the "
                 "foreground window changes before acting."
             ),
         }
+        previous = (
+            self._observations.get(self._observation_order[-1])
+            if self._observation_order
+            else None
+        )
+        output["temporal"] = temporal_delta(previous, output)
+        output["desktop_summary"] = summarize_observation(output)
         self._save_observation(output)
         self._prune_capture_files()
         return output

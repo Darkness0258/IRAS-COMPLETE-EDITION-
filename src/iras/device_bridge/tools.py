@@ -316,6 +316,27 @@ def make_tools(store):
             timeout=150,
         )
 
+    def device_desktop_context(
+        vision="auto",
+        scope="auto",
+        max_elements=220,
+        process_limit=160,
+        include_process_paths=False,
+        device_id=None,
+    ):
+        return request(
+            "desktop_context",
+            {
+                "vision": vision,
+                "scope": scope,
+                "max_elements": max_elements,
+                "process_limit": process_limit,
+                "include_process_paths": include_process_paths,
+            },
+            device_id,
+            timeout=180,
+        )
+
     def device_computer_action(
         observation_id,
         action,
@@ -633,8 +654,20 @@ def make_tools(store):
     def device_screen_preview(max_width=1100, quality=62, device_id=None):
         return request("screen_preview", {"max_width": max_width, "quality": quality}, device_id, timeout=45)
 
-    def device_list_processes(limit=300, device_id=None):
-        return request("list_processes", {"limit": limit}, device_id)
+    def device_list_processes(limit=300, query="", only_apps=False, sort_by="memory", include_path=False, track_changes=True, device_id=None):
+        return request(
+            "list_processes",
+            {
+                "limit": limit,
+                "query": query,
+                "only_apps": only_apps,
+                "sort_by": sort_by,
+                "include_path": include_path,
+                "track_changes": track_changes,
+            },
+            device_id,
+            timeout=60,
+        )
 
     def device_kill_process(pid, device_id=None):
         return request("kill_process", {"pid": pid}, device_id)
@@ -1354,6 +1387,27 @@ def make_tools(store):
             PermissionLevel.READ,
         ),
         Tool(
+            "device_desktop_context",
+            (
+                "Build the RC11 high-fidelity desktop world model: fresh UIA + OmniParser screen grounding, "
+                "visible windows, foreground process identity, temporal screen changes, and a structured running-process snapshot. "
+                "Use this when diagnosing what is happening on the PC, when a GUI is behaving unexpectedly, or before choosing a repair route."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "vision": {"type": "string", "enum": ["off", "auto", "always"]},
+                    "scope": {"type": "string", "enum": ["auto", "foreground", "desktop"]},
+                    "max_elements": {"type": "integer", "minimum": 1, "maximum": 300},
+                    "process_limit": {"type": "integer", "minimum": 1, "maximum": 1000},
+                    "include_process_paths": {"type": "boolean"},
+                    **optional_device,
+                },
+            },
+            device_desktop_context,
+            PermissionLevel.READ,
+        ),
+        Tool(
             "device_computer_action",
             (
                 "Perform one universal keyboard/mouse action grounded in a fresh "
@@ -1816,8 +1870,22 @@ def make_tools(store):
         ),
         Tool(
             "device_list_processes",
-            "List running processes on the paired Windows PC.",
-            {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 1000}, **optional_device}},
+            (
+                "Return a structured read-only process inventory for the paired PC, including categories, visible app titles, "
+                "memory/CPU-time summaries, responsiveness and started/exited deltas. Process command lines are never collected."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
+                    "query": {"type": "string", "maxLength": 300},
+                    "only_apps": {"type": "boolean"},
+                    "sort_by": {"type": "string", "enum": ["memory", "cpu", "name", "pid"]},
+                    "include_path": {"type": "boolean"},
+                    "track_changes": {"type": "boolean"},
+                    **optional_device,
+                },
+            },
             device_list_processes,
             PermissionLevel.READ,
         ),
@@ -2079,7 +2147,7 @@ def make_tools(store):
         "device_app_control": "app_control", "device_open_app": "open_app",
         "device_interact_app": "interact_app", "device_observe_ui": "observe_ui",
         "device_semantic_action": "semantic_action", "device_computer_status": "computer_status",
-        "device_computer_observe": "computer_observe", "device_computer_action": "computer_action",
+        "device_computer_observe": "computer_observe", "device_desktop_context": "desktop_context", "device_computer_action": "computer_action",
         "device_computer_verify": "computer_verify", "device_whatsapp_open_chat": "whatsapp_open_chat",
         "device_spotify_search": "spotify_search", "device_spotify_play": "spotify_play",
         "device_media_control": "media_control", "device_open_url": "open_url",

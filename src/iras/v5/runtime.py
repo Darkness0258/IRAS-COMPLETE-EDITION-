@@ -13,6 +13,7 @@ from .scheduler import PersistentScheduler
 from .automation_engine import AutomationEngine
 from .cognitive_core import CognitiveCore
 from .strengthening_core import RC8StrengtheningCore
+from .deliberation import CalmDeliberationEngine
 from .monitoring import ProactiveMonitor, MonitorResult
 from .visual_agent import AdvancedVisualAgent
 from .browser_agent import DedicatedBrowserAgent
@@ -135,6 +136,7 @@ class V5Runtime:
         self.cognition = CognitiveCore(self.db, self.bus)
         self.cognition.bind_goal_provider(lambda: self.goals.next_actions(20))
         self.strengthening = RC8StrengtheningCore(self.db, self.bus)
+        self.deliberation = CalmDeliberationEngine()
         self.strengthening.context.bind_memory_provider(lambda query, limit: self.cognition.recall(query, limit=limit, hops=2))
         self.strengthening.interop.bind_secret_resolver(self.vault.get)
         self.migrations = MigrationManager(self.db)
@@ -479,6 +481,7 @@ class V5Runtime:
             "cognitive_core": self.cognition.status(),
             "cognitive_core_running": self.cognition.running,
             "rc8_strengthening": self.strengthening.status(),
+            "rc11_deliberation": self.deliberation.status(),
             "monitors": len(self.monitoring.list()),
             "unread_notifications": len(self.notifications.list(unread_only=True)),
             "mobile_devices": len(self.mobile.list_devices()),
