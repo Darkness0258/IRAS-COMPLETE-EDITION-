@@ -91,7 +91,7 @@ class Settings:
             voice_replies=_bool('IRAS_VOICE_REPLIES', True),
             voice_profile=os.getenv('IRAS_VOICE_PROFILE', 'anime_soft'),
             stt_provider=os.getenv('IRAS_STT_PROVIDER', 'whisper_local'),
-            whisper_model=os.getenv('IRAS_WHISPER_MODEL', 'base.en'),
+            whisper_model=os.getenv('IRAS_WHISPER_MODEL', 'base'),
             listen_seconds=int(os.getenv('IRAS_LISTEN_SECONDS', '6')),
             data_dir=Path(os.getenv('IRAS_DATA_DIR', 'data')),
             log_dir=Path(os.getenv('IRAS_LOG_DIR', 'logs')),

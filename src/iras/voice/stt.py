@@ -4,16 +4,22 @@ from collections import deque
 from pathlib import Path
 import os
 import queue
+import re
 import tempfile
 import threading
 import time
 
+from iras.voice.multilingual_voice import whisper_language_hint
+
+
 class Listener:
-    def __init__(self, model: str = "base.en", seconds: int = 6):
-        self.model_name = model
+    def __init__(self, model: str = "base", seconds: int = 6):
+        self.model_name = "base" if str(model or "").strip().lower() == "base.en" else str(model or "base")
         self.seconds = seconds
         self._model = None
         self._listen_lock = threading.Lock()
+        self.last_language = ""
+        self.last_language_probability = 0.0
 
     @staticmethod
     def _deps():
@@ -88,7 +94,18 @@ class Listener:
         try:
             sf.write(path, audio, sample_rate)
             model = self._ensure_model(WhisperModel)
-            segments, _ = model.transcribe(str(path), vad_filter=True)
+            segments, info = model.transcribe(
+                str(path),
+                vad_filter=True,
+                language=whisper_language_hint(),
+            )
+            self.last_language = str(getattr(info, "language", "") or "")
+            try:
+                self.last_language_probability = float(
+                    getattr(info, "language_probability", 0.0) or 0.0
+                )
+            except (TypeError, ValueError):
+                self.last_language_probability = 0.0
             return " ".join(
                 segment.text.strip()
                 for segment in segments
@@ -99,11 +116,124 @@ class Listener:
             except OSError:
                 pass
 
+    @staticmethod
+    def _normalized(text: str) -> str:
+        return " ".join(re.findall(r"[a-z0-9']+", str(text or "").casefold()))
+
+    @classmethod
+    def _contains_wake(cls, text: str, wake_words: tuple[str, ...]) -> bool:
+        words = set(re.findall(r"[a-z0-9']+", str(text or "").casefold()))
+        return any(str(w).casefold() in words for w in wake_words)
+
+    @classmethod
+    def _end_requested(cls, text: str, end_phrases: tuple[str, ...]) -> bool:
+        normalized = cls._normalized(text)
+        return any(cls._normalized(p) in normalized for p in end_phrases if cls._normalized(p))
+
+    @staticmethod
+    def _strip_wake(text: str, wake_words: tuple[str, ...]) -> str:
+        value = str(text or "").strip()
+        for wake in wake_words:
+            value = re.sub(rf"(?i)\b{re.escape(str(wake))}\b[\s,:;-]*", "", value, count=1)
+        return " ".join(value.split())
+
+    @classmethod
+    def _strip_end(cls, text: str, end_phrases: tuple[str, ...]) -> str:
+        value = str(text or "").strip()
+        normalized = cls._normalized(value)
+        for phrase in end_phrases:
+            norm = cls._normalized(phrase)
+            if norm and norm in normalized:
+                tokens = norm.split()
+                pattern = r"(?i)\b" + r"[\s,.'’!?-]+".join(map(re.escape, tokens)) + r"\b.*$"
+                value = re.sub(pattern, "", value).strip(" ,.!?;:-")
+                break
+        return " ".join(value.split())
+
+    @staticmethod
+    def _env_float(name: str, default: float, minimum: float, maximum: float) -> float:
+        try:
+            value = float(os.getenv(name, str(default)))
+        except ValueError:
+            value = default
+        return max(minimum, min(maximum, value))
+
     def listen_once(self) -> str:
-        return self.listen_phrase(
-            start_timeout=max(4.0, float(self.seconds)),
-            max_seconds=max(8.0, float(self.seconds) * 2),
+        enabled = os.getenv("IRAS_WAKE_SESSION", "true").strip().lower() not in {
+            "0", "false", "no", "off"
+        }
+        if not enabled:
+            return self.listen_phrase(
+                start_timeout=max(4.0, float(self.seconds)),
+                max_seconds=max(8.0, float(self.seconds) * 2),
+            )
+        wake_words = tuple(
+            x.strip().casefold()
+            for x in os.getenv("IRAS_WAKE_WORDS", "iras").split(",")
+            if x.strip()
+        ) or ("iras",)
+        end_phrases = tuple(
+            x.strip()
+            for x in os.getenv(
+                "IRAS_WAKE_END_PHRASES",
+                "done that's all|that's all|done iras|end session",
+            ).split("|")
+            if x.strip()
         )
+        return self.listen_session(
+            wake_words=wake_words,
+            end_phrases=end_phrases,
+            idle_seconds=self._env_float("IRAS_WAKE_IDLE_SECONDS", 3.0, 1.0, 10.0),
+            active_seconds=self._env_float("IRAS_WAKE_ACTIVE_SECONDS", 30.0, 5.0, 120.0),
+        )
+
+    def listen_session(
+        self,
+        *,
+        wake_words: tuple[str, ...] = ("iras",),
+        end_phrases: tuple[str, ...] = ("done that's all", "that's all", "done iras", "end session"),
+        idle_seconds: float = 3.0,
+        active_seconds: float = 30.0,
+    ) -> str:
+        """Capture one short command, extending to a wake-word command session.
+
+        The microphone waits only ``idle_seconds`` for the first utterance. If that
+        utterance contains a wake word, IRAS keeps accepting phrases until the
+        ``active_seconds`` deadline or an end phrase such as "done that's all".
+        """
+        idle_seconds = max(1.0, float(idle_seconds))
+        active_seconds = max(idle_seconds, float(active_seconds))
+        first = self.listen_phrase(
+            start_timeout=idle_seconds,
+            max_seconds=max(3.0, min(12.0, float(self.seconds) * 2)),
+        )
+        if not first:
+            return ""
+        woke = self._contains_wake(first, wake_words)
+        ending = self._end_requested(first, end_phrases)
+        first = self._strip_end(self._strip_wake(first, wake_words), end_phrases)
+        if ending or not woke:
+            return first
+
+        parts = [first] if first else []
+        deadline = time.monotonic() + active_seconds
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            phrase = self.listen_phrase(
+                start_timeout=min(idle_seconds, remaining),
+                max_seconds=max(1.0, min(max(4.0, float(self.seconds) * 2), remaining)),
+            )
+            if not phrase:
+                continue
+            ending = self._end_requested(phrase, end_phrases)
+            cleaned = self._strip_end(self._strip_wake(phrase, wake_words), end_phrases)
+            if cleaned:
+                parts.append(cleaned)
+            if ending:
+                break
+        return " ".join(parts).strip()
 
     def listen_phrase(
         self,

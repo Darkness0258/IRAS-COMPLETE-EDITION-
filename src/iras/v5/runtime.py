@@ -10,9 +10,13 @@ from typing import Any, Callable
 
 from .common import EventBus, SQLiteDB, new_id, utc_now
 from .scheduler import PersistentScheduler
+from .automation_engine import AutomationEngine
+from .cognitive_core import CognitiveCore
+from .strengthening_core import RC8StrengtheningCore
 from .monitoring import ProactiveMonitor, MonitorResult
 from .visual_agent import AdvancedVisualAgent
 from .browser_agent import DedicatedBrowserAgent
+from .web_access import FullWebAccess
 from .workflow import WorkflowRecorder
 from .semantic_memory import SemanticMemory
 from .knowledge_graph import ProjectKnowledgeGraph
@@ -95,9 +99,11 @@ class V5Runtime:
         self.bus = EventBus()
         self.db = SQLiteDB(self.state_dir / "state.db", database_url=database_url)
         self.scheduler = PersistentScheduler(self.db, self.bus)
+        self.automations = AutomationEngine(self.db, self.bus)
         self.monitoring = ProactiveMonitor(self.db, self.bus)
         self.visual = AdvancedVisualAgent()
         self.browser = DedicatedBrowserAgent(self.state_dir / "browser")
+        self.web = FullWebAccess(self.state_dir / "web", bus=self.bus)
         self.workflows = WorkflowRecorder(self.state_dir / "workflows")
         self.semantic_memory = SemanticMemory(self.db)
         self.workspace_manager = CodingWorkspaceManager(self.state_dir / "worktrees")
@@ -126,6 +132,11 @@ class V5Runtime:
         self.profiles = ProfileStore(self.db)
         self.sync = EncryptedSync()
         self.goals = GoalHierarchy(self.db)
+        self.cognition = CognitiveCore(self.db, self.bus)
+        self.cognition.bind_goal_provider(lambda: self.goals.next_actions(20))
+        self.strengthening = RC8StrengtheningCore(self.db, self.bus)
+        self.strengthening.context.bind_memory_provider(lambda query, limit: self.cognition.recall(query, limit=limit, hops=2))
+        self.strengthening.interop.bind_secret_resolver(self.vault.get)
         self.migrations = MigrationManager(self.db)
         self.migrations.apply_all()
         self.orchestration_manager = orchestration_manager
@@ -140,12 +151,17 @@ class V5Runtime:
         return "postgres" if self.db.database_url else "sqlite"
 
     def bind_tool_executor(self, executor: Callable[[str, dict[str, Any]], Any]) -> None:
-        """Bind ToolRegistry.execute so recorded workflows re-enter permission gates."""
+        """Bind ToolRegistry.execute so workflows and automations re-enter permission gates."""
         self._tool_executor = executor
+        self.automations.bind_executor(self.execute_automation)
+
+    def bind_automation_authorizer(self, checker: Callable[[dict[str, Any]], bool] | None) -> None:
+        self.automations.bind_unattended_authorizer(checker)
 
     def _wire_events(self) -> None:
         self.bus.subscribe("monitor.changed", self._notify_monitor_change)
         self.bus.subscribe("monitor.error", self._notify_monitor_error)
+        self.bus.subscribe("automation.finished", self._learn_automation_outcome)
         self.notifications.register_channel(
             "mobile",
             lambda n: self.mobile.push_event(
@@ -225,6 +241,20 @@ class V5Runtime:
             channel="mobile",
         )
 
+    def _learn_automation_outcome(self, event) -> None:
+        payload = dict(getattr(event, "payload", {}) or {})
+        automation_id = str(payload.get("automation_id") or "unknown")
+        ok = bool(payload.get("ok"))
+        source = str(payload.get("source") or "automation")
+        error = str(payload.get("error") or "").strip()
+        summary = f"Automation {automation_id} {'succeeded' if ok else 'failed'} via {source}."
+        if error:
+            summary += " Error: " + error[:1500]
+        try:
+            self.cognition.learn_outcome(summary, success=ok, source="automation")
+        except Exception:
+            pass
+
     def submit_scheduled_prompt(self, prompt: str, row: dict[str, Any]) -> Any:
         if self.orchestration_manager is None:
             raise RuntimeError("No orchestration manager is attached to v5 scheduled autonomy.")
@@ -237,6 +267,42 @@ class V5Runtime:
             },
             requester_device="v5-scheduler",
         )
+
+    def execute_automation(self, row: dict[str, Any], trigger_payload: dict[str, Any]) -> Any:
+        action_kind = str(row.get("action_kind") or "prompt").strip().lower()
+        if action_kind == "workflow":
+            workflow_id = str(row.get("action_ref") or "").strip()
+            if not workflow_id:
+                raise ValueError("Automation workflow id is missing.")
+            return self.replay_workflow(workflow_id)
+        if self.orchestration_manager is None:
+            raise RuntimeError("No orchestration manager is attached to automation execution.")
+        prompt = str(row.get("prompt") or "").strip()
+        if not prompt:
+            raise ValueError("Automation prompt is empty.")
+        context = {
+            "automation": True,
+            "automation_id": row.get("automation_id"),
+            "automation_permission": str(row.get("permission_mode") or "read_only"),
+            "automation_trigger": dict(trigger_payload or {}),
+        }
+        run = self.orchestration_manager.submit_objective(
+            prompt,
+            context=context,
+            requester_device="v5-automation",
+        )
+        run_id = str((run or {}).get("run_id") or "")
+        if not run_id:
+            return run
+        try:
+            timeout = int(os.getenv("IRAS_V5_AUTOMATION_WAIT_SECONDS", "1800"))
+        except ValueError:
+            timeout = 1800
+        finished = self.orchestration_manager.wait(run_id, timeout=max(30, min(timeout, 21600)))
+        status = str((finished or {}).get("status") or "").lower()
+        if status in {"failed", "cancelled", "blocked", "interrupted"}:
+            raise RuntimeError(str((finished or {}).get("error") or f"Automation orchestration ended as {status}."))
+        return finished
 
     def start_research_project(self, question: str) -> dict[str, Any]:
         if self.orchestration_manager is None:
@@ -316,16 +382,30 @@ class V5Runtime:
                 poll_seconds=5.0,
                 max_workers=int(os.getenv("IRAS_V5_SCHEDULER_WORKERS", "4")),
             )
+        if self._tool_executor is not None:
+            self.automations.start(
+                poll_seconds=float(os.getenv("IRAS_V5_AUTOMATION_POLL_SECONDS", "2")),
+                max_workers=int(os.getenv("IRAS_V5_AUTOMATION_WORKERS", "4")),
+            )
+        self.cognition.start(
+            interval_seconds=float(os.getenv("IRAS_V5_COGNITION_TICK_SECONDS", "10"))
+        )
         self.monitoring.start(poll_seconds=float(os.getenv("IRAS_V5_MONITOR_POLL_SECONDS", "15")))
         self._started = True
         self.bus.publish("v5.started", version="5.0.0-rc5")
 
     def stop_services(self) -> None:
         self.scheduler.stop()
+        self.automations.stop()
+        self.cognition.stop()
         self.monitoring.stop()
         self.voice.stop()
         try:
             self.browser.stop()
+        except Exception:
+            pass
+        try:
+            self.web.stop()
         except Exception:
             pass
         self._started = False
@@ -387,12 +467,18 @@ class V5Runtime:
             "scheduler_worker_active": bool(self._started and self.orchestration_manager is not None),
             "browser_available": self.browser.available,
             "browser_running": bool(getattr(self.browser, "_context", None)),
+            "full_web_access": self.web.status(),
             "docker_sandbox_available": self.sandbox.docker_available,
             "sandbox_local_fallback": self.sandbox.allow_local_fallback,
             "vault_backend": self.vault.backend,
             "connected_connectors": [x["connector_id"] for x in self.connectors.list() if x["connected"]],
             "connector_credentials_ready": [x["connector_id"] for x in self.connectors.list() if x.get("credentials", {}).get("ready")],
             "scheduled_jobs": len(self.scheduler.list()),
+            "automations": len(self.automations.list()),
+            "automation_worker_active": self.automations.running,
+            "cognitive_core": self.cognition.status(),
+            "cognitive_core_running": self.cognition.running,
+            "rc8_strengthening": self.strengthening.status(),
             "monitors": len(self.monitoring.list()),
             "unread_notifications": len(self.notifications.list(unread_only=True)),
             "mobile_devices": len(self.mobile.list_devices()),

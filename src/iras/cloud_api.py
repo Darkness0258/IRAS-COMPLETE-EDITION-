@@ -109,6 +109,11 @@ from iras.voice.humanize import (
 from iras.voice.profiles import (
     get_profile,
 )
+from iras.voice.multilingual_voice import (
+    language_catalog,
+    resolve_voice,
+    status as multilingual_voice_status,
+)
 
 from iras.providers.device_ollama import DeviceOllamaProvider
 from iras.providers.multi_provider import MultiProvider, ProviderSlot
@@ -259,11 +264,19 @@ class SoftwareInstallIn(BaseModel):
     operation: str = Field(default="install", pattern="^(install|update|uninstall)$")
 
 
+class AutomationWebhookIn(BaseModel):
+    event_id: str = Field(min_length=1, max_length=200)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
 class TTSIn(BaseModel):
     text: str = Field(
         min_length=1,
         max_length=6000,
     )
+    language: str = Field(default="", max_length=40)
+    voice_gender: str = Field(default="", pattern="^(|female|male)$")
+    mood: str = Field(default="", pattern="^(|calm|warm|bright|neutral)$")
 
 
 class DevicePairIn(BaseModel):
@@ -348,6 +361,31 @@ def _authorized(
                 "access token."
             ),
         )
+
+
+@app.post("/v1/automation-hooks/{hook_id}")
+def receive_automation_hook(
+    hook_id: str,
+    body: AutomationWebhookIn,
+    authorization: str | None = Header(default=None),
+):
+    raw = str(authorization or "").strip()
+    token = raw[7:].strip() if raw.lower().startswith("bearer ") else ""
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing webhook bearer token.")
+    try:
+        return v5_runtime.strengthening.webhooks.receive(
+            hook_id,
+            token,
+            event_id=body.event_id,
+            payload=body.payload,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Webhook not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _device_authorized(
@@ -4028,6 +4066,25 @@ def chat_stream(
     )
 
 
+@app.get("/v1/voice/catalog")
+def voice_catalog(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {"status": multilingual_voice_status(), "voices": language_catalog()}
+
+
+@app.post("/v1/voice/resolve")
+def voice_resolve(body: TTSIn, authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    profile = get_profile(settings.voice_profile)
+    return resolve_voice(
+        body.text,
+        preferred_language=body.language or None,
+        gender=body.voice_gender or None,
+        mood=body.mood or None,
+        english_voice=profile.voice,
+    ).as_dict()
+
+
 @app.post("/v1/tts")
 async def tts(
     body: TTSIn,
@@ -4055,15 +4112,22 @@ async def tts(
     profile = get_profile(
         settings.voice_profile
     )
+    selection = resolve_voice(
+        clean_text,
+        preferred_language=body.language or None,
+        gender=body.voice_gender or None,
+        mood=body.mood or None,
+        english_voice=profile.voice,
+    )
 
     try:
         communicate = (
             edge_tts.Communicate(
                 clean_text,
-                profile.voice,
-                rate=profile.rate,
-                volume=profile.volume,
-                pitch=profile.pitch,
+                selection.voice,
+                rate=selection.rate,
+                volume=selection.volume,
+                pitch=selection.pitch,
             )
         )
 
@@ -4093,9 +4157,10 @@ async def tts(
                 "Cache-Control": (
                     "no-store"
                 ),
-                "X-IRAS-Voice": (
-                    profile.voice
-                ),
+                "X-IRAS-Voice": selection.voice,
+                "X-IRAS-Language": selection.language,
+                "X-IRAS-Locale": selection.locale,
+                "X-IRAS-Voice-Mood": selection.mood,
                 (
                     "X-IRAS-"
                     "Voice-Profile"

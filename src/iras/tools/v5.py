@@ -9,6 +9,13 @@ from iras.tools.base import Tool
 from iras.v5.knowledge_graph import ProjectKnowledgeGraph
 from iras.v5.resource_router import ResourceSnapshot
 from iras.v5.skills import SkillManifest
+from iras.v5.web_access import web_action_risk
+from iras.voice.multilingual_voice import (
+    detect_language as detect_spoken_language,
+    language_catalog as spoken_language_catalog,
+    resolve_voice as resolve_spoken_voice,
+    status as multilingual_voice_status,
+)
 
 
 def _schema(properties=None, required=None, *, additional=False):
@@ -28,11 +35,54 @@ def _str(max_len=4000):
     return {"type": "string", "maxLength": max_len}
 
 
+def _rc8_context_ingest_permission(args: dict[str, Any]) -> PermissionLevel:
+    return PermissionLevel.SYSTEM_ACTION if bool(args.get("trusted")) else PermissionLevel.SAFE_ACTION
+
+
+def _rc8_mcp_permission(args: dict[str, Any]) -> PermissionLevel:
+    return PermissionLevel.SYSTEM_ACTION if str(args.get("method") or "").strip() == "tools/call" else PermissionLevel.READ
+
+
+def _web_permission_from_risk(risk: str) -> PermissionLevel:
+    value = str(risk or "read").lower()
+    if value == "critical":
+        return PermissionLevel.CRITICAL
+    if value == "system":
+        return PermissionLevel.SYSTEM_ACTION
+    return PermissionLevel.READ
+
+
+def _web_click_permission(args: dict[str, Any]) -> PermissionLevel:
+    return _web_permission_from_risk(web_action_risk({"action": "click_text", **dict(args or {})}))
+
+
+def _web_batch_permission(args: dict[str, Any]) -> PermissionLevel:
+    return _web_permission_from_risk(web_action_risk(list(args.get("steps") or [])))
+
+
+def _web_press_permission(args: dict[str, Any]) -> PermissionLevel:
+    return _web_permission_from_risk(web_action_risk({"action": "press", **dict(args or {})}))
+
+
 def _connector_permission(args: dict[str, Any]) -> PermissionLevel:
     capability = str(args.get("capability") or "").lower()
     if any(token in capability for token in ("send", "write", "create", "update", "delete", "mutate")):
         return PermissionLevel.SYSTEM_ACTION
     return PermissionLevel.READ
+
+
+def _automation_mode_level(mode: str) -> PermissionLevel:
+    return {
+        "read_only": PermissionLevel.READ,
+        "safe_action": PermissionLevel.SAFE_ACTION,
+        "system_action": PermissionLevel.SYSTEM_ACTION,
+        "critical": PermissionLevel.CRITICAL,
+    }.get(str(mode or "read_only").strip().lower(), PermissionLevel.CRITICAL)
+
+
+def _automation_definition_permission(args: dict[str, Any]) -> PermissionLevel:
+    level = _automation_mode_level(str(args.get("permission_mode") or "read_only"))
+    return PermissionLevel.SAFE_ACTION if level == PermissionLevel.READ else PermissionLevel.CRITICAL
 
 
 def make_tools(v5):
@@ -44,6 +94,15 @@ def make_tools(v5):
 
     t: list[Tool] = []
     add = t.append
+
+    def automation_run_permission(args: dict[str, Any]) -> PermissionLevel:
+        automation_id = str(args.get("automation_id") or "")
+        if not automation_id:
+            return PermissionLevel.CRITICAL
+        try:
+            return _automation_mode_level(v5.automations.required_permission(automation_id))
+        except Exception:
+            return PermissionLevel.CRITICAL
 
     # Operating-layer / release / migrations -------------------------------------------------
     add(Tool("v5_status", "Show complete IRAS v5 operating-layer and feature status.", _schema(), lambda: v5.status(), PermissionLevel.READ))
@@ -64,6 +123,35 @@ def make_tools(v5):
     add(Tool("v5_schedule_pause", "Pause a persistent schedule.", _schema({"job_id": _str(100)}, ["job_id"]), lambda job_id: v5.scheduler.pause(job_id), PermissionLevel.SAFE_ACTION))
     add(Tool("v5_schedule_resume", "Resume a persistent schedule.", _schema({"job_id": _str(100)}, ["job_id"]), lambda job_id: v5.scheduler.resume(job_id), PermissionLevel.SAFE_ACTION))
     add(Tool("v5_schedule_cancel", "Cancel a persistent schedule without deleting its audit record.", _schema({"job_id": _str(100)}, ["job_id"]), lambda job_id: (v5.scheduler.cancel(job_id) or {"cancelled": job_id}), PermissionLevel.SYSTEM_ACTION))
+
+    # RC6 automation engine ------------------------------------------------------------------
+    add(Tool("v5_automation_list", "List persistent IRAS automations and their trigger/authority state.", _schema({"enabled_only": {"type": "boolean"}}), lambda enabled_only=False: v5.automations.list(enabled_only=enabled_only), PermissionLevel.READ))
+    add(Tool("v5_automation_get", "Read one persistent IRAS automation.", _schema({"automation_id": _str(100)}, ["automation_id"]), lambda automation_id: v5.automations.get(automation_id), PermissionLevel.READ))
+    add(Tool(
+        "v5_automation_add",
+        "Create a persistent manual/once/interval/event automation. State-changing unattended runs still require locally armed autonomous Master Control.",
+        _schema({
+            "name": {"type": "string", "minLength": 1, "maxLength": 160},
+            "action_kind": {"type": "string", "enum": ["prompt", "workflow"]},
+            "prompt": _str(12000),
+            "action_ref": _str(160),
+            "permission_mode": {"type": "string", "enum": ["read_only", "safe_action", "system_action", "critical"]},
+            "trigger_type": {"type": "string", "enum": ["manual", "interval", "once", "event"]},
+            "trigger": _obj(),
+        }, ["name"]),
+        lambda name, action_kind="prompt", prompt="", action_ref="", permission_mode="read_only", trigger_type="manual", trigger=None: v5.automations.add(
+            name=name, action_kind=action_kind, prompt=prompt, action_ref=action_ref,
+            permission_mode=permission_mode, trigger_type=trigger_type, trigger=trigger or {},
+        ),
+        PermissionLevel.SAFE_ACTION,
+        permission_resolver=_automation_definition_permission,
+    ))
+    add(Tool("v5_automation_run", "Run one automation now through its declared permission cap and normal ToolRegistry gates.", _schema({"automation_id": _str(100), "payload": _obj()}, ["automation_id"]), lambda automation_id, payload=None: v5.automations.run_now(automation_id, payload=payload or {}, interactive=True), PermissionLevel.READ, permission_resolver=automation_run_permission))
+    add(Tool("v5_automation_pause", "Pause one automation.", _schema({"automation_id": _str(100)}, ["automation_id"]), lambda automation_id: v5.automations.pause(automation_id), PermissionLevel.SAFE_ACTION))
+    add(Tool("v5_automation_resume", "Resume one automation.", _schema({"automation_id": _str(100)}, ["automation_id"]), lambda automation_id: v5.automations.resume(automation_id), PermissionLevel.SAFE_ACTION))
+    add(Tool("v5_automation_cancel", "Disable one automation while preserving its execution record.", _schema({"automation_id": _str(100)}, ["automation_id"]), lambda automation_id: v5.automations.cancel(automation_id), PermissionLevel.SYSTEM_ACTION))
+    add(Tool("v5_automation_delete", "Delete one automation definition after critical approval.", _schema({"automation_id": _str(100)}, ["automation_id"]), lambda automation_id: (v5.automations.delete(automation_id) or {"deleted": automation_id}), PermissionLevel.CRITICAL))
+    add(Tool("v5_automation_event", "Emit a named automation event with bounded JSON payload. Matching jobs still enforce their own authority requirements.", _schema({"event": {"type": "string", "minLength": 1, "maxLength": 200}, "payload": _obj()}, ["event"]), lambda event, payload=None: v5.automations.emit_event(event, payload or {}, interactive=True), PermissionLevel.SAFE_ACTION))
 
     # Monitoring -----------------------------------------------------------------------------
     add(Tool("v5_monitor_list", "List proactive monitors.", _schema(), lambda: v5.monitoring.list(), PermissionLevel.READ))
@@ -130,9 +218,115 @@ def make_tools(v5):
     add(Tool("v5_browser_upload", "Attach a local file to one browser file input.", _schema({"selector": _str(1000), "path": _str(1000), "tab_id": _str(100)}, ["selector", "path"]), lambda selector, path, tab_id="": (v5.browser.upload(selector, path, tab_id=tab_id or None) or {"uploaded": path}), PermissionLevel.SYSTEM_ACTION))
     add(Tool("v5_browser_submit", "Submit one browser element only after critical approval.", _schema({"selector": _str(1000), "tab_id": _str(100)}, ["selector"]), lambda selector, tab_id="": (v5.browser.submit(selector, approved=True, tab_id=tab_id or None) or {"submitted": selector}), PermissionLevel.CRITICAL))
 
+
+    # RC10 full authorized web operator -------------------------------------------------------
+    add(Tool("v5_web_status", "Show persistent authorized web-operator status, public/private network policy and owner domain rules.", _schema(), lambda: v5.web.status(), PermissionLevel.READ))
+    add(Tool("v5_web_start", "Start the persistent IRAS-owned Playwright web profile. It does not take over the user's normal Chrome profile.", _schema({"headless": {"type": "boolean"}, "profile": _str(80)}), lambda headless=True, profile="owner": v5.web.start(headless=headless, profile=profile or "owner"), PermissionLevel.SAFE_ACTION))
+    add(Tool("v5_web_stop", "Stop the RC10 web browser while preserving its IRAS-owned persistent profile.", _schema(), lambda: v5.web.stop(), PermissionLevel.SAFE_ACTION))
+    add(Tool("v5_web_search", "Search the public web through the persistent browser using Bing, Google or DuckDuckGo.", _schema({"query": {"type": "string", "minLength": 1, "maxLength": 4000}, "engine": {"type": "string", "enum": ["", "bing", "google", "duckduckgo"]}, "tab_id": _str(100)}, ["query"]), lambda query, engine="", tab_id="": v5.web.search(query, engine=engine, tab_id=tab_id or None), PermissionLevel.READ))
+    add(Tool("v5_web_navigate", "Navigate broadly across owner-authorized public HTTP/HTTPS sites. Private/local targets remain blocked unless explicitly enabled.", _schema({"url": {"type": "string", "minLength": 1, "maxLength": 4000}, "tab_id": _str(100), "wait": {"type": "string", "enum": ["domcontentloaded", "load", "networkidle"]}, "timeout_ms": {"type": "integer", "minimum": 3000, "maximum": 180000}}, ["url"]), lambda url, tab_id="", wait="domcontentloaded", timeout_ms=45000: v5.web.navigate(url, tab_id=tab_id or None, wait=wait, timeout_ms=timeout_ms), PermissionLevel.READ))
+    add(Tool("v5_web_snapshot", "Read a bounded semantic snapshot of page text, links, buttons, fields and forms. Password values/cookies are never exposed.", _schema({"tab_id": _str(100), "text_limit": {"type": "integer", "minimum": 1000, "maximum": 100000}, "item_limit": {"type": "integer", "minimum": 10, "maximum": 400}}), lambda tab_id="", text_limit=40000, item_limit=120: v5.web.snapshot(tab_id=tab_id or None, text_limit=text_limit, item_limit=item_limit), PermissionLevel.READ))
+    add(Tool("v5_web_extract", "Extract bounded visible text from one page selector.", _schema({"selector": _str(1000), "tab_id": _str(100), "limit": {"type": "integer", "minimum": 1, "maximum": 200000}}), lambda selector="body", tab_id="", limit=60000: v5.web.extract(selector, tab_id=tab_id or None, limit=limit), PermissionLevel.READ))
+    add(Tool("v5_web_tabs", "List persistent web-operator tabs.", _schema(), lambda: v5.web.tabs(), PermissionLevel.READ))
+    add(Tool("v5_web_new_tab", "Open a new persistent web tab, optionally navigating it.", _schema({"url": _str(4000)}), lambda url="": {"tab_id": v5.web.new_tab(url)[0]}, PermissionLevel.READ))
+    add(Tool("v5_web_switch_tab", "Switch the active persistent web tab.", _schema({"tab_id": _str(100)}, ["tab_id"]), lambda tab_id: v5.web.switch_tab(tab_id), PermissionLevel.SAFE_ACTION))
+    add(Tool("v5_web_close_tab", "Close one persistent web tab.", _schema({"tab_id": _str(100)}, ["tab_id"]), lambda tab_id: v5.web.close_tab(tab_id), PermissionLevel.SAFE_ACTION))
+    add(Tool("v5_web_back", "Navigate the current web tab backward.", _schema({"tab_id": _str(100)}), lambda tab_id="": v5.web.back(tab_id=tab_id or None), PermissionLevel.READ))
+    add(Tool("v5_web_forward", "Navigate the current web tab forward.", _schema({"tab_id": _str(100)}), lambda tab_id="": v5.web.forward(tab_id=tab_id or None), PermissionLevel.READ))
+    add(Tool("v5_web_reload", "Reload the current web tab.", _schema({"tab_id": _str(100)}), lambda tab_id="": v5.web.reload(tab_id=tab_id or None), PermissionLevel.READ))
+    add(Tool("v5_web_wait_text", "Wait for visible text on a web page.", _schema({"text": _str(5000), "timeout_ms": {"type": "integer", "minimum": 500, "maximum": 120000}, "tab_id": _str(100)}, ["text"]), lambda text, timeout_ms=20000, tab_id="": v5.web.wait_text(text, timeout_ms=timeout_ms, tab_id=tab_id or None), PermissionLevel.READ))
+    add(Tool("v5_web_wait_load", "Wait for a browser load state.", _schema({"state": {"type": "string", "enum": ["load", "domcontentloaded", "networkidle"]}, "timeout_ms": {"type": "integer", "minimum": 1000, "maximum": 180000}, "tab_id": _str(100)}), lambda state="domcontentloaded", timeout_ms=45000, tab_id="": v5.web.wait_load_state(state, timeout_ms=timeout_ms, tab_id=tab_id or None), PermissionLevel.READ))
+    add(Tool("v5_web_click_text", "Click visible page text. High-impact target labels such as purchase/payment/publish/delete automatically escalate to CRITICAL.", _schema({"text": _str(2000), "exact": {"type": "boolean"}, "tab_id": _str(100)}, ["text"]), lambda text, exact=False, tab_id="": v5.web.click_text(text, exact=exact, tab_id=tab_id or None), PermissionLevel.SYSTEM_ACTION, permission_resolver=_web_click_permission))
+    add(Tool("v5_web_click_role", "Click an accessible role/name target. High-impact names automatically escalate to CRITICAL.", _schema({"role": _str(80), "name": _str(2000), "exact": {"type": "boolean"}, "tab_id": _str(100)}, ["role", "name"]), lambda role, name, exact=False, tab_id="": v5.web.click_role(role, name, exact=exact, tab_id=tab_id or None), PermissionLevel.SYSTEM_ACTION, permission_resolver=_web_click_permission))
+    add(Tool("v5_web_click_selector", "Click a DOM selector. High-impact-looking selectors automatically escalate to CRITICAL.", _schema({"selector": _str(1000), "tab_id": _str(100)}, ["selector"]), lambda selector, tab_id="": v5.web.click_selector(selector, tab_id=tab_id or None), PermissionLevel.SYSTEM_ACTION, permission_resolver=_web_click_permission))
+    add(Tool("v5_web_fill_label", "Fill a form field by its accessible label without submitting it.", _schema({"label": _str(1000), "value": _str(50000), "exact": {"type": "boolean"}, "tab_id": _str(100)}, ["label", "value"]), lambda label, value, exact=False, tab_id="": v5.web.fill_label(label, value, exact=exact, tab_id=tab_id or None), PermissionLevel.SYSTEM_ACTION))
+    add(Tool("v5_web_fill_placeholder", "Fill a form field by placeholder without submitting it.", _schema({"placeholder": _str(1000), "value": _str(50000), "exact": {"type": "boolean"}, "tab_id": _str(100)}, ["placeholder", "value"]), lambda placeholder, value, exact=False, tab_id="": v5.web.fill_placeholder(placeholder, value, exact=exact, tab_id=tab_id or None), PermissionLevel.SYSTEM_ACTION))
+    add(Tool("v5_web_fill_selector", "Fill a DOM field by selector without submitting it.", _schema({"selector": _str(1000), "value": _str(50000), "tab_id": _str(100)}, ["selector", "value"]), lambda selector, value, tab_id="": v5.web.fill_selector(selector, value, tab_id=tab_id or None), PermissionLevel.SYSTEM_ACTION))
+    add(Tool("v5_web_select_label", "Select an option in a labelled web form field.", _schema({"label": _str(1000), "value": _str(5000), "tab_id": _str(100)}, ["label", "value"]), lambda label, value, tab_id="": v5.web.select_label(label, value, tab_id=tab_id or None), PermissionLevel.SYSTEM_ACTION))
+    add(Tool("v5_web_check_label", "Check or uncheck a labelled web control.", _schema({"label": _str(1000), "checked": {"type": "boolean"}, "tab_id": _str(100)}, ["label"]), lambda label, checked=True, tab_id="": v5.web.check_label(label, checked=checked, tab_id=tab_id or None), PermissionLevel.SYSTEM_ACTION))
+    add(Tool("v5_web_press", "Send a bounded keyboard key/shortcut to the active page or one selector.", _schema({"key": _str(120), "selector": _str(1000), "tab_id": _str(100)}, ["key"]), lambda key, selector="", tab_id="": v5.web.press(key, selector=selector, tab_id=tab_id or None), PermissionLevel.SYSTEM_ACTION, permission_resolver=_web_press_permission))
+    add(Tool("v5_web_scroll", "Scroll a web page without changing remote state.", _schema({"direction": {"type": "string", "enum": ["up", "down", "left", "right"]}, "pixels": {"type": "integer", "minimum": 1, "maximum": 20000}, "tab_id": _str(100)}), lambda direction="down", pixels=900, tab_id="": v5.web.scroll(direction=direction, pixels=pixels, tab_id=tab_id or None), PermissionLevel.READ))
+    add(Tool("v5_web_upload", "Attach an authorized local file to a webpage. Credential/key files are blocked by default.", _schema({"selector": _str(1000), "path": _str(2000), "tab_id": _str(100)}, ["selector", "path"]), lambda selector, path, tab_id="": v5.web.upload(selector, path, tab_id=tab_id or None), PermissionLevel.SYSTEM_ACTION))
+    add(Tool("v5_web_download_selector", "Download a file by clicking one selector and save it in the IRAS web-download workspace with a SHA-256 receipt.", _schema({"selector": _str(1000), "filename": _str(240), "tab_id": _str(100)}, ["selector"]), lambda selector, filename="", tab_id="": v5.web.download_selector(selector, filename=filename, tab_id=tab_id or None), PermissionLevel.SYSTEM_ACTION))
+    add(Tool("v5_web_download_text", "Download a file by visible link/button text and save a SHA-256 receipt.", _schema({"text": _str(2000), "filename": _str(240), "exact": {"type": "boolean"}, "tab_id": _str(100)}, ["text"]), lambda text, filename="", exact=False, tab_id="": v5.web.download_text(text, filename=filename, exact=exact, tab_id=tab_id or None), PermissionLevel.SYSTEM_ACTION))
+    add(Tool("v5_web_downloads", "List bounded web download receipts without reading file contents.", _schema({"limit": {"type": "integer", "minimum": 1, "maximum": 10000}}), lambda limit=100: v5.web.downloads(limit=limit), PermissionLevel.READ))
+    add(Tool("v5_web_screenshot", "Capture the active webpage into the controlled IRAS web screenshot directory.", _schema({"name": _str(240), "full_page": {"type": "boolean"}, "tab_id": _str(100)}), lambda name="", full_page=True, tab_id="": v5.web.screenshot(name=name, full_page=full_page, tab_id=tab_id or None), PermissionLevel.READ))
+    add(Tool("v5_web_challenge", "Detect CAPTCHA, MFA and anti-bot challenges. IRAS reports them for human intervention instead of bypassing them.", _schema({"tab_id": _str(100)}), lambda tab_id="": v5.web.challenge(tab_id=tab_id or None), PermissionLevel.READ))
+    add(Tool("v5_web_session_status", "Show persistent signed-in session domains/counts without exposing cookie values.", _schema(), lambda: v5.web.session_status(), PermissionLevel.READ))
+    add(Tool("v5_web_domain_rules", "List owner web-domain allow/deny rules.", _schema(), lambda: v5.web.domain_rules(), PermissionLevel.READ))
+    add(Tool("v5_web_domain_rule", "Set an owner web-domain allow/deny/inherit rule. This does not override the private-network boundary.", _schema({"domain": _str(253), "rule": {"type": "string", "enum": ["allow", "deny", "inherit"]}}, ["domain", "rule"]), lambda domain, rule: v5.web.set_domain_rule(domain, rule), PermissionLevel.SYSTEM_ACTION))
+    add(Tool("v5_web_submit", "Perform a consequential web submit after CRITICAL authorization. CAPTCHA/MFA/anti-bot challenges are never bypassed.", _schema({"selector": _str(1000), "tab_id": _str(100)}, ["selector"]), lambda selector, tab_id="": v5.web.submit(selector, approved=True, tab_id=tab_id or None), PermissionLevel.CRITICAL))
+    add(Tool("v5_web_login_vault", "Log in to an authorized website using username/password references from the IRAS vault. Raw credentials never appear in tool arguments/results. CAPTCHA/MFA still requires the user.", _schema({"url": _str(4000), "username_ref": _str(200), "password_ref": _str(200), "username_selector": _str(1000), "password_selector": _str(1000), "submit_selector": _str(1000), "tab_id": _str(100)}, ["url", "username_ref", "password_ref", "username_selector", "password_selector", "submit_selector"]), lambda url, username_ref, password_ref, username_selector, password_selector, submit_selector, tab_id="": _web_login_vault(v5, url, username_ref, password_ref, username_selector, password_selector, submit_selector, tab_id or None), PermissionLevel.CRITICAL))
+    add(Tool("v5_web_batch", "Run up to 50 bounded web operations in one permissioned batch. The ToolRegistry automatically applies the strongest permission required by the batch; arbitrary JavaScript is not supported.", _schema({"steps": {"type": "array", "items": _obj(), "minItems": 1, "maxItems": 50}}, ["steps"]), lambda steps: v5.web.batch(steps, approved=True), PermissionLevel.READ, permission_resolver=_web_batch_permission))
+
+    # RC9 multilingual language + voice -------------------------------------------------------
+    add(Tool("v5_language_status", "Show IRAS multilingual STT/TTS mode, calming voice preset and supported language catalog.", _schema(), lambda: multilingual_voice_status(), PermissionLevel.READ))
+    add(Tool("v5_language_catalog", "List supported languages/locales with IRAS's preferred female neural voices.", _schema(), lambda: spoken_language_catalog(), PermissionLevel.READ))
+    add(Tool("v5_language_detect", "Detect the dominant language of text using local script/marker heuristics without sending it to another service.", _schema({"text": {"type": "string", "minLength": 1, "maxLength": 50000}, "preferred": _str(40)}, ["text"]), lambda text, preferred="auto": {"language": detect_spoken_language(text, preferred=preferred)[0], "confidence": detect_spoken_language(text, preferred=preferred)[1], "reason": detect_spoken_language(text, preferred=preferred)[2]}, PermissionLevel.READ))
+    add(Tool("v5_voice_resolve", "Resolve the calming native neural voice IRAS would use for one text response.", _schema({"text": {"type": "string", "minLength": 1, "maxLength": 50000}, "preferred_language": _str(40), "gender": {"type": "string", "enum": ["female"]}, "mood": {"type": "string", "enum": ["calm", "warm", "bright", "neutral"]}}, ["text"]), lambda text, preferred_language="roman-urdu", gender="female", mood="calm": resolve_spoken_voice(text, preferred_language=preferred_language, gender=gender, mood=mood).as_dict(), PermissionLevel.READ))
+
     # Voice + visual fusion ------------------------------------------------------------------
     add(Tool("v5_voice_status", "Inspect full-duplex voice runtime state and recent turn count.", _schema(), lambda: _voice_status(v5), PermissionLevel.READ))
     add(Tool("v5_voice_barge_in", "Interrupt current IRAS speech output.", _schema(), lambda: {"interrupted": v5.voice.barge_in()}, PermissionLevel.SAFE_ACTION))
+
+    # RC7 cognitive core ---------------------------------------------------------------------
+    add(Tool("v5_cognition_status", "Inspect continuous cognitive state, associative memory, neurons, drives and intentions.", _schema(), lambda: v5.cognition.status(), PermissionLevel.READ))
+    add(Tool("v5_cognition_drives", "Read persistent cognitive drive strengths.", _schema(), lambda: v5.cognition.drives(), PermissionLevel.READ))
+    add(Tool("v5_cognition_set_drive", "Adjust one persistent cognitive drive. This changes internal goal weighting but grants no external authority.", _schema({"name": {"type": "string", "minLength": 2, "maxLength": 64}, "value": {"type": "number", "minimum": 0, "maximum": 1}}, ["name", "value"]), lambda name, value: v5.cognition.set_drive(name, value), PermissionLevel.SYSTEM_ACTION))
+    add(Tool("v5_cognition_remember", "Store a persistent cognitive memory with associative concept-neuron links.", _schema({"text": {"type": "string", "minLength": 1, "maxLength": 100000}, "kind": _str(80), "source": _str(160), "importance": {"type": "number", "minimum": 0, "maximum": 1}, "confidence": {"type": "number", "minimum": 0, "maximum": 1}}, ["text"]), lambda text, kind="experience", source="agent", importance=.5, confidence=.8: v5.cognition.remember(text, kind=kind, source=source, importance=importance, confidence=confidence), PermissionLevel.SAFE_ACTION))
+    add(Tool("v5_cognition_recall", "Associatively recall cognitive memories by propagating activation through concept neurons.", _schema({"query": {"type": "string", "minLength": 1, "maxLength": 12000}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}, "hops": {"type": "integer", "minimum": 0, "maximum": 6}}, ["query"]), lambda query, limit=10, hops=2: v5.cognition.recall(query, limit=limit, hops=hops), PermissionLevel.READ))
+    add(Tool("v5_cognition_propagate", "Inspect concept-neuron signal propagation and activation strengths.", _schema({"seed": {"type": "string", "minLength": 1, "maxLength": 12000}, "hops": {"type": "integer", "minimum": 0, "maximum": 6}, "limit": {"type": "integer", "minimum": 1, "maximum": 200}}, ["seed"]), lambda seed, hops=2, limit=40: v5.cognition.propagate(seed, hops=hops, limit=limit), PermissionLevel.READ))
+    add(Tool("v5_cognition_reason", "Run hybrid deductive + inductive reasoning with fuzzy confidence and associative memory evidence.", _schema({"question": {"type": "string", "minLength": 1, "maxLength": 12000}, "facts": _obj(), "rules": {"type": "array", "items": _obj(), "maxItems": 200}, "examples": {"type": "array", "items": _obj(), "maxItems": 1000}, "memory_limit": {"type": "integer", "minimum": 1, "maximum": 50}}, ["question"]), lambda question, facts=None, rules=None, examples=None, memory_limit=8: v5.cognition.reason(question, facts=facts or {}, rules=rules or [], examples=examples or [], memory_limit=memory_limit), PermissionLevel.READ))
+    add(Tool("v5_cognition_learn", "Learn from an observed outcome and reinforce or weaken associated cognitive memory.", _schema({"summary": {"type": "string", "minLength": 1, "maxLength": 100000}, "success": {"type": "boolean"}, "source": _str(160), "importance": {"type": "number", "minimum": 0, "maximum": 1}}, ["summary", "success"]), lambda summary, success, source="outcome", importance=.7: v5.cognition.learn_outcome(summary, success=success, source=source, importance=importance), PermissionLevel.SAFE_ACTION))
+    add(Tool("v5_cognition_intentions", "List self-generated internal intentions. Intentions do not grant tool authority.", _schema({"status": _str(32), "limit": {"type": "integer", "minimum": 1, "maximum": 500}}), lambda status="", limit=100: v5.cognition.intentions(status=status or None, limit=limit), PermissionLevel.READ))
+    add(Tool("v5_cognition_create_intention", "Create an internal intention using fuzzy willingness scoring.", _schema({"title": {"type": "string", "minLength": 1, "maxLength": 240}, "objective": {"type": "string", "minLength": 1, "maxLength": 12000}, "drive": _str(80), "priority": {"type": "number", "minimum": 0, "maximum": 1}, "confidence": {"type": "number", "minimum": 0, "maximum": 1}, "risk": {"type": "number", "minimum": 0, "maximum": 1}, "novelty": {"type": "number", "minimum": 0, "maximum": 1}}, ["title", "objective"]), lambda title, objective, drive="completion", priority=.5, confidence=.7, risk=.15, novelty=.5: v5.cognition.create_intention(title, objective, drive=drive, priority=priority, confidence=confidence, risk=risk, novelty=novelty), PermissionLevel.SAFE_ACTION))
+    add(Tool("v5_cognition_resolve_intention", "Accept, complete, dismiss or fail one internal intention.", _schema({"intention_id": _str(100), "status": {"type": "string", "enum": ["accepted", "completed", "dismissed", "failed"]}}, ["intention_id", "status"]), lambda intention_id, status: v5.cognition.resolve_intention(intention_id, status), PermissionLevel.SYSTEM_ACTION))
+    add(Tool("v5_cognition_create_idea", "Create a novel idea brief by recombining associated concepts and memories.", _schema({"topic": {"type": "string", "minLength": 1, "maxLength": 12000}, "limit": {"type": "integer", "minimum": 2, "maximum": 12}}, ["topic"]), lambda topic, limit=6: v5.cognition.create_idea(topic, limit=limit), PermissionLevel.SAFE_ACTION))
+    add(Tool("v5_cognition_tick", "Run one bounded cognitive cycle now: inspect goals, consolidate learning and form intentions.", _schema(), lambda: v5.cognition.tick(), PermissionLevel.SAFE_ACTION))
+
+
+    # RC8 production strengthening ------------------------------------------------------------
+    add(Tool("v5_rc8_status", "Inspect RC8 durability, context, eval, interoperability, webhook, provenance and trace status.", _schema(), lambda: v5.strengthening.status(), PermissionLevel.READ))
+
+    # Durable execution / crash-resume checkpoints
+    add(Tool("v5_rc8_durable_list", "List durable long-horizon execution journals.", _schema({"limit": {"type": "integer", "minimum": 1, "maximum": 1000}}), lambda limit=100: v5.strengthening.durable.list(limit), PermissionLevel.READ))
+    add(Tool("v5_rc8_durable_create", "Create an idempotent crash-resume execution journal. This does not itself grant tool authority.", _schema({"objective": {"type": "string", "minLength": 1, "maxLength": 12000}, "run_key": _str(200), "metadata": _obj()}, ["objective"]), lambda objective, run_key="", metadata=None: v5.strengthening.durable.create(objective, run_key=run_key, metadata=metadata or {}), PermissionLevel.SAFE_ACTION))
+    add(Tool("v5_rc8_durable_checkpoint", "Persist a durable execution checkpoint with an optional idempotency key.", _schema({"run_id": _str(100), "name": _str(240), "input_data": _obj(), "output": {}, "status": _str(40), "error": _str(4000), "idempotency_key": _str(240)}, ["run_id", "name"]), lambda run_id, name, input_data=None, output=None, status="succeeded", error="", idempotency_key="": v5.strengthening.durable.checkpoint(run_id, name, input_data=input_data or {}, output=output, status=status, error=error, idempotency_key=idempotency_key), PermissionLevel.SAFE_ACTION))
+    add(Tool("v5_rc8_durable_recovery", "Build a recovery plan from the last durable checkpoint without replaying side effects.", _schema({"run_id": _str(100)}, ["run_id"]), lambda run_id: v5.strengthening.durable.recovery_plan(run_id), PermissionLevel.READ))
+    add(Tool("v5_rc8_durable_resume", "Resume a paused/waiting durable journal. Real actions remain behind their existing permission gates.", _schema({"run_id": _str(100)}, ["run_id"]), lambda run_id: v5.strengthening.durable.resume(run_id), PermissionLevel.SAFE_ACTION))
+    add(Tool("v5_rc8_durable_set_status", "Mark durable work running/paused/waiting/succeeded/failed/cancelled.", _schema({"run_id": _str(100), "status": {"type": "string", "enum": ["running", "paused", "waiting", "succeeded", "failed", "cancelled"]}, "result": {}, "error": _str(4000)}, ["run_id", "status"]), lambda run_id, status, result=None, error="": v5.strengthening.durable.set_status(run_id, status, result=result, error=error), PermissionLevel.SYSTEM_ACTION))
+
+    # Provenance and context engineering
+    add(Tool("v5_rc8_guard_inspect", "Inspect external text for provenance risk, prompt-injection indicators and taint.", _schema({"text": {"type": "string", "minLength": 1, "maxLength": 200000}, "source": _str(80), "trusted": {"type": "boolean"}}, ["text"]), lambda text, source="external", trusted=False: v5.strengthening.guard.inspect(text, source=source, trusted=trusted), PermissionLevel.READ))
+    add(Tool("v5_rc8_guard_memory", "Check whether external text should be admitted to durable memory or quarantined.", _schema({"text": {"type": "string", "minLength": 1, "maxLength": 200000}, "source": _str(80), "trusted": {"type": "boolean"}}, ["text"]), lambda text, source="external", trusted=False: v5.strengthening.guard.memory_admission(text, source=source, trusted=trusted), PermissionLevel.READ))
+    add(Tool("v5_rc8_guard_action", "Check whether a proposed high-impact action is semantically aligned with the current objective. Advisory only; normal permission gates remain final.", _schema({"objective": {"type": "string", "minLength": 1, "maxLength": 12000}, "action": _str(200), "arguments": _obj()}, ["objective", "action"]), lambda objective, action, arguments=None: v5.strengthening.guard.action_preflight(objective, action, arguments or {}), PermissionLevel.READ))
+    add(Tool("v5_rc8_context_list", "List provenance-labelled context items.", _schema({"limit": {"type": "integer", "minimum": 1, "maximum": 2000}, "include_quarantined": {"type": "boolean"}}), lambda limit=200, include_quarantined=True: v5.strengthening.context.list(limit, include_quarantined=include_quarantined), PermissionLevel.READ))
+    add(Tool("v5_rc8_context_ingest", "Ingest context with explicit provenance/trust and automatic quarantine for suspicious external instructions.", _schema({"text": {"type": "string", "minLength": 1, "maxLength": 200000}, "source": _str(80), "priority": {"type": "number", "minimum": 0, "maximum": 1}, "trusted": {"type": "boolean"}, "provenance": _obj()}, ["text"]), lambda text, source="external", priority=.5, trusted=False, provenance=None: v5.strengthening.context.ingest(text, source=source, priority=priority, trusted=trusted, provenance=provenance or {}), PermissionLevel.SAFE_ACTION, permission_resolver=_rc8_context_ingest_permission))
+    add(Tool("v5_rc8_context_compile", "Compile the most relevant, trusted context into a bounded token budget; quarantined items are excluded by default.", _schema({"query": {"type": "string", "minLength": 1, "maxLength": 12000}, "budget_tokens": {"type": "integer", "minimum": 256, "maximum": 200000}, "include_quarantined": {"type": "boolean"}, "memory_limit": {"type": "integer", "minimum": 1, "maximum": 50}}, ["query"]), lambda query, budget_tokens=6000, include_quarantined=False, memory_limit=12: v5.strengthening.context.compile(query, budget_tokens=budget_tokens, include_quarantined=include_quarantined, memory_limit=memory_limit), PermissionLevel.READ))
+
+    # End-to-end evals and regression gates
+    add(Tool("v5_rc8_eval_cases", "List deterministic end-to-end eval cases.", _schema({"suite": _str(120)}), lambda suite="": v5.strengthening.evals.cases(suite), PermissionLevel.READ))
+    add(Tool("v5_rc8_eval_add", "Add a deterministic regression case for exact/contains/regex/json-subset/truthy evaluation.", _schema({"suite": _str(120), "name": _str(200), "evaluator": {"type": "string", "enum": ["exact", "contains", "regex", "json_subset", "truthy"]}, "expected": {}, "weight": {"type": "number", "minimum": 0.01, "maximum": 100}}, ["suite", "name", "evaluator"]), lambda suite, name, evaluator, expected=None, weight=1: v5.strengthening.evals.add_case(suite, name, evaluator=evaluator, expected=expected, weight=weight), PermissionLevel.SAFE_ACTION))
+    add(Tool("v5_rc8_eval_record", "Evaluate one candidate output against a stored regression case.", _schema({"case_id": _str(100), "actual": {}, "candidate": _str(160)}, ["case_id"]), lambda case_id, actual=None, candidate="current": v5.strengthening.evals.evaluate(case_id, actual, candidate=candidate), PermissionLevel.SAFE_ACTION))
+    add(Tool("v5_rc8_eval_summary", "Summarize latest scores for one eval suite/candidate.", _schema({"suite": _str(120), "candidate": _str(160)}, ["suite"]), lambda suite, candidate="current": v5.strengthening.evals.summary(suite, candidate=candidate), PermissionLevel.READ))
+    add(Tool("v5_rc8_eval_gate", "Require a minimum regression score before promoting a candidate capability/model/workflow.", _schema({"suite": _str(120), "candidate": _str(160), "min_score": {"type": "number", "minimum": 0, "maximum": 1}, "require_all_evaluated": {"type": "boolean"}}, ["suite"]), lambda suite, candidate="current", min_score=.9, require_all_evaluated=True: v5.strengthening.evals.gate(suite, candidate=candidate, min_score=min_score, require_all_evaluated=require_all_evaluated), PermissionLevel.READ))
+
+    # MCP 2026-07-28 + A2A v1.0 interoperability
+    add(Tool("v5_rc8_interop_list", "List explicitly registered MCP/A2A endpoints. Credentials remain symbolic vault references.", _schema({"kind": {"type": "string", "enum": ["", "mcp", "a2a"]}}), lambda kind="": v5.strengthening.interop.list(kind), PermissionLevel.READ))
+    add(Tool("v5_rc8_interop_register", "Register one fixed HTTPS MCP or A2A endpoint with an optional vault credential reference.", _schema({"kind": {"type": "string", "enum": ["mcp", "a2a"]}, "name": _str(160), "base_url": _str(2000), "auth_ref": _str(200), "metadata": _obj()}, ["kind", "name", "base_url"]), lambda kind, name, base_url, auth_ref="", metadata=None: v5.strengthening.interop.register(kind=kind, name=name, base_url=base_url, auth_ref=auth_ref, metadata=metadata or {}), PermissionLevel.SYSTEM_ACTION))
+    add(Tool("v5_rc8_mcp_call", "Call a bounded method on an explicitly registered MCP 2026-07-28 endpoint. tools/call is state-changing and receives stronger approval.", _schema({"endpoint_id": _str(100), "method": {"type": "string", "enum": ["server/discover", "tools/list", "tools/call", "resources/list", "resources/read", "prompts/list", "prompts/get"]}, "name": _str(240), "params": _obj(), "timeout": {"type": "number", "minimum": 2, "maximum": 60}}, ["endpoint_id", "method"]), lambda endpoint_id, method, name="", params=None, timeout=20: v5.strengthening.interop.mcp_call(endpoint_id, method=method, name=name, params=params or {}, timeout=timeout), PermissionLevel.READ, permission_resolver=_rc8_mcp_permission))
+    add(Tool("v5_rc8_a2a_discover", "Fetch the public Agent Card from an explicitly registered A2A v1.0 endpoint.", _schema({"endpoint_id": _str(100), "timeout": {"type": "number", "minimum": 2, "maximum": 60}}, ["endpoint_id"]), lambda endpoint_id, timeout=20: v5.strengthening.interop.a2a_discover(endpoint_id, timeout=timeout), PermissionLevel.READ))
+    add(Tool("v5_rc8_a2a_send", "Delegate text work to an explicitly registered A2A v1.0 agent. External delegation requires system-action approval.", _schema({"endpoint_id": _str(100), "text": {"type": "string", "minLength": 1, "maxLength": 12000}, "timeout": {"type": "number", "minimum": 2, "maximum": 180}}, ["endpoint_id", "text"]), lambda endpoint_id, text, timeout=60: v5.strengthening.interop.a2a_send(endpoint_id, text, timeout=timeout), PermissionLevel.SYSTEM_ACTION))
+
+    # Secure anywhere/event ingress
+    add(Tool("v5_rc8_webhook_list", "List secure automation webhook endpoints without revealing tokens.", _schema(), lambda: v5.strengthening.webhooks.list(), PermissionLevel.READ))
+    add(Tool("v5_rc8_webhook_create", "Create a replay-protected webhook secret for remote event automation. The token is returned once.", _schema({"name": _str(160), "event_name": _str(160)}, ["name"]), lambda name, event_name="webhook.received": v5.strengthening.webhooks.create(name, event_name=event_name), PermissionLevel.CRITICAL))
+    add(Tool("v5_rc8_webhook_rotate", "Rotate a webhook token; the replacement token is returned once.", _schema({"hook_id": _str(100)}, ["hook_id"]), lambda hook_id: v5.strengthening.webhooks.rotate(hook_id), PermissionLevel.CRITICAL))
+    add(Tool("v5_rc8_webhook_disable", "Disable one external automation webhook.", _schema({"hook_id": _str(100)}, ["hook_id"]), lambda hook_id: v5.strengthening.webhooks.disable(hook_id), PermissionLevel.SYSTEM_ACTION))
+
+    # Structured observability
+    add(Tool("v5_rc8_trace_recent", "Read the structured RC8 event timeline.", _schema({"limit": {"type": "integer", "minimum": 1, "maximum": 2000}}), lambda limit=200: v5.strengthening.traces.recent(limit), PermissionLevel.READ))
+    add(Tool("v5_rc8_trace_summary", "Summarize recent event topics for debugging and agent evals.", _schema({"limit": {"type": "integer", "minimum": 1, "maximum": 2000}}), lambda limit=1000: v5.strengthening.traces.summary(limit), PermissionLevel.READ))
     add(Tool("v5_visual_fuse", "Fuse UIA, accessibility and OmniParser evidence into a conservative scene graph.", _schema({"uia": {"type": "array", "items": _obj(), "maxItems": 2000}, "accessibility": {"type": "array", "items": _obj(), "maxItems": 2000}, "omniparser": {"type": "array", "items": _obj(), "maxItems": 2000}, "title": _str(500), "screenshot_path": _str(1000)}), lambda uia=None, accessibility=None, omniparser=None, title="", screenshot_path="": v5.visual.fuse(uia=uia, accessibility=accessibility, omniparser=omniparser, title=title, screenshot_path=screenshot_path).as_dict(), PermissionLevel.READ))
 
     # Artifacts ------------------------------------------------------------------------------
@@ -212,11 +406,30 @@ def _browser_navigate_with_heal(v5, url: str, tab_id: str | None):
         return {**v5.browser.navigate(url, tab_id=None).__dict__, "recovery": recovery}
 
 
+def _web_login_vault(v5, url: str, username_ref: str, password_ref: str, username_selector: str, password_selector: str, submit_selector: str, tab_id: str | None):
+    username = v5.vault.get(username_ref)
+    password = v5.vault.get(password_ref)
+    try:
+        return v5.web.login(
+            url,
+            username=username,
+            password=password,
+            username_selector=username_selector,
+            password_selector=password_selector,
+            submit_selector=submit_selector,
+            tab_id=tab_id,
+        )
+    finally:
+        # Python strings cannot be reliably zeroized, but keep secrets strictly local
+        # to this handler and never return or log their values.
+        username = password = ""
+
+
 def _voice_status(v5):
-    return {
-        "running": bool(v5.voice.running),
-        "speaking": bool(v5.voice.speaking),
-        "wake_words": list(v5.voice.wake_words),
-        "require_wake_word": bool(v5.voice.require_wake_word),
-        "turn_count": len(v5.voice.turns),
-    }
+    status = v5.voice.status() if hasattr(v5.voice, "status") else {}
+    status.setdefault("running", bool(v5.voice.running))
+    status.setdefault("speaking", bool(v5.voice.speaking))
+    status.setdefault("wake_words", list(v5.voice.wake_words))
+    status.setdefault("require_wake_word", bool(v5.voice.require_wake_word))
+    status.setdefault("turn_count", len(v5.voice.turns))
+    return status

@@ -9,6 +9,7 @@ import threading
 from pathlib import Path
 
 from iras.voice.profiles import get_profile, normalize_profile
+from iras.voice.multilingual_voice import resolve_voice
 from iras.voice.humanize import speech_text
 
 class TTSUnavailable(RuntimeError):
@@ -39,6 +40,10 @@ class Speaker:
         self._process = None
         self._stop_event = threading.Event()
         self._speaking = threading.Event()
+        self.last_language = "en"
+        self.last_locale = "en-US"
+        self.last_voice = self.voice
+        self.alternate_voice = "en-US-GuyNeural"
 
     @property
     def is_speaking(self) -> bool:
@@ -95,6 +100,19 @@ class Speaker:
         with self._speak_lock:
             self._stop_event.clear()
             self._speaking.set()
+            selection = resolve_voice(
+                text,
+                english_voice=self.profile.voice,
+                english_alternate="en-US-GuyNeural",
+            )
+            self.voice = selection.voice
+            self.alternate_voice = selection.alternate_voice
+            self.rate = selection.rate
+            self.pitch = selection.pitch
+            self.volume = selection.volume
+            self.last_language = selection.language
+            self.last_locale = selection.locale
+            self.last_voice = selection.voice
             try:
                 errors: list[str] = []
 
@@ -180,13 +198,26 @@ class Speaker:
         os.close(fd)
         path = Path(raw_path)
         try:
-            await edge_tts.Communicate(
-                text,
-                self.voice,
-                rate=self.rate,
-                volume=self.volume,
-                pitch=self.pitch,
-            ).save(str(path))
+            try:
+                await edge_tts.Communicate(
+                    text,
+                    self.voice,
+                    rate=self.rate,
+                    volume=self.volume,
+                    pitch=self.pitch,
+                ).save(str(path))
+            except Exception:
+                if not self.alternate_voice or self.alternate_voice == self.voice:
+                    raise
+                await edge_tts.Communicate(
+                    text,
+                    self.alternate_voice,
+                    rate=self.rate,
+                    volume=self.volume,
+                    pitch=self.pitch,
+                ).save(str(path))
+                self.voice = self.alternate_voice
+                self.last_voice = self.voice
 
             if self._stop_event.is_set():
                 return "interrupted"

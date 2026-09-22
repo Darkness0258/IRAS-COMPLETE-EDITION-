@@ -5,7 +5,7 @@ from typing import Any
 
 # Tool outputs from these sources may contain instructions authored by third parties.
 _UNTRUSTED_EXACT = {"web_search", "http_get", "api_request", "browser_text"}
-_UNTRUSTED_PREFIXES = ("browser_",)
+_UNTRUSTED_PREFIXES = ("browser_", "v5_browser_", "v5_web_")
 
 _INJECTION_PATTERNS = (
     re.compile(r"\bignore\s+(?:all\s+)?(?:previous|prior|above)\s+instructions?\b", re.I),

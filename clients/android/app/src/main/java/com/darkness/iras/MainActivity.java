@@ -140,6 +140,16 @@ public class MainActivity extends Activity {
             : value;
     }
 
+    private String speechLanguage() {
+        String configured = prefs.getString("speech_language", "roman-urdu").trim();
+        if (configured.equalsIgnoreCase("roman-urdu")) return "ur-PK";
+        if (configured.isEmpty() || configured.equalsIgnoreCase("auto")) {
+            String system = Locale.getDefault().toLanguageTag();
+            return system == null || system.trim().isEmpty() ? "ur-PK" : system;
+        }
+        return configured;
+    }
+
     private int dp(float value) {
         return Math.round(
             value * getResources().getDisplayMetrics().density
@@ -674,9 +684,19 @@ public class MainActivity extends Activity {
             wakeWord()
         );
 
+        EditText language = new EditText(this);
+        language.setHint("Speech language: roman-urdu, auto, ur-PK, en-US...");
+        language.setText(prefs.getString("speech_language", "roman-urdu"));
+
+        EditText voiceMood = new EditText(this);
+        voiceMood.setHint("Voice mood: calm / warm / bright / neutral");
+        voiceMood.setText(prefs.getString("voice_mood", "calm"));
+
         box.addView(server);
         box.addView(token);
         box.addView(wake);
+        box.addView(language);
+        box.addView(voiceMood);
 
         new AlertDialog.Builder(this)
             .setTitle(
@@ -1328,6 +1348,10 @@ public class MainActivity extends Activity {
                 "text",
                 text
             );
+            String voiceLanguage = prefs.getString("speech_language", "roman-urdu").trim();
+            body.put("language", voiceLanguage.isEmpty() ? "roman-urdu" : voiceLanguage);
+            body.put("mood", prefs.getString("voice_mood", "calm"));
+            body.put("voice_gender", "female");
 
             try (
                 OutputStream os =
@@ -2205,7 +2229,7 @@ public class MainActivity extends Activity {
         i.putExtra(
             RecognizerIntent
                 .EXTRA_LANGUAGE,
-            "en-US"
+            speechLanguage()
         );
 
         i.putExtra(

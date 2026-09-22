@@ -70,6 +70,9 @@ def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.
     for t in v5_tools(v5):
         if t.name not in reg.names(): reg.register(t)
     v5.bind_tool_executor(reg.execute)
+    v5.bind_automation_authorizer(
+        lambda _row: bool(master.status().get("enabled") and master.status().get("autonomous"))
+    )
     agent=IRASAgent(provider,reg,memory,audit,s.max_agent_steps,system_prompt=build_system_prompt(s.voice_profile),personality=personality,voice_profile=s.voice_profile,recovery_performance_store=RecoveryRoutePerformanceStore(s.data_dir / 'recovery_route_performance.json'))
 
     # Local RC3 orchestration is real but fail-closed: background workers get a
@@ -94,9 +97,26 @@ def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.
     def local_worker(prompt, context):
         master_state = master.status()
         master_autonomy = bool(master_state.get("enabled") and master_state.get("autonomous"))
-        if master_autonomy:
+        automation_mode = str(context.get("automation_permission") or "").strip().lower()
+        if str(context.get("scheduled_permission") or "").strip().lower() == "read_only":
+            automation_mode = "read_only"
+        automation_caps = {
+            "read_only": PermissionLevel.READ,
+            "safe_action": PermissionLevel.SAFE_ACTION,
+            "system_action": PermissionLevel.SYSTEM_ACTION,
+            "critical": PermissionLevel.CRITICAL,
+        }
+        if automation_mode:
+            worker_cap = automation_caps.get(automation_mode, PermissionLevel.READ)
+            if worker_cap > PermissionLevel.READ and not master_autonomy:
+                raise PermissionError(
+                    "Unattended state-changing automation requires locally armed autonomous Master Control."
+                )
+        else:
+            worker_cap = PermissionLevel.CRITICAL if master_autonomy else PermissionLevel.READ
+        if worker_cap > PermissionLevel.READ and master_autonomy:
             worker_perms = MasterPermissionEngine(
-                PermissionLevel.CRITICAL, None, False, PermissionLevel.CRITICAL, master_control=master
+                worker_cap, None, False, worker_cap, master_control=master
             )
         else:
             worker_perms = PermissionEngine(PermissionLevel.READ, None, True, PermissionLevel.READ)
@@ -107,7 +127,7 @@ def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.
              *memory_tools(memory), *personality_tools(personality), *browser_tools(worker_browser),
              *automation_tools(autos), *device_bridge_tools(local_device),
              *device_skill_tools(local_device, app_skills), *vision_tools(vision), *master_tools(master), *v5_tools(v5)]
-            if master_autonomy
+            if worker_cap > PermissionLevel.READ
             else [*FILES, *WEB, *GIT, *API_ACCESS, *memory_tools(memory), *device_bridge_tools(local_device), *v5_tools(v5)]
         )
         for tool in worker_tools:
@@ -127,7 +147,7 @@ def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.
         if deps:
             worker_prompt += "\n\nDependency results:\n" + json.dumps(deps, ensure_ascii=False, default=str)[:20000]
         worker_steps = s.max_agent_steps
-        if master_autonomy:
+        if master_autonomy and worker_cap > PermissionLevel.READ:
             worker_steps = max(worker_steps, int(emergency_execution_limits()["agent_steps"]))
         worker_agent = IRASAgent(worker_provider, worker_reg, memory, audit, worker_steps, system_prompt=build_system_prompt(s.voice_profile), personality=personality, voice_profile=s.voice_profile)
         if context.get("coding_agent"):

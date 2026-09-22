@@ -195,6 +195,34 @@
   <input id="token" type="password" placeholder="Your IRAS_API_TOKEN">
   <label>Wake word</label>
   <input id="wake" placeholder="IRAS">
+  <label>Speech language</label>
+  <select id="language">
+    <option value="roman-urdu">Roman Urdu (Default)</option>
+    <option value="auto">Auto detect</option>
+    <option value="ur-PK">Urdu script / Urdu (Pakistan)</option>
+    <option value="en-US">English (US)</option>
+    <option value="hi-IN">Hindi</option>
+    <option value="ar-SA">Arabic</option>
+    <option value="pa-IN">Punjabi</option>
+    <option value="fa-IR">Persian</option>
+    <option value="bn-IN">Bengali</option>
+    <option value="tr-TR">Turkish</option>
+    <option value="fr-FR">French</option>
+    <option value="es-ES">Spanish</option>
+    <option value="de-DE">German</option>
+    <option value="it-IT">Italian</option>
+    <option value="pt-BR">Portuguese</option>
+    <option value="ru-RU">Russian</option>
+    <option value="uk-UA">Ukrainian</option>
+    <option value="ja-JP">Japanese</option>
+    <option value="ko-KR">Korean</option>
+    <option value="zh-CN">Mandarin Chinese</option>
+    <option value="vi-VN">Vietnamese</option>
+  </select>
+  <label>Voice mood</label>
+  <select id="voiceMood"><option value="calm">Calm</option><option value="warm">Warm</option><option value="bright">Bright</option><option value="neutral">Neutral</option></select>
+  <label>Voice</label>
+  <div class="sub">IRAS female voice · fixed identity</div>
   <div class="row">
     <button id="cancelCfg">Cancel</button>
     <button class="primary" id="saveCfg">Save</button>
@@ -298,6 +326,8 @@ const local=JSON.parse(localStorage.getItem("iras-config")||"{}");
 server.value=local.server||location.origin;
 token.value=sessionStorage.getItem("iras-api-token")||"";
 wake.value=local.wakeWord||"IRAS";
+$("#language").value=local.language||"roman-urdu";
+$("#voiceMood").value=local.voiceMood||"calm";
 handsFree=!!local.handsFree;
 
 function escapeHtml(value){
@@ -1044,6 +1074,9 @@ function saveConfig(){
   localStorage.setItem("iras-config",JSON.stringify({
     server:server.value.trim().replace(/\/$/,""),
     wakeWord:(wake.value.trim()||"IRAS"),
+    language:($("#language").value||"roman-urdu"),
+    voiceMood:($("#voiceMood").value||"calm"),
+    voiceGender:"female",
     handsFree
   }));
   cfg.close();
@@ -1051,6 +1084,11 @@ function saveConfig(){
 }
 
 function wakeWord(){return (config().wakeWord||"IRAS").trim()}
+function speechLocale(){
+  const selected=(config().language||"roman-urdu").trim();
+  if(selected==="roman-urdu")return "ur-PK";
+  return selected&&selected!=="auto"?selected:(navigator.language||"ur-PK");
+}
 
 function wakeAliases(){
   const primary=wakeWord().trim();
@@ -1187,7 +1225,12 @@ async function fetchVoice(text,session){
       "X-Device-ID":"web",
       ...remoteHeaders()
     },
-    body:JSON.stringify({text})
+    body:JSON.stringify({
+      text,
+      language:(c.language||"roman-urdu"),
+      mood:c.voiceMood||"calm",
+      voice_gender:"female"
+    })
   });
 
   if(!r.ok)throw new Error((await r.text())||("HTTP "+r.status));
@@ -1604,7 +1647,7 @@ async function startHandsRecognition(){
 
   const r=new SR();
   recognition=r;
-  r.lang="en-US";
+  r.lang=speechLocale();
 
   // Chrome's true continuous mode can stay open without finalizing short
   // wake-word utterances. One utterance per recognition session, followed by
@@ -1837,7 +1880,7 @@ $("#mic").onclick=async()=>{
 
   const r=new SR();
   manualRecognition=r;
-  r.lang="en-US";
+  r.lang=speechLocale();
   r.continuous=false;
   r.interimResults=true;
 
