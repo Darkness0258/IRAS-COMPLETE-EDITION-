@@ -1090,6 +1090,12 @@ function speechLocale(){
   return selected&&selected!=="auto"?selected:(navigator.language||"ur-PK");
 }
 
+function ttsFallbackLocale(){
+  const selected=(config().language||"roman-urdu").trim();
+  if(selected==="roman-urdu")return "en-IN";
+  return selected&&selected!=="auto"?selected:(navigator.language||"en-US");
+}
+
 function wakeAliases(){
   const primary=wakeWord().trim();
   if(primary.toLowerCase()!=="iras")return [primary];
@@ -1268,7 +1274,7 @@ async function browserSpeak(text,session){
 
   await new Promise((resolve,reject)=>{
     const utterance=new SpeechSynthesisUtterance(text);
-    utterance.lang=speechLocale();
+    utterance.lang=ttsFallbackLocale();
     utterance.rate=.92;
     utterance.pitch=.98;
     utterance.volume=1;

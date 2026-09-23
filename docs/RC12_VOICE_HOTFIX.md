@@ -46,3 +46,13 @@ This hotfix repairs the production voice paths without changing Remote Protocol 
 
 Run `./voice-doctor.ps1` from PowerShell. Add `-TestMicrophone` for a real
 microphone + Whisper capture test and `-PlayRenderAudio` to play the Render MP3.
+
+
+## Multilingual pronunciation accuracy
+
+- `roman-urdu` is a style preference, not a blanket fallback for all Latin text.
+- Latin English/French/Spanish/German/Italian/Portuguese/Turkish/Vietnamese/Indonesian/Dutch/Polish are detected before fallback.
+- Unknown Latin text defaults to English instead of Urdu.
+- Roman Urdu with multiple Urdu markers uses `IRAS_ROMAN_URDU_VOICE` (default `en-IN-NeerjaNeural`).
+- Native Urdu script continues to use `ur-PK-UzmaNeural`.
+- Web/Android speech recognition stays `ur-PK`; local/browser Roman-Urdu fallback TTS uses `en-IN`.

@@ -105,21 +105,80 @@ MOODS: dict[str, tuple[str, str, str]] = {
 
 
 _ROMAN_URDU = {
-    "hai", "hain", "ho", "kya", "kyun", "ka", "ki", "ke", "mein", "main",
-    "mujhe", "mujhay", "mera", "meri", "mere", "aap", "ap", "tum", "nahi",
-    "nahin", "acha", "accha", "theek", "kar", "karo", "kr", "do", "batao",
-    "chahiye", "wala", "wali", "aur", "se", "ko", "ye", "woh", "bohat", "bahut",
+    "hai", "hain", "ho", "hoon", "hun", "tha", "thi", "the", "kya", "kia",
+    "kyun", "ka", "ki", "ke", "mein", "main", "mujhe", "mujhay", "mera",
+    "meri", "mere", "aap", "ap", "aapka", "aapki", "aapke", "tum", "tumhara",
+    "nahi", "nahin", "haan", "han", "ji", "acha", "accha", "theek", "kar",
+    "karo", "kr", "karna", "karni", "do", "batao", "sunao", "chahiye",
+    "wala", "wali", "aur", "se", "ko", "ye", "yeh", "woh", "wo", "bohat",
+    "bahut", "kaise", "kaisi", "kaisa", "kahan", "kab", "phir", "lekin",
+    "magar", "saath", "sath", "chal", "raha", "rahi", "rahe", "lagta",
+    "lagti", "hoga", "hogi", "yaar",
 }
 
 _LATIN_MARKERS: dict[str, set[str]] = {
-    "fr": {"bonjour", "merci", "avec", "pour", "dans", "vous", "nous", "est", "une", "des", "pas"},
-    "es": {"hola", "gracias", "como", "cómo", "para", "con", "una", "que", "por", "pero", "está", "muy"},
-    "de": {"hallo", "danke", "und", "nicht", "ich", "ist", "mit", "für", "bitte", "das", "ein"},
-    "it": {"ciao", "grazie", "come", "per", "con", "una", "che", "sono", "non", "molto"},
-    "pt": {"olá", "ola", "obrigado", "obrigada", "para", "com", "uma", "que", "não", "nao", "muito"},
-    "tr": {"merhaba", "teşekkür", "tesekkur", "için", "icin", "bir", "ve", "değil", "degil", "nasıl", "nasil"},
-    "vi": {"xin", "chào", "chao", "cảm", "cam", "ơn", "ban", "bạn", "không", "khong", "và", "va"},
-    "id": {"halo", "terima", "kasih", "dan", "untuk", "tidak", "saya", "kamu", "dengan", "ini"},
+    "en": {
+        "hello", "hey", "how", "are", "you", "your", "what", "why", "where",
+        "when", "please", "thanks", "thank", "good", "fine", "can", "could",
+        "would", "should", "this", "that", "the", "is", "am", "we", "they",
+        "my", "ready", "today", "tomorrow",
+    },
+    "fr": {
+        "bonjour", "merci", "avec", "pour", "dans", "vous", "nous", "est",
+        "une", "des", "pas", "je", "suis", "vais", "bien", "comment",
+        "\u00e7a", "ca", "tr\u00e8s", "tres",
+    },
+    "es": {
+        "hola", "gracias", "como", "c\u00f3mo", "para", "con", "una", "que",
+        "por", "pero", "est\u00e1", "esta", "muy", "bien", "qu\u00e9", "tal",
+        "usted", "ustedes", "soy", "estoy",
+    },
+    "de": {
+        "hallo", "danke", "und", "nicht", "ich", "ist", "mit", "f\u00fcr",
+        "fur", "bitte", "das", "ein", "wie", "geht", "dir", "mir", "gut",
+    },
+    "it": {
+        "ciao", "grazie", "come", "per", "con", "una", "che", "sono",
+        "non", "molto", "stai", "bene", "io", "tu", "oggi",
+    },
+    "pt": {
+        "ol\u00e1", "ola", "obrigado", "obrigada", "para", "com", "uma", "que",
+        "n\u00e3o", "nao", "muito", "bem", "como", "voc\u00ea", "voce", "estou",
+    },
+    "tr": {
+        "merhaba", "te\u015fekk\u00fcr", "tesekkur", "i\u00e7in", "icin", "bir", "ve",
+        "de\u011fil", "degil", "nas\u0131l", "nasil", "iyiyim", "sen", "siz",
+    },
+    "vi": {
+        "xin", "ch\u00e0o", "chao", "c\u1ea3m", "cam", "\u01a1n", "ban", "b\u1ea1n",
+        "kh\u00f4ng", "khong", "v\u00e0", "va", "t\u00f4i", "toi", "kh\u1ecfe", "khoe",
+    },
+    "id": {
+        "halo", "terima", "kasih", "dan", "untuk", "tidak", "saya", "kamu",
+        "dengan", "ini", "apa", "baik", "bagaimana",
+    },
+    "nl": {
+        "hallo", "hoi", "dank", "dankjewel", "alsjeblieft", "hoe", "gaat",
+        "het", "met", "jou", "goed", "ik", "ben", "niet",
+    },
+    "pl": {
+        "cze\u015b\u0107", "czesc", "dzi\u0119kuj\u0119", "dziekuje", "prosz\u0119", "prosze",
+        "jak", "si\u0119", "sie", "masz", "dobrze", "jestem", "nie", "tak",
+    },
+}
+
+_STRONG_LATIN_MARKERS: dict[str, set[str]] = {
+    "en": {"hello", "thanks", "please"},
+    "fr": {"bonjour", "merci"},
+    "es": {"hola", "gracias"},
+    "de": {"hallo", "danke"},
+    "it": {"ciao", "grazie"},
+    "pt": {"ol\u00e1", "ola", "obrigado", "obrigada"},
+    "tr": {"merhaba", "te\u015fekk\u00fcr", "tesekkur"},
+    "vi": {"ch\u00e0o", "chao"},
+    "id": {"terima", "kasih"},
+    "nl": {"dankjewel", "alsjeblieft"},
+    "pl": {"cze\u015b\u0107", "czesc", "dzi\u0119kuj\u0119", "dziekuje"},
 }
 
 
@@ -196,37 +255,62 @@ def detect_language(text: str, *, preferred: str = "roman-urdu") -> tuple[str, f
 
     words = _words(value)
     wordset = set(words)
+
     if words:
         ur_score = len(wordset & _ROMAN_URDU)
-        # Roman Urdu must show multiple signals to avoid hijacking short English text.
-        if ur_score >= 3 or (ur_score >= 2 and len(words) <= 8):
-            confidence = min(0.94, 0.58 + 0.07 * ur_score)
-            return "ur", confidence, "roman-urdu-markers"
 
-        best = ("en", 0)
+        best_code = "en"
+        best_score = 0
         for code, markers in _LATIN_MARKERS.items():
             score = len(wordset & markers)
-            if score > best[1]:
-                best = (code, score)
-        if best[1] >= 2:
-            return best[0], min(0.93, 0.60 + 0.08 * best[1]), "latin-language-markers"
+            if score > best_score:
+                best_code = code
+                best_score = score
 
-    # Diacritics are useful when sentences are short.
+        if best_code != "en" and best_score >= 2 and best_score > ur_score:
+            confidence = min(0.95, 0.62 + 0.07 * best_score)
+            return best_code, confidence, "latin-language-markers"
+
+        if ur_score >= 3 or (ur_score >= 2 and len(words) <= 10):
+            confidence = min(0.96, 0.60 + 0.07 * ur_score)
+            return "ur", confidence, "roman-urdu-markers"
+
+        if best_score >= 2:
+            confidence = min(0.95, 0.62 + 0.07 * best_score)
+            return best_code, confidence, "latin-language-markers"
+
+        for code, markers in _STRONG_LATIN_MARKERS.items():
+            if wordset & markers:
+                return code, 0.78, "strong-latin-marker"
+
     lowered = value.casefold()
-    if re.search(r"[ñ¿¡áéíóú]", lowered): return "es", 0.78, "spanish-diacritics"
-    if re.search(r"[àâçéèêëîïôùûüœ]", lowered): return "fr", 0.76, "french-diacritics"
-    if re.search(r"[äöüß]", lowered): return "de", 0.84, "german-diacritics"
-    if re.search(r"[ãõç]", lowered): return "pt", 0.76, "portuguese-diacritics"
-    if re.search(r"[ğışçöü]", lowered): return "tr", 0.84, "turkish-diacritics"
-    if re.search(r"[ăâđêôơư]", lowered): return "vi", 0.86, "vietnamese-diacritics"
+
+    if re.search(r"[\u00f1\u00bf\u00a1]", lowered):
+        return "es", 0.86, "spanish-distinctive-diacritics"
+    if re.search(r"[\u0153\u00ea\u00e8\u00e0]", lowered):
+        return "fr", 0.82, "french-distinctive-diacritics"
+    if re.search(r"[\u00e4\u00f6\u00fc\u00df]", lowered):
+        return "de", 0.88, "german-diacritics"
+    if re.search(r"[\u00e3\u00f5]", lowered):
+        return "pt", 0.88, "portuguese-distinctive-diacritics"
+    if re.search(r"[\u011f\u0131\u015f]", lowered):
+        return "tr", 0.88, "turkish-distinctive-diacritics"
+    if re.search(r"[\u0103\u0111\u01a1\u01b0\u1ea1\u1ecf\u1edb\u1ef1]", lowered):
+        return "vi", 0.90, "vietnamese-distinctive-diacritics"
+    if re.search(r"[\u0105\u0107\u0119\u0142\u0144\u015b\u017a\u017c]", lowered):
+        return "pl", 0.90, "polish-diacritics"
 
     if roman_urdu_default:
-        return "ur", 0.72, "roman-urdu-default"
-    return "en", 0.55, "latin-default"
+        return "en", 0.58, "latin-default-under-roman-urdu"
+    return "en", 0.58, "latin-default"
 
 
 def language_catalog() -> list[dict[str, Any]]:
-    return [
+    roman_voice = (
+        os.getenv("IRAS_ROMAN_URDU_VOICE", "en-IN-NeerjaNeural").strip()
+        or "en-IN-NeerjaNeural"
+    )
+    items = [
         {
             "code": item.code,
             "locale": item.locale,
@@ -236,6 +320,17 @@ def language_catalog() -> list[dict[str, Any]]:
         }
         for item in LANGUAGES.values()
     ]
+    items.insert(
+        1,
+        {
+            "code": "roman-urdu",
+            "locale": "en-IN",
+            "label": "Roman Urdu (Latin)",
+            "female_voice": roman_voice,
+            "direction": "ltr",
+        },
+    )
+    return items
 
 
 def resolve_voice(
@@ -260,16 +355,27 @@ def resolve_voice(
         wanted_mood = "calm"
     rate, pitch, volume = MOODS[wanted_mood]
 
-    female_voice = english_voice if code == "en" and english_voice else spec.female_voice
-    voice = female_voice
-    # Never change IRAS to a male fallback voice. Existing backend fallback
-    # handles provider failure without changing her voice identity.
-    alternate = female_voice
+    roman_latin = reason.startswith("roman-urdu")
+    if roman_latin:
+        roman_voice = (
+            os.getenv("IRAS_ROMAN_URDU_VOICE", "en-IN-NeerjaNeural").strip()
+            or "en-IN-NeerjaNeural"
+        )
+        voice = roman_voice
+        alternate = english_voice or LANGUAGES["en"].female_voice
+        selected_locale = "en-IN"
+        selected_label = "Roman Urdu (Latin)"
+    else:
+        female_voice = english_voice if code == "en" and english_voice else spec.female_voice
+        voice = female_voice
+        alternate = female_voice
+        selected_locale = spec.locale
+        selected_label = spec.label
 
     return VoiceSelection(
         language=code,
-        locale=spec.locale,
-        label=spec.label,
+        locale=selected_locale,
+        label=selected_label,
         voice=voice,
         alternate_voice=alternate,
         gender=wanted_gender,
@@ -298,7 +404,12 @@ def status() -> dict[str, Any]:
         "voice_mood": os.getenv("IRAS_VOICE_MOOD", "calm").strip().lower() or "calm",
         "voice_gender": "female",
         "default_text_style": "roman-urdu",
-        "default_speech_locale": "ur-PK",
+        "default_speech_locale": "en-IN",
+        "native_urdu_speech_locale": "ur-PK",
+        "roman_urdu_voice": (
+            os.getenv("IRAS_ROMAN_URDU_VOICE", "en-IN-NeerjaNeural").strip()
+            or "en-IN-NeerjaNeural"
+        ),
         "supported_languages": len(LANGUAGES),
         "catalog": language_catalog(),
         "roman_urdu_detection": True,

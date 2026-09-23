@@ -168,6 +168,17 @@ public class MainActivity extends Activity {
     }
 
 
+    private String ttsLanguage() {
+        String configured = prefs.getString("speech_language", "roman-urdu").trim();
+        if (configured.equalsIgnoreCase("roman-urdu")) return "en-IN";
+        if (configured.isEmpty() || configured.equalsIgnoreCase("auto")) {
+            String system = Locale.getDefault().toLanguageTag();
+            return system == null || system.trim().isEmpty() ? "en-US" : system;
+        }
+        return configured;
+    }
+
+
     private void configureLocalTtsLanguage() {
         if (
             localTts
@@ -179,7 +190,7 @@ public class MainActivity extends Activity {
         int availability =
             localTts.setLanguage(
                 Locale.forLanguageTag(
-                    speechLanguage()
+                    ttsLanguage()
                 )
             );
 

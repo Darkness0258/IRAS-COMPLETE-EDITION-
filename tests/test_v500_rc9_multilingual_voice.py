@@ -57,13 +57,21 @@ def test_iras_voice_identity_is_always_female():
     assert attempted_male.alternate_voice == "en-US-AriaNeural"
 
 
-def test_roman_urdu_is_default_fallback_but_clear_switches_still_work():
-    assert detect_language("hello there")[0] == "ur"
+def test_roman_urdu_is_detected_not_used_as_blanket_latin_fallback():
+    # RC12 multilingual accuracy contract: Roman Urdu is detected from
+    # Roman-Urdu markers; it is not the fallback for all Latin text.
+    assert detect_language("hello there")[0] == "en"
     assert detect_language("bonjour merci pour votre aide")[0] == "fr"
-    assert detect_language("こんにちは、元気ですか")[0] == "ja"
+    assert detect_language("\u3053\u3093\u306b\u3061\u306f\u3001\u5143\u6c17\u3067\u3059\u304b")[0] == "ja"
+
     default_voice = resolve_voice("hello there")
-    assert default_voice.locale == "ur-PK"
-    assert default_voice.voice == "ur-PK-UzmaNeural"
+    assert default_voice.locale == "en-US"
+    assert default_voice.voice == "en-US-JennyNeural"
+
+    roman = resolve_voice("main theek hoon aap sunao")
+    assert roman.language == "ur"
+    assert roman.locale == "en-IN"
+    assert roman.voice == "en-IN-NeerjaNeural"
 
 
 def test_catalog_is_broad_and_aliases_are_stable():

@@ -140,14 +140,15 @@
     "spotify_semantic_verification": "after Play, IRAS reads Spotify UIA state and only marks playback verified when Pause state and query-related evidence are visible",
     "spotify_startup_sequencing": "Spotify play now uses open/focus -> visual readiness -> search -> search readiness -> play with URI/green-button fallbacks",
     "spotify_uia_invoke": "Content Play prefers the existing audited Windows UI Automation InvokePattern/LegacyIAccessible default action, then scoped mouse/Space fallbacks, with visible playing-state verification after every attempt.",
-    "unified_cloud_workspace": "Windows cloud client, web/PWA and Android share persistent cloud thread/history/client presence without moving local device-control enforcement into the public server."
+    "unified_cloud_workspace": "Windows cloud client, web/PWA and Android share persistent cloud thread/history/client presence without moving local device-control enforcement into the public server.",
+    "multilingual_voice_accuracy": "Roman Urdu is marker-detected rather than used as a blanket Latin fallback; Latin-script Roman Urdu uses configurable en-IN-NeerjaNeural by default, while native Urdu script remains on ur-PK-UzmaNeural and other detected languages retain their locale-specific female voices."
   },
   "local_regression": {
     "android_companion_compile": "static-contract-validated; Android SDK/Gradle build is host-side",
     "failed": 0,
-    "passed": 951,
+    "passed": 970,
     "audit_host": "portable pytest audit host",
-    "windows_validation_target": "949 passed, 2 skipped (host-side validation required)"
+    "windows_validation_target": "970 passed, 2 skipped"
   },
   "managed_omniparser": {
     "authenticated_lifecycle": true,
