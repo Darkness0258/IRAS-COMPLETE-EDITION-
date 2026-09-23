@@ -241,6 +241,7 @@ try {
     } | ConvertTo-Json
 
     $response = Invoke-WebRequest `
+        -UseBasicParsing `
         -Method Post `
         -Uri "$Server/v1/tts" `
         -Headers $headers `

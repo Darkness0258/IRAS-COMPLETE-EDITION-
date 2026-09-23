@@ -5,6 +5,7 @@ import os
 import re
 import secrets
 from contextlib import contextmanager
+from contextvars import copy_context
 import threading
 import time
 import uuid
@@ -4012,7 +4013,20 @@ def chat_stream(
     def persisted_events():
         assistant_parts: list[str] = []
         recorded = False
-        for chunk in events():
+
+        # StreamingResponse iterates synchronous generators through Starlette's
+        # worker threadpool. Consecutive next() calls can therefore arrive with
+        # different copied Context objects. Keep every events() resume inside
+        # one explicit Context so ContextVar tokens created by
+        # remote_command_context() are always reset in the same Context.
+        stream_iter = iter(events())
+        stream_context = copy_context()
+
+        while True:
+            try:
+                chunk = stream_context.run(next, stream_iter)
+            except StopIteration:
+                break
             event_name = ""
             data: dict[str, Any] | None = None
             try:
