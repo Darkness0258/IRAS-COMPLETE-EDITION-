@@ -103,11 +103,12 @@
     "software_installer": "WinGet-first exact-ID install/update/uninstall plus signed HTTPS install receipts; CRITICAL Remote/local-policy/UAC enforcement preserved",
     "unified_cloud_workspace": "shared restart-safe client presence, active thread, transcript and non-secret preferences across Windows/web/Android"
   },
-  "feature_count": 36,
+  "feature_count": 37,
   "features": {
     "spotify_cloud_independent_reverify": "Cloud/remote Spotify execution always takes an independent fresh computer_observe verification instead of blindly trusting bridge verified_playback claims.",
     "spotify_evidence_reporting": "Verified playback messages report query-matching evidence before generic now-playing candidates.",
-    "spotify_exact_token_truth": "Spotify search and now-playing verification use whole normalized query tokens; short queries such as 'maa' cannot match Maanu, Maand, or Maahi by substring."
+    "spotify_exact_token_truth": "Spotify search and now-playing verification use whole normalized query tokens; short queries such as 'maa' cannot match Maanu, Maand, or Maahi by substring.",
+    "goal_execution_continuity": "Restart-safe goal/evidence/action/verification ledger that re-observes stale state and never replays side effects automatically."
   },
   "hotfixes": {
     "approval_input": "interactive risky-action prompts accept common affirmative forms such as yes/yep/okay/approve",
@@ -143,7 +144,7 @@
   "local_regression": {
     "android_companion_compile": "static-contract-validated; Android SDK/Gradle build is host-side",
     "failed": 0,
-    "passed": 892
+    "passed": 938
   },
   "managed_omniparser": {
     "authenticated_lifecycle": true,
@@ -187,7 +188,7 @@
     "verified_remote_master_scope_inherits_profile": true,
     "windows_uac_not_bypassed": true
   },
-  "model_facing_v5_tool_count": 104,
+  "model_facing_v5_tool_count": 206,
   "product": "IRAS",
   "professional_uiux": {
     "android": "tonal dark surfaces, inset-aware layout, animated message groups, polished composer, accessible labels",
@@ -218,7 +219,7 @@
     "src/iras/device_bridge/agent.py"
   ],
   "release_date": "2026-09-23",
-  "release_name": "RC11 Desktop Perception + Process Awareness + Deliberate Repair",
+  "release_name": "RC12 Persistent Goal Continuity + Evidence-Aware Resume",
   "release_notes": [
     "Unified cloud workspace shared across Windows, web and Android clients.",
     "Professional adaptive UI/UX and motion system across web/PWA, Windows desktop and Android.",
@@ -243,7 +244,8 @@
     "Coding/Installer orchestration no longer marks explicit permission/device blockers as successful and requires a verified COMPLETE coordinator outcome.",
     "Clean-tree validation excludes legitimate .venv contents, fixing false failures caused by dependency __pycache__ files.",
     "RC5 extends the Software Installer into a permissioned Software Lifecycle Agent with read-only update discovery, exact-package update, explicit update-all, uninstall, and post-action verification.",
-    "Software update/uninstall are CRITICAL Remote actions and require laptop-local allow_shell; fixed argv shell=False execution, emergency stop, audit, Remote Protocol 1, and Windows/UAC remain enforced."
+    "Software update/uninstall are CRITICAL Remote actions and require laptop-local allow_shell; fixed argv shell=False execution, emergency stop, audit, Remote Protocol 1, and Windows/UAC remain enforced.",
+    "RC12 adds a restart-safe Goal Continuity Ledger: resume decisions are evidence/freshness-aware, every meaningful action remains verification-bound, and side effects are never replayed automatically."
   ],
   "remote_protocol": 1,
   "render_health_hotfix": {
@@ -328,5 +330,21 @@
     "stable_client_ids": true,
     "thread_scoped_direct_chat_context": true
   },
-  "version": "5.0.0-rc11"
+  "version": "5.0.0-rc12",
+  "goal_continuity": {
+    "mode": "rc12_goal_continuity",
+    "persistent_backend": "existing v5 SQLite/PostgreSQL state",
+    "decisions": [
+      "continue",
+      "verify",
+      "repair",
+      "reobserve",
+      "stop"
+    ],
+    "fresh_evidence_on_resume": true,
+    "verification_after_action": true,
+    "side_effect_replay_allowed": false,
+    "permission_bypass_allowed": false,
+    "remote_protocol": 1
+  }
 }

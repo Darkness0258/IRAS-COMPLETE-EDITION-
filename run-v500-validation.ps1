@@ -55,7 +55,7 @@ function Invoke-IrasCleanup {
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "=== IRAS v5.0 RC11 COMPLETE OPERATING LAYER VALIDATION ==="
+Write-Host "=== IRAS v5.0 RC12 COMPLETE OPERATING LAYER VALIDATION ==="
 Write-Host "Python: $Python"
 
 Invoke-IrasCleanup
@@ -84,7 +84,7 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     Write-Host ""
-    Write-Host "IRAS v5.0 RC11 VALIDATION RESULT: PASS"
+    Write-Host "IRAS v5.0 RC12 VALIDATION RESULT: PASS"
 }
 finally {
     Invoke-IrasCleanup

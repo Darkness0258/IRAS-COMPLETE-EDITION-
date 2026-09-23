@@ -25,7 +25,7 @@ def runtime(tmp_path, monkeypatch):
 def test_every_rc3_feature_has_operating_surface(tmp_path, monkeypatch):
     rt = runtime(tmp_path, monkeypatch)
     names = {tool.name for tool in make_tools(rt)}
-    assert len(FEATURES) == 36
+    assert len(FEATURES) == 37
     required = {
         "v5_status", "v5_feature_status", "v5_migration_status",
         "v5_schedule_add", "v5_monitor_add", "v5_visual_fuse", "v5_browser_navigate",
@@ -150,7 +150,7 @@ def test_android_rc3_companion_is_not_chat_only():
     assert '/v1/v5/mobile/approvals/' in java
     assert 'showCompanionApproval' in java
     assert 'companionPollRunnable' in java
-    assert "versionName '5.0.0-rc11'" in gradle
+    assert "versionName '5.0.0-rc12'" in gradle
     assert 'POST_NOTIFICATIONS' in manifest
 
 

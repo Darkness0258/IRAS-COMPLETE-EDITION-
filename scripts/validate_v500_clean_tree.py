@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 REQUIRED=[
  'README.md','ARCHITECTURE.md','RC5-FEATURE-MATRIX.md','RELEASE-MANIFEST.json',
- 'docs/V5_0_RC5_NOTES.md','tests/test_v500_capability_layer.py','tests/test_v500_rc3_complete_operating_layer.py',
+ 'docs/V5_0_RC5_NOTES.md','docs/V5_0_RC12_NOTES.md','tests/test_rc12_goal_continuity.py','src/iras/v5/continuity.py','tests/test_v500_capability_layer.py','tests/test_v500_rc3_complete_operating_layer.py',
  'tests/test_v500_rc3_all_features.py','tests/test_v500_rc3_managed_vision.py','tests/test_v500_rc4_research_installer.py','tests/test_v500_rc5_software_lifecycle.py',
  'scripts/validate_v500_integrated.py','scripts/validate_v500_clean_tree.py','scripts/package_v500_rc5.py','run-v500-validation.ps1',
  'install.ps1','run-iras.ps1','setup-omniparser.ps1',
@@ -36,7 +36,7 @@ def main():
         if p.is_file() and p.name!='.env' and p.suffix.lower() in {'.py','.md','.toml','.yml','.yaml','.ps1','.html','.example'}:
             text=p.read_text(encoding='utf-8',errors='ignore')
             if any(x.search(text) for x in SECRET_PATTERNS): secrets.append(rel)
-    print('=== IRAS v5.0 RC11 CLEAN TREE VALIDATION ===')
+    print('=== IRAS v5.0 RC12 CLEAN TREE VALIDATION ===')
     print('LOCAL .ENV PRESENT:',(ROOT/'.env').exists())
     print('REQUIRED V5 FILES PRESENT:',not missing)
     print('CACHE/COMPILED DEBRIS PRESENT:',bool(cache))

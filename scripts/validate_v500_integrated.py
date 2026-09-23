@@ -22,6 +22,7 @@ from iras.v5.runtime import FEATURES, V5Runtime
 REQUIRED_TOOL_SURFACE = {
     # control / migrations / goals
     "v5_status", "v5_feature_status", "v5_migration_status", "v5_goal_add", "v5_goal_tree",
+    "v5_continuity_status", "v5_continuity_begin", "v5_continuity_get", "v5_continuity_record", "v5_continuity_assess", "v5_continuity_cancel",
     # autonomy + monitoring
     "v5_schedule_add", "v5_schedule_cancel", "v5_monitor_add", "v5_monitor_check_all",
     # memory / knowledge / coding / workflows
@@ -45,20 +46,21 @@ REQUIRED_TOOL_SURFACE = {
 
 
 def main() -> None:
-    print("=== IRAS v5.0 RC11 SOFTWARE LIFECYCLE INTEGRATED VALIDATION ===")
-    assert __version__ == "5.0.0-rc11"
+    print("=== IRAS v5.0 RC12 SOFTWARE LIFECYCLE INTEGRATED VALIDATION ===")
+    assert __version__ == "5.0.0-rc12"
     assert REMOTE_PROTOCOL_VERSION == 1
-    assert len(FEATURES) == 36
-    assert len(set(FEATURES)) == 36
+    assert len(FEATURES) == 37
+    assert len(set(FEATURES)) == 37
 
     with tempfile.TemporaryDirectory() as td:
         os.environ["IRAS_VAULT_MASTER_KEY"] = EncryptedSync.new_key()
         rt = V5Runtime(td)
         status = rt.status()
-        assert status["feature_count"] == 36
+        assert status["feature_count"] == 37
         assert {x["feature"] for x in status["feature_status"]} == set(FEATURES)
         assert status["remote_protocol"] == 1
         assert status["migrations"]["complete"] is True
+        assert status["rc12_continuity"]["side_effect_replay_allowed"] is False
 
         tools = make_tools(rt)
         names = {tool.name for tool in tools}
@@ -100,7 +102,7 @@ def main() -> None:
     assert "v5_tools(runtime.v5)" in boot
     assert "OrchestrationManager" in local_boot and "PermissionLevel.READ" in local_boot
     assert "/v1/v5/mobile/register" in android and "showCompanionApproval" in android
-    assert re.search(r"versionName\s+['\"]5\.0\.0-rc11['\"]", android_gradle)
+    assert re.search(r"versionName\s+['\"]5\.0\.0-rc12['\"]", android_gradle)
 
     docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     render = (ROOT / "render.yaml").read_text(encoding="utf-8")
@@ -109,7 +111,7 @@ def main() -> None:
     assert "IRAS_VAULT_MASTER_KEY" in render and "IRAS_V5_SCHEDULER_ENABLED" in render
 
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "IRAS v5.0 RC11" in ci and r".\run-v500-validation.ps1" in ci
+    assert "IRAS v5.0 RC12" in ci and r".\run-v500-validation.ps1" in ci
 
     env = (ROOT / ".env.example").read_text(encoding="utf-8")
     launcher = (ROOT / "run-iras.ps1").read_text(encoding="utf-8")
@@ -138,9 +140,10 @@ def main() -> None:
     assert "v5_schema_migrations" in migrations
 
     manifest = json.loads((ROOT / "RELEASE-MANIFEST.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == "5.0.0-rc11"
+    assert manifest["version"] == "5.0.0-rc12"
     assert manifest["remote_protocol"] == 1
-    assert manifest["feature_count"] == 36
+    assert manifest["feature_count"] == 37
+    assert manifest["model_facing_v5_tool_count"] == len(names)
     assert manifest["managed_omniparser"]["default_eager_start"] is True
     assert manifest["managed_omniparser"]["preserves_unmanaged_legacy_tree"] is True
     assert manifest["cloud_model_acceptance_used"] is False
@@ -150,6 +153,7 @@ def main() -> None:
     assert manifest["software_installer"]["targeted_update"] is True
     assert manifest["software_installer"]["explicit_update_all"] is True
     assert manifest["software_installer"]["uninstall"] is True
+    assert manifest["goal_continuity"]["side_effect_replay_allowed"] is False
     assert (ROOT / "RC5-FEATURE-MATRIX.md").is_file()
     assert (ROOT / "scripts/package_v500_rc5.py").is_file()
 

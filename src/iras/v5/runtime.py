@@ -14,6 +14,7 @@ from .automation_engine import AutomationEngine
 from .cognitive_core import CognitiveCore
 from .strengthening_core import RC8StrengtheningCore
 from .deliberation import CalmDeliberationEngine
+from .continuity import GoalContinuityEngine
 from .monitoring import ProactiveMonitor, MonitorResult
 from .visual_agent import AdvancedVisualAgent
 from .browser_agent import DedicatedBrowserAgent
@@ -81,6 +82,7 @@ FEATURES = (
     "unified_cloud_workspace",
     "master_control",
     "release_engineering",
+    "goal_execution_continuity",
 )
 
 
@@ -137,6 +139,7 @@ class V5Runtime:
         self.cognition.bind_goal_provider(lambda: self.goals.next_actions(20))
         self.strengthening = RC8StrengtheningCore(self.db, self.bus)
         self.deliberation = CalmDeliberationEngine()
+        self.continuity = GoalContinuityEngine(self.db, self.bus)
         self.strengthening.context.bind_memory_provider(lambda query, limit: self.cognition.recall(query, limit=limit, hops=2))
         self.strengthening.interop.bind_secret_resolver(self.vault.get)
         self.migrations = MigrationManager(self.db)
@@ -394,7 +397,7 @@ class V5Runtime:
         )
         self.monitoring.start(poll_seconds=float(os.getenv("IRAS_V5_MONITOR_POLL_SECONDS", "15")))
         self._started = True
-        self.bus.publish("v5.started", version="5.0.0-rc11")
+        self.bus.publish("v5.started", version="5.0.0-rc12")
 
     def stop_services(self) -> None:
         self.scheduler.stop()
@@ -411,7 +414,7 @@ class V5Runtime:
         except Exception:
             pass
         self._started = False
-        self.bus.publish("v5.stopped", version="5.0.0-rc11")
+        self.bus.publish("v5.stopped", version="5.0.0-rc12")
 
     def start_scheduled_autonomy(self) -> None:
         self.start_services()
@@ -453,13 +456,14 @@ class V5Runtime:
             "unified_cloud_workspace": True,
             "master_control": True,
             "release_engineering": True,
+            "goal_execution_continuity": True,
         }
         return [{"feature": name, "operational": bool(operational.get(name, False))} for name in FEATURES]
 
     def status(self) -> dict[str, Any]:
         feature_status = self.feature_status()
         return {
-            "version": "5.0.0-rc11",
+            "version": "5.0.0-rc12",
             "features": list(FEATURES),
             "feature_count": len(FEATURES),
             "feature_status": feature_status,
@@ -482,6 +486,7 @@ class V5Runtime:
             "cognitive_core_running": self.cognition.running,
             "rc8_strengthening": self.strengthening.status(),
             "rc11_deliberation": self.deliberation.status(),
+            "rc12_continuity": self.continuity.status(),
             "monitors": len(self.monitoring.list()),
             "unread_notifications": len(self.notifications.list(unread_only=True)),
             "mobile_devices": len(self.mobile.list_devices()),
