@@ -13,6 +13,8 @@ from rich.panel import Panel
 from iras import __version__
 from iras.config import Settings
 from iras.master_control import MasterControl
+from iras.voice.stt import Listener
+from iras.voice.tts import Speaker
 
 
 def _state_path() -> Path:
@@ -85,6 +87,9 @@ def main() -> None:
     state = _load_state()
     client_id = str(state.get("client_id") or f"pc_{uuid.uuid4().hex}")
     master = MasterControl()
+    speaker = Speaker(settings.tts_provider, settings.voice, settings.voice_profile)
+    listener = Listener(settings.whisper_model, settings.listen_seconds)
+    voice_enabled = bool(state.get("voice_enabled", settings.voice_replies))
     remote_session: dict | None = None
 
     with httpx.Client(base_url=server, timeout=120.0) as client:
@@ -111,7 +116,7 @@ def main() -> None:
                 "name": os.getenv("COMPUTERNAME", "IRAS Windows"),
                 "platform": "windows",
                 "app_version": __version__,
-                "capabilities": ["chat", "cloud-sync", "remote-node"],
+                "capabilities": ["chat", "cloud-sync", "remote-node", "voice"],
             },
         ).json()
         thread_id = str(state.get("thread_id") or registration.get("active_thread_id") or "")
@@ -208,7 +213,7 @@ def main() -> None:
                 f"[bold]IRAS Cloud Client {__version__}[/bold]\n"
                 f"Server: {server}\n"
                 f"Thread: {thread_id}\n"
-                "Shared with web + Android. Commands: /new, /history, /agent, /research <question>, /research status|pause|resume|cancel, /install search <software>, /install <software>, /install url <https-url>, /install updates [id], /install update <software|id|all>, /install uninstall <software|id>, /install status|pause|resume|cancel, /code <goal>, /code projects, /code use <project>, /code status, /code pause, /code resume, /code cancel, /code diff, /master, /master on, /master off, /exit"
+                "Shared with web + Android. Commands: /new, /history, /agent, /research <question>, /research status|pause|resume|cancel, /install search <software>, /install <software>, /install url <https-url>, /install updates [id], /install update <software|id|all>, /install uninstall <software|id>, /install status|pause|resume|cancel, /code <goal>, /code projects, /code use <project>, /code status, /code pause, /code resume, /code cancel, /code diff, /master, /master on, /master off, /voice, /voice test, /listen, /exit"
             )
         )
 
@@ -245,6 +250,72 @@ def main() -> None:
                     console.print(f"[bold red]Agent status failed:[/bold red] {exc}")
                 continue
             lower = text.lower()
+
+            if lower in {"/voice", "voice"}:
+                voice_enabled = not voice_enabled
+                state["voice_enabled"] = voice_enabled
+                _save_state(state)
+                console.print(f"[bold magenta]Voice:[/bold magenta] {'on' if voice_enabled else 'off'}")
+                if voice_enabled:
+                    try:
+                        backend = speaker.speak("Voice enabled.")
+                        console.print(f"[dim]Local TTS backend: {backend}[/dim]")
+                    except Exception as exc:
+                        console.print(f"[bold red]Local voice unavailable:[/bold red] {exc}")
+                continue
+
+            if lower in {"/voice on", "voice on"}:
+                voice_enabled = True
+                state["voice_enabled"] = True
+                _save_state(state)
+                console.print("[bold magenta]Voice: on[/bold magenta]")
+                continue
+
+            if lower in {"/voice off", "voice off"}:
+                voice_enabled = False
+                state["voice_enabled"] = False
+                _save_state(state)
+                speaker.stop()
+                console.print("[bold magenta]Voice: off[/bold magenta]")
+                continue
+
+            if lower in {"/voice test", "voice test", "/voice test auto"}:
+                try:
+                    backend = speaker.test("auto")
+                    console.print(f"[bold green]Voice PASS[/bold green] · backend: {backend}")
+                except Exception as exc:
+                    console.print(f"[bold red]Voice FAIL[/bold red] · {type(exc).__name__}: {exc}")
+                continue
+
+            if lower in {"/voice test edge", "voice test edge"}:
+                try:
+                    backend = speaker.test("edge")
+                    console.print(f"[bold green]Edge voice PASS[/bold green] · backend: {backend}")
+                except Exception as exc:
+                    console.print(f"[bold red]Edge voice FAIL[/bold red] · {type(exc).__name__}: {exc}")
+                continue
+
+            if lower in {"/voice test windows", "voice test windows", "/voice test sapi"}:
+                try:
+                    backend = speaker.test("windows")
+                    console.print(f"[bold green]Windows voice PASS[/bold green] · backend: {backend}")
+                except Exception as exc:
+                    console.print(f"[bold red]Windows voice FAIL[/bold red] · {type(exc).__name__}: {exc}")
+                continue
+
+            if lower in {"/listen", "listen", "/mic", "mic"}:
+                console.print("[dim]Listening...[/dim]")
+                try:
+                    heard = listener.listen_once()
+                except Exception as exc:
+                    console.print(f"[bold red]Microphone unavailable:[/bold red] {type(exc).__name__}: {exc}")
+                    continue
+                if not heard:
+                    console.print("[yellow]I did not hear speech.[/yellow]")
+                    continue
+                text = heard
+                lower = text.lower()
+                console.print(f"[bold cyan]Heard >[/bold cyan] {text}")
 
             if lower == "/research" or lower.startswith("/research "):
                 remainder = text[len("/research"):].strip()
@@ -596,7 +667,16 @@ def main() -> None:
                 thread_id = str(response.get("thread_id") or thread_id)
                 state["thread_id"] = thread_id
                 _save_state(state)
-                console.print(f"[bold magenta]IRAS > [/bold magenta]{response.get('response','')}")
+                reply_text = str(response.get("response") or "")
+                console.print(f"[bold magenta]IRAS > [/bold magenta]{reply_text}")
+                if voice_enabled and reply_text:
+                    try:
+                        speaker.speak(reply_text)
+                    except Exception as voice_exc:
+                        console.print(
+                            f"[bold red]Local voice unavailable:[/bold red] "
+                            f"{type(voice_exc).__name__}: {voice_exc}"
+                        )
             except Exception as exc:
                 console.print(f"[bold red]Cloud error:[/bold red] {exc}")
 

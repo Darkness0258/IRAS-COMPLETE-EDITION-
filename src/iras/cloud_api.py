@@ -4085,6 +4085,29 @@ def voice_resolve(body: TTSIn, authorization: str | None = Header(default=None))
     ).as_dict()
 
 
+@app.get("/v1/voice/health")
+def voice_health(
+    authorization: str | None = Header(default=None),
+):
+    _authorized(authorization)
+    profile = get_profile(settings.voice_profile)
+    selection = resolve_voice(
+        "IRAS voice health",
+        english_voice=profile.voice,
+    )
+    return {
+        "status": "configured",
+        "backend": "edge-tts",
+        "live_probe": "POST /v1/tts",
+        "package_version": str(
+            getattr(edge_tts, "__version__", "unknown")
+        ),
+        "profile": settings.voice_profile,
+        "selection": selection.as_dict(),
+        "fallback_voice": "en-US-JennyNeural",
+    }
+
+
 @app.post("/v1/tts")
 async def tts(
     body: TTSIn,
@@ -4121,33 +4144,74 @@ async def tts(
     )
 
     try:
-        communicate = (
-            edge_tts.Communicate(
-                clean_text,
-                selection.voice,
-                rate=selection.rate,
-                volume=selection.volume,
-                pitch=selection.pitch,
+        candidate_voices = [
+            selection.voice
+        ]
+
+        # Keep the fallback female. This prevents a single locale-specific
+        # Edge voice outage from making every web/mobile client silent.
+        if (
+            "en-US-JennyNeural"
+            not in candidate_voices
+        ):
+            candidate_voices.append(
+                "en-US-JennyNeural"
             )
-        )
 
         audio = bytearray()
+        actual_voice = ""
+        voice_errors: list[str] = []
 
-        async for chunk in (
-            communicate.stream()
-        ):
-            if (
-                chunk["type"]
-                == "audio"
-            ):
-                audio.extend(
-                    chunk["data"]
+        for voice_name in candidate_voices:
+            try:
+                communicate = (
+                    edge_tts.Communicate(
+                        clean_text,
+                        voice_name,
+                        rate=selection.rate,
+                        volume=selection.volume,
+                        pitch=selection.pitch,
+                    )
+                )
+
+                candidate_audio = (
+                    bytearray()
+                )
+
+                async for chunk in (
+                    communicate.stream()
+                ):
+                    if (
+                        chunk["type"]
+                        == "audio"
+                    ):
+                        candidate_audio.extend(
+                            chunk["data"]
+                        )
+
+                if not candidate_audio:
+                    raise RuntimeError(
+                        "Edge TTS returned "
+                        "no audio."
+                    )
+
+                audio = candidate_audio
+                actual_voice = voice_name
+                break
+
+            except Exception as voice_exc:
+                voice_errors.append(
+                    f"{voice_name}: "
+                    f"{type(voice_exc).__name__}: "
+                    f"{voice_exc}"
                 )
 
         if not audio:
             raise RuntimeError(
-                "Edge TTS returned "
-                "no audio."
+                " | ".join(
+                    voice_errors
+                )
+                or "No Edge TTS voice produced audio."
             )
 
         return Response(
@@ -4157,7 +4221,13 @@ async def tts(
                 "Cache-Control": (
                     "no-store"
                 ),
-                "X-IRAS-Voice": selection.voice,
+                "X-IRAS-Voice": actual_voice,
+                "X-IRAS-Voice-Fallback": (
+                    "true"
+                    if actual_voice
+                    != selection.voice
+                    else "false"
+                ),
                 "X-IRAS-Language": selection.language,
                 "X-IRAS-Locale": selection.locale,
                 "X-IRAS-Voice-Mood": selection.mood,
@@ -4172,19 +4242,20 @@ async def tts(
         )
 
     except Exception as exc:
+        detail = (
+            f"{type(exc).__name__}: "
+            f"{str(exc)[:500]}"
+        )
+
         print(
             "[IRAS TTS ERROR] "
-            f"{type(exc).__name__}: "
-            f"{exc}",
+            + detail,
             flush=True,
         )
 
         raise HTTPException(
             status_code=502,
-            detail=(
-                "IRAS voice "
-                "generation failed."
-            ),
+            detail=f"IRAS voice generation failed: {detail}",
         ) from exc
 
 

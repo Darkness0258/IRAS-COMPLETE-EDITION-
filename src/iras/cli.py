@@ -473,3 +473,7 @@ def main():
     except Exception:
         pass
     vision_runtime.stop_supervisor()
+
+
+if __name__ == "__main__":
+    main()

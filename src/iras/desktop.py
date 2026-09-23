@@ -41,9 +41,9 @@ class App:
         self.q: queue.Queue[tuple[str, str]] = queue.Queue()
         self.approval_q: queue.Queue[tuple[ApprovalRequest, threading.Event, dict]] = queue.Queue()
         self.settings = Settings.load()
-        self.speaker = Speaker(self.settings.tts_provider, self.settings.voice)
+        self.speaker = Speaker(self.settings.tts_provider, self.settings.voice, self.settings.voice_profile)
         self.listener = Listener(self.settings.whisper_model, self.settings.listen_seconds)
-        self.voice_on = tk.BooleanVar(value=True)
+        self.voice_on = tk.BooleanVar(value=self.settings.voice_replies)
         self.rt = build_runtime(self.settings, self.approve)
         self.master = self.rt.master
         self.last_code_run_id = ""

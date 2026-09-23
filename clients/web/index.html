@@ -449,7 +449,7 @@ async function initCloudSession({renderHistory=true}={}){
   const headers={"Authorization":"Bearer "+c.token,"Content-Type":"application/json"};
   const reg=await fetch(base+"/v1/cloud/clients/register",{
     method:"POST",headers,
-    body:JSON.stringify({client_id:cloudClientId(),name:"IRAS Web",platform:"web",app_version:"5.0.0-rc4",capabilities:["chat","cloud-sync","remote-control","voice"]})
+    body:JSON.stringify({client_id:cloudClientId(),name:"IRAS Web",platform:"web",app_version:"5.0.0-rc12",capabilities:["chat","cloud-sync","remote-control","voice"]})
   });
   if(!reg.ok)throw new Error((await reg.text())||("HTTP "+reg.status));
   const registered=await reg.json();
@@ -1184,6 +1184,9 @@ function bestRecognitionTranscript(result){
 }
 
 function stopCurrentAudio(){
+  if("speechSynthesis" in window){
+    try{window.speechSynthesis.cancel()}catch(_){}
+  }
   if(currentAudio){
     try{currentAudio.pause();currentAudio.currentTime=0}catch(_){}
     currentAudio=null;
@@ -1256,6 +1259,37 @@ async function fetchVoice(text,session){
   URL.revokeObjectURL(url);
 }
 
+
+async function browserSpeak(text,session){
+  if(session!==voiceSession)return;
+  if(!("speechSynthesis" in window)||typeof SpeechSynthesisUtterance==="undefined"){
+    throw new Error("Browser speech synthesis is unavailable");
+  }
+
+  await new Promise((resolve,reject)=>{
+    const utterance=new SpeechSynthesisUtterance(text);
+    utterance.lang=speechLocale();
+    utterance.rate=.92;
+    utterance.pitch=.98;
+    utterance.volume=1;
+
+    const voices=window.speechSynthesis.getVoices?.()||[];
+    const wanted=utterance.lang.toLowerCase();
+    const base=wanted.split("-")[0];
+    const match=voices.find(v=>(v.lang||"").toLowerCase()===wanted)
+      ||voices.find(v=>(v.lang||"").toLowerCase().startsWith(base+"-"));
+    if(match)utterance.voice=match;
+
+    utterance.onstart=()=>{lastSpokenText=text};
+    utterance.onend=()=>resolve();
+    utterance.onerror=e=>reject(new Error("Browser TTS failed: "+(e.error||"unknown")));
+    try{
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    }catch(e){reject(e)}
+  });
+}
+
 async function pumpVoice(session){
   if(voicePumping||session!==voiceSession)return;
   voicePumping=true;
@@ -1267,7 +1301,15 @@ async function pumpVoice(session){
       try{
         await fetchVoice(sentence,session);
       }catch(e){
-        if(session===voiceSession)console.error("IRAS voice error:",e);
+        if(session!==voiceSession)continue;
+        console.warn("IRAS cloud voice failed; using browser TTS:",e);
+        try{
+          status.textContent="IRAS is speaking · browser fallback";
+          await browserSpeak(sentence,session);
+        }catch(fallbackError){
+          console.error("IRAS browser voice fallback failed:",fallbackError);
+          status.textContent="Voice unavailable · "+fallbackError.message;
+        }
       }
     }
   }finally{
@@ -1772,10 +1814,11 @@ async function startHandsRecognition(){
 }
 
 function persistHandsFree(){
-  const c=config();
+  const stored=JSON.parse(localStorage.getItem("iras-config")||"{}");
 
   localStorage.setItem("iras-config",JSON.stringify({
-    server:c.server||server.value.trim().replace(/\/$/,""),
+    ...stored,
+    server:stored.server||server.value.trim().replace(/\/$/,""),
     wakeWord:wakeWord(),
     handsFree
   }));

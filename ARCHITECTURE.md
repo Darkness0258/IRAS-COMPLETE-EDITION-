@@ -33,6 +33,14 @@ The dedicated Coding Agent resolves one verified Windows project root before its
 - **Network/home:** adapter allowlists; no ambient scanning; state changes need approval.
 - **Sync:** ciphertext-only bundles; transport does not receive plaintext state.
 
+## v5.0 RC12 current surface
+
+RC12 preserves Remote protocol `1` and the existing permission boundary while expanding the operating layer to **37 feature families** and **206 model-facing tools**. The persistent Goal Continuity Ledger records observations, actions, verification, failures, repair decisions, and blockers so interrupted work can resume from fresh evidence without automatically replaying side effects.
+
+The RC12 voice reliability hotfix keeps voice I/O client-side where appropriate and the cloud API focused on authenticated synthesis. Windows cloud-client voice uses local microphone/Whisper plus Edge TTS with Windows SAPI fallback. Android uses the platform `SpeechRecognizer`, authenticated Render TTS, and native `TextToSpeech` as a fallback; its manifest explicitly declares the Android 11+ speech-recognition and TTS service queries. The web client uses Web Speech recognition when available and falls back to browser `SpeechSynthesis` if cloud MP3 playback fails.
+
+No voice path expands authority: voice input is another command-input surface, and any resulting external action still passes through the same ToolRegistry, Remote/Master policy, emergency-stop, filesystem, audit, and Windows/UAC controls.
+
 ## v5.0 RC5 operating-layer surface
 
 RC5 preserves the 36-family v5 operating layer and extends the permissioned Software Installer Agent into a **Software Lifecycle Agent**. WinGet remains the preferred package identity/control plane. Read-only update discovery is separate from CRITICAL update/uninstall execution.

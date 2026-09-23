@@ -5,10 +5,10 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 REQUIRED=[
  'README.md','ARCHITECTURE.md','RC5-FEATURE-MATRIX.md','RELEASE-MANIFEST.json',
- 'docs/V5_0_RC5_NOTES.md','docs/V5_0_RC12_NOTES.md','tests/test_rc12_goal_continuity.py','src/iras/v5/continuity.py','tests/test_v500_capability_layer.py','tests/test_v500_rc3_complete_operating_layer.py',
+ 'docs/V5_0_RC5_NOTES.md','docs/V5_0_RC12_NOTES.md','docs/RC12_VOICE_HOTFIX.md','docs/RC12_FULL_AUDIT_REPORT.md','tests/test_rc12_goal_continuity.py','tests/test_rc12_voice_hotfix.py','src/iras/v5/continuity.py','tests/test_v500_capability_layer.py','tests/test_v500_rc3_complete_operating_layer.py',
  'tests/test_v500_rc3_all_features.py','tests/test_v500_rc3_managed_vision.py','tests/test_v500_rc4_research_installer.py','tests/test_v500_rc5_software_lifecycle.py',
  'scripts/validate_v500_integrated.py','scripts/validate_v500_clean_tree.py','scripts/package_v500_rc5.py','run-v500-validation.ps1',
- 'install.ps1','run-iras.ps1','setup-omniparser.ps1',
+ 'install.ps1','run-iras.ps1','voice-doctor.ps1','setup-omniparser.ps1',
  'src/iras/research_agent.py','src/iras/software_installer.py','src/iras/device_bridge/software_install.py','src/iras/v5/runtime.py','src/iras/v5/scheduler.py','src/iras/v5/monitoring.py','src/iras/v5/semantic_memory.py','src/iras/v5/knowledge_graph.py',
  'src/iras/v5/coding_workspace.py','src/iras/v5/capability_learning.py','src/iras/v5/connectors.py','src/iras/v5/connector_adapters.py',
  'src/iras/v5/artifacts.py','src/iras/v5/sandbox.py','src/iras/v5/skills.py','src/iras/v5/encrypted_sync.py','src/iras/v5/goals.py',

@@ -10,6 +10,8 @@ import android.media.MediaPlayer;
 import android.os.*;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.text.InputType;
 import android.view.*;
 import android.view.animation.DecelerateInterpolator;
@@ -43,6 +45,8 @@ public class MainActivity extends Activity {
     private android.content.SharedPreferences prefs;
     private MediaPlayer player;
     private File voiceFile;
+    private TextToSpeech localTts;
+    private volatile boolean localTtsReady = false;
 
     private final Handler mainHandler =
         new Handler(Looper.getMainLooper());
@@ -84,6 +88,7 @@ public class MainActivity extends Activity {
         );
 
         buildUi();
+        initLocalTts();
 
         if (
             prefs.getString(
@@ -97,18 +102,30 @@ public class MainActivity extends Activity {
         updateHandsButton();
         updateMasterButton();
         createCompanionNotificationChannel();
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION);
+
+        boolean notificationPermissionPending =
+            Build.VERSION.SDK_INT >= 33
+            && checkSelfPermission(
+                Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED;
+
+        if (notificationPermissionPending) {
+            requestPermissions(
+                new String[]{
+                    Manifest.permission.POST_NOTIFICATIONS
+                },
+                NOTIFICATION_PERMISSION
+            );
         }
+
         syncCloudSessionAsync(true);
         mainHandler.postDelayed(companionPollRunnable, 900);
 
         if (
             handsFree
-            && checkSelfPermission(
-                Manifest.permission.RECORD_AUDIO
-            ) == PackageManager.PERMISSION_GRANTED
+            && !notificationPermissionPending
         ) {
+            // startHandsFreeListening owns the RECORD_AUDIO permission check.
             mainHandler.postDelayed(
                 this::startHandsFreeListening,
                 700
@@ -148,6 +165,197 @@ public class MainActivity extends Activity {
             return system == null || system.trim().isEmpty() ? "ur-PK" : system;
         }
         return configured;
+    }
+
+
+    private void configureLocalTtsLanguage() {
+        if (
+            localTts
+            == null
+        ) {
+            return;
+        }
+
+        int availability =
+            localTts.setLanguage(
+                Locale.forLanguageTag(
+                    speechLanguage()
+                )
+            );
+
+        if (
+            availability
+                == TextToSpeech.LANG_MISSING_DATA
+            || availability
+                == TextToSpeech.LANG_NOT_SUPPORTED
+        ) {
+            localTts.setLanguage(
+                Locale.US
+            );
+        }
+    }
+
+    private void resumeHandsFreeAfterVoice(
+        long delayMs
+    ) {
+        if (
+            handsFree
+            && appForeground
+        ) {
+            mainHandler.postDelayed(
+                this::startHandsFreeListening,
+                Math.max(150L, delayMs)
+            );
+        }
+    }
+
+    private void initLocalTts() {
+        localTts =
+            new TextToSpeech(
+                this,
+                result -> {
+                    localTtsReady =
+                        result
+                        == TextToSpeech.SUCCESS;
+
+                    if (!localTtsReady) {
+                        return;
+                    }
+
+                    try {
+                        configureLocalTtsLanguage();
+                        localTts.setSpeechRate(
+                            0.92f
+                        );
+                        localTts.setPitch(
+                            0.98f
+                        );
+
+                        localTts
+                            .setOnUtteranceProgressListener(
+                                new UtteranceProgressListener() {
+                                    @Override public void onStart(
+                                        String id
+                                    ) {
+                                        runOnUiThread(
+                                            () -> status.setText(
+                                                "IRAS is speaking locally"
+                                            )
+                                        );
+                                    }
+
+                                    @Override public void onDone(
+                                        String id
+                                    ) {
+                                        runOnUiThread(
+                                            () -> {
+                                                status.setText(
+                                                    handsFree
+                                                        ? "Listening..."
+                                                        : "Ready"
+                                                );
+                                                resumeHandsFreeAfterVoice(
+                                                    250L
+                                                );
+                                            }
+                                        );
+                                    }
+
+                                    @Override public void onError(
+                                        String id
+                                    ) {
+                                        runOnUiThread(
+                                            () -> {
+                                                status.setText(
+                                                    "Local voice playback failed"
+                                                );
+                                                resumeHandsFreeAfterVoice(
+                                                    500L
+                                                );
+                                            }
+                                        );
+                                    }
+                                }
+                            );
+                    } catch (
+                        Exception ignored
+                    ) {}
+                }
+            );
+    }
+
+    private void speakLocally(
+        String text,
+        String reason
+    ) {
+        stopRecognition();
+        stopVoice();
+
+        if (
+            localTts == null
+            || !localTtsReady
+        ) {
+            status.setText(
+                "Voice unavailable"
+                + (
+                    reason == null
+                    || reason.isEmpty()
+                        ? ""
+                        : " · " + reason
+                )
+            );
+            resumeHandsFreeAfterVoice(
+                500L
+            );
+            return;
+        }
+
+        try {
+            lastSpokenText =
+                text == null
+                    ? ""
+                    : text;
+
+            configureLocalTtsLanguage();
+
+            Bundle params =
+                new Bundle();
+
+            int result =
+                localTts.speak(
+                    lastSpokenText,
+                    TextToSpeech.QUEUE_FLUSH,
+                    params,
+                    "iras-local-fallback"
+                );
+
+            if (
+                result
+                == TextToSpeech.ERROR
+            ) {
+                status.setText(
+                    "Local voice playback failed"
+                );
+                resumeHandsFreeAfterVoice(
+                    500L
+                );
+            } else {
+                status.setText(
+                    "Cloud voice unavailable · using Android voice"
+                );
+            }
+        } catch (
+            Exception exc
+        ) {
+            status.setText(
+                "Voice unavailable · "
+                + exc.getClass()
+                    .getSimpleName()
+            );
+            resumeHandsFreeAfterVoice(
+                500L
+            );
+        }
     }
 
     private int dp(float value) {
@@ -731,6 +939,39 @@ public class MainActivity extends Activity {
                             "IRAS";
                     }
 
+                    String languageValue =
+                        language
+                            .getText()
+                            .toString()
+                            .trim();
+
+                    if (
+                        languageValue
+                            .isEmpty()
+                    ) {
+                        languageValue =
+                            "roman-urdu";
+                    }
+
+                    String moodValue =
+                        voiceMood
+                            .getText()
+                            .toString()
+                            .trim()
+                            .toLowerCase(
+                                Locale.US
+                            );
+
+                    if (
+                        !moodValue.equals("calm")
+                        && !moodValue.equals("warm")
+                        && !moodValue.equals("bright")
+                        && !moodValue.equals("neutral")
+                    ) {
+                        moodValue =
+                            "calm";
+                    }
+
                     prefs.edit()
                         .putString(
                             "server",
@@ -749,6 +990,14 @@ public class MainActivity extends Activity {
                         .putString(
                             "wake_word",
                             wakeValue
+                        )
+                        .putString(
+                            "speech_language",
+                            languageValue
+                        )
+                        .putString(
+                            "voice_mood",
+                            moodValue
                         )
                         .apply();
 
@@ -1373,9 +1622,23 @@ public class MainActivity extends Activity {
                 code < 200
                 || code >= 300
             ) {
+                String detail =
+                    readAll(
+                        c.getErrorStream()
+                    );
+
                 throw new RuntimeException(
                     "Voice HTTP "
                     + code
+                    + (
+                        detail == null
+                        || detail.trim()
+                            .isEmpty()
+                            ? ""
+                            : " · "
+                                + detail
+                                    .trim()
+                    )
                 );
             }
 
@@ -1428,9 +1691,16 @@ public class MainActivity extends Activity {
         } catch (
             Exception e
         ) {
+            final String detail =
+                e.getMessage() == null
+                    ? e.getClass()
+                        .getSimpleName()
+                    : e.getMessage();
+
             runOnUiThread(
-                () -> status.setText(
-                    "Voice unavailable"
+                () -> speakLocally(
+                    text,
+                    detail
                 )
             );
 
@@ -1445,6 +1715,7 @@ public class MainActivity extends Activity {
         File file,
         String spokenText
     ) {
+        stopRecognition();
         stopVoice();
 
         lastSpokenText =
@@ -1482,6 +1753,10 @@ public class MainActivity extends Activity {
                             ? "Listening..."
                             : "Ready"
                     );
+
+                    resumeHandsFreeAfterVoice(
+                        250L
+                    );
                 }
             );
 
@@ -1492,6 +1767,10 @@ public class MainActivity extends Activity {
                     extra
                 ) -> {
                     stopVoice();
+
+                    resumeHandsFreeAfterVoice(
+                        500L
+                    );
                     return true;
                 }
             );
@@ -1502,10 +1781,25 @@ public class MainActivity extends Activity {
             Exception e
         ) {
             stopVoice();
+            resumeHandsFreeAfterVoice(
+                500L
+            );
         }
     }
 
     private void stopVoice() {
+        if (
+            localTts
+            != null
+            && localTtsReady
+        ) {
+            try {
+                localTts.stop();
+            } catch (
+                Exception ignored
+            ) {}
+        }
+
         if (
             player
             != null
@@ -1568,7 +1862,7 @@ public class MainActivity extends Activity {
                 registration.put("client_id", cloudClientId());
                 registration.put("name", "IRAS Android - " + Build.MODEL);
                 registration.put("platform", "android");
-                registration.put("app_version", "5.0.0-rc4");
+                registration.put("app_version", "5.0.0-rc12");
                 JSONArray caps = new JSONArray();
                 caps.put("chat");
                 caps.put("cloud-sync");
@@ -2125,15 +2419,62 @@ public class MainActivity extends Activity {
                         recognitionRunning =
                             false;
 
+                        boolean fatal =
+                            e
+                                == SpeechRecognizer
+                                    .ERROR_INSUFFICIENT_PERMISSIONS
+                            || e
+                                == SpeechRecognizer
+                                    .ERROR_LANGUAGE_NOT_SUPPORTED
+                            || e
+                                == SpeechRecognizer
+                                    .ERROR_LANGUAGE_UNAVAILABLE;
+
+                        if (fatal) {
+                            handsFree =
+                                false;
+
+                            prefs.edit()
+                                .putBoolean(
+                                    "hands_free",
+                                    false
+                                )
+                                .apply();
+
+                            updateHandsButton();
+
+                            status.setText(
+                                "Mic unavailable · error "
+                                + e
+                            );
+                            return;
+                        }
+
                         if (
                             continuousMode
                             && handsFree
                             && appForeground
                         ) {
+                            long delay =
+                                e
+                                    == SpeechRecognizer
+                                        .ERROR_RECOGNIZER_BUSY
+                                    ? 1200L
+                                    : (
+                                        e
+                                            == SpeechRecognizer
+                                                .ERROR_NO_MATCH
+                                        || e
+                                            == SpeechRecognizer
+                                                .ERROR_SPEECH_TIMEOUT
+                                            ? 350L
+                                            : 900L
+                                    );
+
                             mainHandler.postDelayed(
                                 MainActivity.this
                                     ::startHandsFreeListening,
-                                500
+                                delay
                             );
                         } else {
                             status.setText(
@@ -2585,24 +2926,48 @@ public class MainActivity extends Activity {
         if (
             requestCode
             == MIC_PERMISSION
-            && grantResults.length
-            > 0
-            && grantResults[0]
-            == PackageManager
-                .PERMISSION_GRANTED
         ) {
+            boolean granted =
+                grantResults.length
+                    > 0
+                && grantResults[0]
+                    == PackageManager
+                        .PERMISSION_GRANTED;
+
             handsFree =
-                true;
+                granted;
 
             prefs.edit()
                 .putBoolean(
                     "hands_free",
-                    true
+                    granted
                 )
                 .apply();
 
             updateHandsButton();
-            startHandsFreeListening();
+
+            if (granted) {
+                startHandsFreeListening();
+            } else {
+                status.setText(
+                    "Microphone permission denied"
+                );
+            }
+        } else if (
+            requestCode
+            == NOTIFICATION_PERMISSION
+        ) {
+            // Notification permission is independent from voice. Once its
+            // dialog closes, continue the hands-free microphone startup flow.
+            if (
+                handsFree
+                && appForeground
+            ) {
+                mainHandler.postDelayed(
+                    this::startHandsFreeListening,
+                    250
+                );
+            }
         }
     }
 
@@ -2647,6 +3012,20 @@ public class MainActivity extends Activity {
         ) {
             recognizer.destroy();
             recognizer = null;
+        }
+
+        if (
+            localTts
+            != null
+        ) {
+            try {
+                localTts.stop();
+                localTts.shutdown();
+            } catch (
+                Exception ignored
+            ) {}
+            localTts = null;
+            localTtsReady = false;
         }
 
         HttpURLConnection c =

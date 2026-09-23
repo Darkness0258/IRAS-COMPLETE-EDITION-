@@ -78,6 +78,34 @@ class Listener:
         except ValueError:
             return raw
 
+    @classmethod
+    def _supported_sample_rate(cls, sd, requested: int) -> int:
+        device = cls._input_device()
+        requested = max(8000, int(requested))
+        try:
+            sd.check_input_settings(
+                device=device,
+                channels=1,
+                dtype="float32",
+                samplerate=requested,
+            )
+            return requested
+        except Exception:
+            pass
+
+        try:
+            info = sd.query_devices(device, "input")
+            fallback = int(round(float(info.get("default_samplerate", requested) or requested)))
+            sd.check_input_settings(
+                device=device,
+                channels=1,
+                dtype="float32",
+                samplerate=fallback,
+            )
+            return fallback
+        except Exception:
+            return requested
+
     def _ensure_model(self, WhisperModel):
         if self._model is None:
             self._model = WhisperModel(
@@ -248,6 +276,7 @@ class Listener:
     ) -> str:
         np, sd, _sf, _WhisperModel = self._deps()
         with self._listen_lock:
+            sample_rate = self._supported_sample_rate(sd, sample_rate)
             audio_queue: queue.Queue = queue.Queue()
             block_seconds = 0.03
             blocksize = int(sample_rate * block_seconds)

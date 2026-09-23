@@ -123,9 +123,9 @@ class IRASRemoteDesktop:
 
         self.conversation_until = 0.0
         self.last_spoken_text = ""
-        self.voice_on = True
 
         settings = Settings.load()
+        self.voice_on = bool(settings.voice_replies)
 
         self.speaker = Speaker(
             settings.tts_provider,

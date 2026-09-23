@@ -1,6 +1,6 @@
-# IRAS 5.0.0 RC5 — Research, Software Lifecycle & Reliable Autonomous Engineering
+# IRAS 5.0.0 RC12 — Goal Continuity, Perception & Cross-Platform Voice
 
-IRAS v5 builds on the frozen v4.4 permissioned Windows/control core and exposes **36 validated operating-layer feature families**. RC5 extends the dedicated Web Research Agent and permissioned Software Installer into a full Software Lifecycle Agent with exact-package install, update, update-all (explicit only), uninstall, and verification while retaining the Coding Agent resolver and autonomous operating layer.
+IRAS v5 builds on the frozen v4.4 permissioned Windows/control core and exposes **37 validated operating-layer feature families**. RC12 adds restart-safe goal continuity and retains the RC11 perception/deliberate-repair layer, the dedicated Coding and Research agents, the permissioned Software Lifecycle Agent, and the cross-platform Windows/Web/Android voice pipeline.
 
 **Dedicated Coding Agent:** `/code <goal>` uses inspect → implement → test → repair → final-test → review → coordinate. Project resolution honors explicit Windows paths, conservative fuzzy names such as `portfoilo` → `Portfolio`, prefers real roots over nested artifact/mockup/test repositories, refuses genuine ambiguity, and remembers/revalidates the chosen project. RC4 also prevents permission/device-blocked work from being falsely recorded as successful.
 
@@ -8,8 +8,22 @@ IRAS v5 builds on the frozen v4.4 permissioned Windows/control core and exposes 
 
 **Permissioned Software Installer Agent:** `/install search <software>` discovers packages; `/install <software-or-package-id>` prefers WinGet exact-ID installation; `/install url <https://official-installer.exe|msi>` uses a bounded direct-download path. Direct installers must be public HTTPS, cached by IRAS, SHA-256 checked, and Authenticode-valid before execution. Installation remains CRITICAL and continues through Remote authentication, local Remote policy, ToolRegistry authorization, emergency stop, audit, and Windows/UAC.
 
-**Release status:** `5.0.0-rc5`. **Remote protocol remains `1`.** RC5 does not weaken or replace the protected Remote/session, local-policy, device-executor, emergency-stop, filesystem-root, ToolRegistry, or Windows/UAC boundaries.
+**Release status:** `5.0.0-rc12`. **Remote protocol remains `1`.** RC12 preserves the protected Remote/session, local-policy, device-executor, emergency-stop, filesystem-root, ToolRegistry, and Windows/UAC boundaries.
 
+
+## RC12 current release
+
+RC12 adds persistent goal continuity across restarts and interruptions, keeps RC11 perception/deliberate repair, and includes the cross-platform voice reliability hotfix for Windows cloud client, Android, and the Render web client. See `docs/V5_0_RC12_NOTES.md`, `docs/RC12_VOICE_HOTFIX.md`, and `docs/RC12_FULL_AUDIT_REPORT.md`.
+
+### Voice diagnostics
+
+For PC microphone/TTS and deployed Render voice checks:
+
+```powershell
+.\voice-doctor.ps1 -TestMicrophone -PlayRenderAudio
+```
+
+The Android voice fixes require rebuilding/reinstalling the APK after this source is deployed.
 
 ## RC11 overlay — Perception, Process Awareness & Deliberate Repair
 

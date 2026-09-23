@@ -111,6 +111,7 @@
     "goal_execution_continuity": "Restart-safe goal/evidence/action/verification ledger that re-observes stale state and never replays side effects automatically."
   },
   "hotfixes": {
+    "cross_platform_voice": "RC12 voice hotfix restores Windows cloud-client voice I/O, Android mic permission/native TTS fallback, web SpeechSynthesis fallback, and resilient Render Edge-TTS diagnostics.",
     "approval_input": "interactive risky-action prompts accept common affirmative forms such as yes/yep/okay/approve",
     "cloud_thread_context": "Direct cloud chat uses request-scoped cloud thread history instead of leaking recent messages from another cloud thread.",
     "cloud_turn_retry_deduplication": "Web Remote-authorization continuation reuses one turn_id so retrying the same user turn cannot duplicate cloud transcript entries.",
@@ -144,7 +145,9 @@
   "local_regression": {
     "android_companion_compile": "static-contract-validated; Android SDK/Gradle build is host-side",
     "failed": 0,
-    "passed": 938
+    "passed": 951,
+    "audit_host": "portable pytest audit host",
+    "windows_validation_target": "949 passed, 2 skipped (host-side validation required)"
   },
   "managed_omniparser": {
     "authenticated_lifecycle": true,
@@ -219,7 +222,7 @@
     "src/iras/device_bridge/agent.py"
   ],
   "release_date": "2026-09-23",
-  "release_name": "RC12 Persistent Goal Continuity + Evidence-Aware Resume",
+  "release_name": "RC12 Persistent Goal Continuity + Cross-Platform Voice Reliability",
   "release_notes": [
     "Unified cloud workspace shared across Windows, web and Android clients.",
     "Professional adaptive UI/UX and motion system across web/PWA, Windows desktop and Android.",
@@ -346,5 +349,6 @@
     "side_effect_replay_allowed": false,
     "permission_bypass_allowed": false,
     "remote_protocol": 1
-  }
+  },
+  "hotfix_base_commit": "09bde0ec88685dc580fda82ef23580f424655c7c"
 }
