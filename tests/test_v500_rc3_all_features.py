@@ -150,7 +150,7 @@ def test_android_rc3_companion_is_not_chat_only():
     assert '/v1/v5/mobile/approvals/' in java
     assert 'showCompanionApproval' in java
     assert 'companionPollRunnable' in java
-    assert "versionName '5.0.0-rc5'" in gradle
+    assert "versionName '5.0.0-rc11'" in gradle
     assert 'POST_NOTIFICATIONS' in manifest
 
 

@@ -120,7 +120,7 @@ def test_rc3_isolated_workspace_requires_approval_to_merge(tmp_path, monkeypatch
 def test_rc3_status_marks_offline_safe_build(tmp_path, monkeypatch):
     rt = runtime(tmp_path, monkeypatch)
     status = rt.status()
-    assert status["version"] == "5.0.0-rc5"
+    assert status["version"] == "5.0.0-rc11"
     assert status["build_mode"] == "offline-safe"
     assert status["remote_protocol"] == 1
 

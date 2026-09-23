@@ -16,7 +16,7 @@ def test_iras_cli_exposes_version_without_starting_runtime():
         capture_output=True, text=True, timeout=10, env=env,
     )
     assert completed.returncode == 0
-    assert '5.0.0-rc5' in completed.stdout
+    assert '5.0.0-rc11' in completed.stdout
 
 
 def test_remote_setup_requires_32_character_master_token():

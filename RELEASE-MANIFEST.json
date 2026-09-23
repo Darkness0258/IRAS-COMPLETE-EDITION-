@@ -217,8 +217,8 @@
     "src/iras/device_bridge/executor.py",
     "src/iras/device_bridge/agent.py"
   ],
-  "release_date": "2026-09-20",
-  "release_name": "RC5 Research + Permissioned Software Lifecycle + Reliable Coding Agent",
+  "release_date": "2026-09-23",
+  "release_name": "RC11 Desktop Perception + Process Awareness + Deliberate Repair",
   "release_notes": [
     "Unified cloud workspace shared across Windows, web and Android clients.",
     "Professional adaptive UI/UX and motion system across web/PWA, Windows desktop and Android.",
@@ -328,5 +328,5 @@
     "stable_client_ids": true,
     "thread_scoped_direct_chat_context": true
   },
-  "version": "5.0.0-rc5"
+  "version": "5.0.0-rc11"
 }

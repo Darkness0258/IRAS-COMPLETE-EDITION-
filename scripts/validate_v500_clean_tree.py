@@ -36,7 +36,7 @@ def main():
         if p.is_file() and p.name!='.env' and p.suffix.lower() in {'.py','.md','.toml','.yml','.yaml','.ps1','.html','.example'}:
             text=p.read_text(encoding='utf-8',errors='ignore')
             if any(x.search(text) for x in SECRET_PATTERNS): secrets.append(rel)
-    print('=== IRAS v5.0 RC5 CLEAN TREE VALIDATION ===')
+    print('=== IRAS v5.0 RC11 CLEAN TREE VALIDATION ===')
     print('LOCAL .ENV PRESENT:',(ROOT/'.env').exists())
     print('REQUIRED V5 FILES PRESENT:',not missing)
     print('CACHE/COMPILED DEBRIS PRESENT:',bool(cache))

@@ -12,4 +12,4 @@ def test_v500_validator_cleans_editable_install_metadata():
 
 def test_v500_release_is_rc2():
     from iras import __version__
-    assert __version__ == "5.0.0-rc5"
+    assert __version__ == "5.0.0-rc11"
