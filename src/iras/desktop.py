@@ -10,8 +10,10 @@ from pathlib import Path
 from iras.bootstrap import build_runtime
 from iras.config import Settings
 from iras.models import ApprovalRequest
+from iras.security.redact import redact
 from iras.voice.stt import Listener
 from iras.voice.tts import Speaker
+from iras.voice.approval import VoiceApprovalManager
 from iras.coding_agent import build_coding_agent_graph
 from iras.orchestration import format_orchestration_result
 
@@ -43,6 +45,13 @@ class App:
         self.settings = Settings.load()
         self.speaker = Speaker(self.settings.tts_provider, self.settings.voice, self.settings.voice_profile)
         self.listener = Listener(self.settings.whisper_model, self.settings.listen_seconds)
+        self.voice_approver = VoiceApprovalManager(
+            self.listener,
+            self.speaker,
+            enabled=self.settings.voice_approvals,
+            critical_enabled=self.settings.voice_approval_critical,
+            timeout_seconds=self.settings.voice_approval_timeout,
+        )
         self.voice_on = tk.BooleanVar(value=self.settings.voice_replies)
         self.rt = build_runtime(self.settings, self.approve)
         self.master = self.rt.master
@@ -152,6 +161,24 @@ class App:
             )
             btn.pack(fill="x", pady=2)
 
+        self.voice_button = tk.Button(
+            nav,
+            text=f"  Voice · {self.speaker.profile.label}",
+            command=self._cycle_voice_profile,
+            anchor="w",
+            bg="#090E18",
+            fg="#AAB5CA",
+            activebackground="#141E31",
+            activeforeground=self.TEXT,
+            borderwidth=0,
+            relief="flat",
+            padx=12,
+            pady=10,
+            font=self._font(9, "bold"),
+            cursor="hand2",
+        )
+        self.voice_button.pack(fill="x", pady=(7, 2))
+
         self.master_button = tk.Button(
             nav,
             text="  Master Control · OFF",
@@ -178,7 +205,15 @@ class App:
         self.side_dot.pack(side="left")
         self.side_dot_id = self.side_dot.create_oval(1, 1, 9, 9, fill=self.SUCCESS, outline="")
         tk.Label(row, text="  Local runtime", bg="#0D1422", fg="#BFDCCA", font=self._font(9)).pack(side="left")
-        tk.Label(info, text="Voice · Vision · Device control", bg="#0D1422", fg=self.MUTED, font=self._font(8)).pack(anchor="w", padx=12, pady=(0, 12))
+        tk.Label(info, text="Voice · Vision · Device control", bg="#0D1422", fg=self.MUTED, font=self._font(8)).pack(anchor="w", padx=12, pady=(0, 5))
+        self.voice_identity = tk.Label(
+            info,
+            text=f"{self.speaker.profile.label} · {self.speaker.voice.replace('en-US-', '').replace('Neural', '')}",
+            bg="#0D1422",
+            fg="#9EADFF",
+            font=self._font(8, "bold"),
+        )
+        self.voice_identity.pack(anchor="w", padx=12, pady=(0, 12))
 
         main = tk.Frame(self.root, bg=self.PANEL, highlightbackground=self.LINE, highlightthickness=1)
         main.grid(row=0, column=1, sticky="nsew", padx=(8, 16), pady=16)
@@ -194,8 +229,18 @@ class App:
         tk.Label(left, text="Command Center", bg=self.PANEL, fg=self.TEXT, font=self._font(19, "bold")).pack(anchor="w", pady=(2, 0))
         tk.Label(left, text="Private device-first assistant with permissioned execution.", bg=self.PANEL, fg=self.MUTED, font=self._font(9)).pack(anchor="w", pady=(4, 0))
 
-        status_pill = tk.Frame(header, bg="#0D1B19", highlightbackground="#21453A", highlightthickness=1)
-        status_pill.grid(row=0, column=1, sticky="e")
+        header_actions = tk.Frame(header, bg=self.PANEL)
+        header_actions.grid(row=0, column=1, sticky="e")
+        voice_pill = tk.Frame(header_actions, bg="#11182A", highlightbackground="#33416A", highlightthickness=1)
+        voice_pill.pack(side="left", padx=(0, 8))
+        self.voice_orb = tk.Canvas(voice_pill, width=22, height=22, bg="#11182A", highlightthickness=0)
+        self.voice_orb.pack(side="left", padx=(8, 0), pady=7)
+        self.voice_orb_id = self.voice_orb.create_oval(5, 5, 17, 17, fill=self.PRIMARY, outline=self.CYAN)
+        self.header_voice_label = tk.Label(voice_pill, text="IRAS HUMAN · READY", bg="#11182A", fg="#C7D0FF", font=self._font(8, "bold"))
+        self.header_voice_label.pack(side="left", padx=(3, 9))
+
+        status_pill = tk.Frame(header_actions, bg="#0D1B19", highlightbackground="#21453A", highlightthickness=1)
+        status_pill.pack(side="left")
         self.header_dot = tk.Canvas(status_pill, width=14, height=14, bg="#0D1B19", highlightthickness=0)
         self.header_dot.pack(side="left", padx=(10, 0), pady=9)
         self.header_dot_id = self.header_dot.create_oval(3, 3, 11, 11, fill=self.SUCCESS, outline="")
@@ -255,6 +300,30 @@ class App:
             highlightthickness=0,
         )
         voice.pack(side="right")
+
+    def _cycle_voice_profile(self):
+        order = ["iras_human", "anime_soft", "anime_cool", "anime_genki", "normal"]
+        try:
+            index = order.index(self.speaker.profile_name)
+        except ValueError:
+            index = -1
+        selected = order[(index + 1) % len(order)]
+        self.speaker.set_profile(selected)
+        try:
+            self.rt.agent.set_voice_profile(selected)
+        except Exception:
+            pass
+        self._refresh_voice_identity()
+        self._set_status(f"Voice profile · {self.speaker.profile.label}")
+
+    def _refresh_voice_identity(self):
+        voice_short = self.speaker.profile.voice.replace("en-US-", "").replace("MultilingualNeural", "").replace("Neural", "")
+        if hasattr(self, "voice_button"):
+            self.voice_button.configure(text=f"  Voice · {self.speaker.profile.label}")
+        if hasattr(self, "voice_identity"):
+            self.voice_identity.configure(text=f"{self.speaker.profile.label} · {voice_short}")
+        if hasattr(self, "header_voice_label"):
+            self.header_voice_label.configure(text=f"{self.speaker.profile.label.upper()} · READY")
 
     def _toggle_master(self):
         state = self.master.status()
@@ -334,17 +403,32 @@ class App:
         color = self.SUCCESS if self._pulse_on else "#2C7B5A"
         self.side_dot.itemconfigure(self.side_dot_id, fill=color)
         self.header_dot.itemconfigure(self.header_dot_id, fill=color)
+        if hasattr(self, "voice_orb"):
+            voice_color = self.CYAN if self._pulse_on else self.PRIMARY
+            self.voice_orb.itemconfigure(self.voice_orb_id, fill=voice_color)
         self.root.after(950, self._pulse_status)
 
     def _set_status(self, text: str):
         self.status.configure(text=text)
         lowered = text.lower()
+        voice_state = "READY"
+        voice_color = "#C7D0FF"
         if any(word in lowered for word in ("error", "unavailable", "failed")):
             self.status.configure(fg="#FF8EA4")
-        elif any(word in lowered for word in ("thinking", "listening", "working", "processing")):
+            voice_state, voice_color = "ATTENTION", "#FF9AAD"
+        elif "listening" in lowered:
+            self.status.configure(fg="#8FE9FF")
+            voice_state, voice_color = "LISTENING", "#8FE9FF"
+        elif any(word in lowered for word in ("thinking", "working", "processing")):
             self.status.configure(fg="#A8B7FF")
+            voice_state, voice_color = "THINKING", "#B4BEFF"
+        elif "speaking" in lowered:
+            self.status.configure(fg="#9FEAFF")
+            voice_state, voice_color = "SPEAKING", "#9FEAFF"
         else:
             self.status.configure(fg=self.MUTED)
+        if hasattr(self, "header_voice_label"):
+            self.header_voice_label.configure(text=f"{self.speaker.profile.label.upper()} · {voice_state}", fg=voice_color)
 
     def append(self, who: str, text: str):
         mine = who.lower() == "you"
@@ -379,6 +463,10 @@ class App:
         self.root.after_idle(lambda: self.chat_canvas.yview_moveto(1.0))
 
     def approve(self, req: ApprovalRequest):
+        if self.settings.voice_approvals:
+            result = self.voice_approver.request(req)
+            if result.resolved:
+                return bool(result.approved)
         event = threading.Event()
         box: dict[str, bool] = {}
         self.approval_q.put((req, event, box))
@@ -404,7 +492,7 @@ class App:
         ).pack(anchor="w", padx=24)
         args = tk.Text(win, height=10, wrap="word", bg="#090E18", fg="#C7D1E4", relief="flat", font=("Consolas", 9), padx=12, pady=10)
         args.pack(fill="both", expand=True, padx=24, pady=16)
-        args.insert("1.0", json.dumps(req.arguments, indent=2, default=str))
+        args.insert("1.0", json.dumps(redact(req.arguments), indent=2, default=str))
         args.configure(state="disabled")
         actions = tk.Frame(win, bg=self.PANEL)
         actions.pack(fill="x", padx=24, pady=(0, 22))
@@ -496,11 +584,20 @@ class App:
                     self.append("You", value)
                     self._set_status("IRAS is thinking…")
                     threading.Thread(target=self.work, args=(value,), daemon=True).start()
+                elif kind == "voice_state":
+                    self._set_status("IRAS is speaking…" if value == "speaking" else "Ready")
+                    continue
                 else:
                     self.append("IRAS", value)
                     self._set_status("Ready")
                     if self.voice_on.get():
-                        threading.Thread(target=lambda: self.speaker.speak(value), daemon=True).start()
+                        def speak_reply(reply=value):
+                            self.q.put(("voice_state", "speaking"))
+                            try:
+                                self.speaker.speak(reply)
+                            finally:
+                                self.q.put(("voice_state", "ready"))
+                        threading.Thread(target=speak_reply, daemon=True).start()
         except queue.Empty:
             pass
         self.root.after(100, self.poll)

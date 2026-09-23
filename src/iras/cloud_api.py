@@ -109,6 +109,8 @@ from iras.voice.humanize import (
 )
 from iras.voice.profiles import (
     get_profile,
+    normalize_profile,
+    profile_catalog,
 )
 from iras.voice.multilingual_voice import (
     language_catalog,
@@ -278,6 +280,7 @@ class TTSIn(BaseModel):
     language: str = Field(default="", max_length=40)
     voice_gender: str = Field(default="", pattern="^(|female|male)$")
     mood: str = Field(default="", pattern="^(|calm|warm|bright|neutral)$")
+    voice_profile: str = Field(default="", max_length=64)
 
 
 class DevicePairIn(BaseModel):
@@ -4086,17 +4089,33 @@ def voice_catalog(authorization: str | None = Header(default=None)):
     return {"status": multilingual_voice_status(), "voices": language_catalog()}
 
 
+@app.get("/v1/voice/profiles")
+def voice_profiles(authorization: str | None = Header(default=None)):
+    _authorized(authorization)
+    return {
+        "default": normalize_profile(settings.voice_profile),
+        "profiles": profile_catalog(),
+        "identity": "female",
+    }
+
+
 @app.post("/v1/voice/resolve")
 def voice_resolve(body: TTSIn, authorization: str | None = Header(default=None)):
     _authorized(authorization)
-    profile = get_profile(settings.voice_profile)
-    return resolve_voice(
+    profile_name = normalize_profile(body.voice_profile or settings.voice_profile)
+    profile = get_profile(profile_name)
+    alternate = profile.fallback_voices[0] if profile.fallback_voices else "en-US-JennyNeural"
+    result = resolve_voice(
         body.text,
         preferred_language=body.language or None,
         gender=body.voice_gender or None,
-        mood=body.mood or None,
+        mood=body.mood or ("warm" if profile_name == "iras_human" else None),
         english_voice=profile.voice,
+        english_alternate=alternate,
     ).as_dict()
+    result["voice_profile"] = profile_name
+    result["voice_signature"] = profile.signature
+    return result
 
 
 @app.get("/v1/voice/health")
@@ -4119,6 +4138,9 @@ def voice_health(
         "profile": settings.voice_profile,
         "selection": selection.as_dict(),
         "fallback_voice": "en-US-JennyNeural",
+        "identity": "female",
+        "profiles_endpoint": "GET /v1/voice/profiles",
+        "available_profiles": [item["key"] for item in profile_catalog()],
     }
 
 
@@ -4146,31 +4168,36 @@ async def tts(
             ),
         )
 
-    profile = get_profile(
-        settings.voice_profile
+    profile_name = normalize_profile(
+        body.voice_profile
+        or settings.voice_profile
+    )
+    profile = get_profile(profile_name)
+    alternate_voice = (
+        profile.fallback_voices[0]
+        if profile.fallback_voices
+        else "en-US-JennyNeural"
     )
     selection = resolve_voice(
         clean_text,
         preferred_language=body.language or None,
         gender=body.voice_gender or None,
-        mood=body.mood or None,
+        mood=body.mood or ("warm" if profile_name == "iras_human" else None),
         english_voice=profile.voice,
+        english_alternate=alternate_voice,
     )
 
     try:
-        candidate_voices = [
-            selection.voice
-        ]
-
-        # Keep the fallback female. This prevents a single locale-specific
-        # Edge voice outage from making every web/mobile client silent.
-        if (
-            "en-US-JennyNeural"
-            not in candidate_voices
+        candidate_voices: list[str] = []
+        for voice_name in (
+            selection.voice,
+            selection.alternate_voice,
+            *profile.fallback_voices,
+            "en-US-JennyNeural",
         ):
-            candidate_voices.append(
-                "en-US-JennyNeural"
-            )
+            voice_name = str(voice_name or "").strip()
+            if voice_name and voice_name not in candidate_voices:
+                candidate_voices.append(voice_name)
 
         audio = bytearray()
         actual_voice = ""
@@ -4249,8 +4276,7 @@ async def tts(
                     "X-IRAS-"
                     "Voice-Profile"
                 ): (
-                    settings
-                    .voice_profile
+                    profile_name
                 ),
             },
         )

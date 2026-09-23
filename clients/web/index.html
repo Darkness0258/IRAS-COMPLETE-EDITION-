@@ -128,6 +128,33 @@
     }
     @media(max-width:600px){.topbar .eyebrow{display:none}.topbar{padding-top:14px}.top-status{max-width:140px;overflow:hidden;text-overflow:ellipsis}.welcome-mark{width:58px;height:58px;border-radius:20px}.welcome h2{font-size:24px}.m{font-size:14px;padding:15px 15px 24px}.icon-btn{font-size:0;width:42px;padding:0}#handsfree::before{content:"◉";font-size:15px}#mic::before{content:"⌁";font-size:16px}.primary{padding:0 15px}}
     @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.001ms!important}.ambient{display:none}}
+  
+
+    /* RC12 Human Voice + Adaptive Surface */
+    .topbar-main{min-width:0}.topbar-actions{display:flex;align-items:center;gap:12px;flex:0 0 auto}
+    .voice-presence{display:flex;align-items:center;gap:11px;min-width:188px;padding:8px 12px 8px 9px;border:1px solid rgba(139,156,255,.22);border-radius:16px;background:linear-gradient(145deg,rgba(18,26,44,.92),rgba(10,16,28,.88));box-shadow:inset 0 1px rgba(255,255,255,.035),0 12px 34px rgba(0,0,0,.18)}
+    .voice-visual{position:relative;width:38px;height:38px;display:grid;place-items:center;flex:0 0 38px}.voice-ring{position:absolute;border-radius:50%;border:1px solid rgba(126,166,255,.28);inset:1px;animation:voiceHalo 2.8s ease-in-out infinite}.voice-ring.r2{inset:6px;border-color:rgba(102,227,255,.28);animation-delay:-1.1s}.voice-core{width:16px;height:16px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff 0 6%,#b4c0ff 18%,#728bff 48%,#33c8ef 100%);box-shadow:0 0 18px rgba(100,169,255,.58);transition:.22s var(--ease)}
+    .voice-bars{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:2px;opacity:0;transition:.18s}.voice-bars i{display:block;width:2px;height:7px;border-radius:9px;background:#bceeff;animation:voiceBar .62s ease-in-out infinite alternate}.voice-bars i:nth-child(2){animation-delay:-.18s;height:13px}.voice-bars i:nth-child(3){animation-delay:-.34s;height:9px}
+    .voice-copy{min-width:0}.voice-copy b{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#eef3ff}.voice-copy span{display:block;margin-top:2px;font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px}
+    .voice-presence[data-state="listening"]{border-color:rgba(102,227,255,.42);box-shadow:0 0 0 1px rgba(102,227,255,.05),0 12px 38px rgba(29,175,218,.12)}
+    .voice-presence[data-state="listening"] .voice-core{transform:scale(.78);background:#62e4ff}.voice-presence[data-state="listening"] .voice-ring{animation-duration:1.25s}
+    .voice-presence[data-state="speaking"] .voice-core{opacity:.15}.voice-presence[data-state="speaking"] .voice-bars{opacity:1}.voice-presence[data-state="speaking"] .voice-ring{animation-duration:1s}
+    .voice-presence[data-state="thinking"] .voice-core{animation:voiceThink 1.1s ease-in-out infinite}.voice-presence[data-state="error"]{border-color:rgba(255,113,139,.42)}.voice-presence[data-state="error"] .voice-core{background:#ff718b;box-shadow:0 0 18px rgba(255,113,139,.45)}
+    @keyframes voiceHalo{50%{transform:scale(.88);opacity:.48}}@keyframes voiceBar{to{height:17px;opacity:.55}}@keyframes voiceThink{50%{transform:scale(.66);filter:hue-rotate(42deg)}}
+    .welcome{position:relative}.welcome::before{content:"IRAS HUMAN VOICE";display:inline-flex;align-items:center;gap:7px;padding:6px 10px;margin-bottom:17px;border:1px solid rgba(139,156,255,.18);border-radius:999px;background:rgba(139,156,255,.07);color:#aebaff;font-size:9px;font-weight:800;letter-spacing:.15em}
+    .welcome::after{content:"";position:absolute;inset:auto 10% -38% 10%;height:180px;background:radial-gradient(ellipse,rgba(92,120,255,.10),transparent 66%);pointer-events:none}
+    .chat-stage{position:relative}.m{backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+    .bar:focus-within{border-color:rgba(115,160,255,.42);box-shadow:0 18px 56px rgba(0,0,0,.34),0 0 0 3px rgba(104,155,255,.055)}
+    .voice-profile-note{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:7px 0 3px;padding:10px 11px;border:1px solid var(--line);background:rgba(101,128,255,.055);border-radius:12px}.voice-profile-note b{font-size:11px}.voice-profile-note span{font-size:10px;color:var(--muted)}
+    dialog select{width:100%;margin:6px 0 10px;border:1px solid var(--line-strong);background:#0d1320;color:#f7f9ff;border-radius:12px;padding:11px 12px;outline:0}dialog select:focus{border-color:rgba(139,156,255,.45);box-shadow:0 0 0 3px rgba(139,156,255,.08)}
+    body[data-ui-state="speaking"] .ambient.a{opacity:.28;filter:blur(82px)}body[data-ui-state="listening"] .ambient.b{opacity:.30;filter:blur(78px)}
+    @media(max-width:980px){.topbar-actions{gap:8px}.voice-presence{min-width:0;padding:7px 9px}.voice-copy span{max-width:105px}.welcome::before{margin-bottom:13px}}
+    @media(max-width:760px){
+      .app-shell{padding-bottom:calc(66px + env(safe-area-inset-bottom))}.sidebar{position:fixed;left:8px;right:8px;top:auto;bottom:calc(7px + env(safe-area-inset-bottom));height:56px!important;z-index:40;border:1px solid var(--line-strong)!important;border-radius:18px!important;padding:6px 7px!important;box-shadow:0 16px 50px rgba(0,0,0,.48);background:rgba(10,15,25,.91)}
+      .nav{height:100%;align-items:center}.nav button{min-width:45px;height:44px;justify-content:center;padding:7px!important;border-radius:13px}.nav button span:last-child{display:none}.nav-icon{width:27px;height:27px;border:0;background:transparent;font-size:16px}.workspace{height:calc(100dvh - 72px - env(safe-area-inset-bottom))!important}.topbar{padding:13px 13px 10px}.topbar-actions .top-status{display:none}.voice-presence{border-radius:14px}.voice-copy b{font-size:9px}.voice-copy span{font-size:9px;max-width:86px}.voice-visual{width:32px;height:32px;flex-basis:32px}.composer-wrap{padding-bottom:10px}.bar{max-width:none}.status{padding-left:5px}
+    }
+    @media(max-width:470px){.topbar h1{font-size:18px}.voice-copy{display:none}.voice-presence{min-width:46px;padding:5px}.voice-visual{width:34px;height:34px;flex-basis:34px}.welcome{padding-top:25px}.prompt-grid{display:none}#chat{padding-left:10px;padding-right:10px}.m{max-width:97%}.composer-wrap{padding-left:7px;padding-right:7px}.bar{gap:5px;padding:6px}.primary{height:40px}.icon-btn{height:40px;width:40px}}
+
   </style>
 </head>
 <body>
@@ -157,8 +184,14 @@
 
   <section class="workspace">
     <header class="topbar">
-      <div><div class="eyebrow">Unified intelligence</div><h1>Command Center</h1><p>One workspace for cloud, devices, voice, autonomy, and execution.</p></div>
-      <div class="top-status"><i class="health-dot"></i><span>IRAS online</span></div>
+      <div class="topbar-main"><div class="eyebrow">Unified intelligence</div><h1>Command Center</h1><p>One workspace for cloud, devices, voice, autonomy, and execution.</p></div>
+      <div class="topbar-actions">
+        <div class="voice-presence" id="voicePresence" data-state="idle" aria-label="IRAS voice state">
+          <div class="voice-visual" aria-hidden="true"><i class="voice-ring"></i><i class="voice-ring r2"></i><i class="voice-core"></i><span class="voice-bars"><i></i><i></i><i></i></span></div>
+          <div class="voice-copy"><b>IRAS Human</b><span id="voiceStateLabel">Ready · Ava multilingual</span></div>
+        </div>
+        <div class="top-status"><i class="health-dot"></i><span>IRAS online</span></div>
+      </div>
     </header>
 
     <main class="chat-stage">
@@ -219,10 +252,17 @@
     <option value="zh-CN">Mandarin Chinese</option>
     <option value="vi-VN">Vietnamese</option>
   </select>
+  <label>Voice identity</label>
+  <select id="voiceProfile">
+    <option value="iras_human">IRAS Human · Ava Multilingual</option>
+    <option value="anime_soft">Soft · Jenny Neural</option>
+    <option value="anime_cool">Cool · Aria Neural</option>
+    <option value="anime_genki">Energetic · Jenny Neural</option>
+    <option value="normal">Neutral · Aria Neural</option>
+  </select>
   <label>Voice mood</label>
-  <select id="voiceMood"><option value="calm">Calm</option><option value="warm">Warm</option><option value="bright">Bright</option><option value="neutral">Neutral</option></select>
-  <label>Voice</label>
-  <div class="sub">IRAS female voice · fixed identity</div>
+  <select id="voiceMood"><option value="warm">Warm · natural default</option><option value="calm">Calm</option><option value="bright">Bright</option><option value="neutral">Neutral</option></select>
+  <div class="voice-profile-note"><div><b>IRAS Human</b><br><span>Female multilingual neural identity with all-female fallback voices.</span></div><span>RC12</span></div>
   <div class="row">
     <button id="cancelCfg">Cancel</button>
     <button class="primary" id="saveCfg">Save</button>
@@ -303,6 +343,7 @@ const $=s=>document.querySelector(s);
 const chat=$("#chat"),msg=$("#msg"),status=$("#status"),welcome=$("#welcome");
 const cfg=$("#cfg"),server=$("#server"),token=$("#token"),wake=$("#wake");
 const handsButton=$("#handsfree");
+const voicePresence=$("#voicePresence"),voiceStateLabel=$("#voiceStateLabel");
 const remoteButton=$("#remote"),masterButton=$("#master"),screenButton=$("#screen"),directButton=$("#direct"),tasksButton=$("#tasks"),providersButton=$("#providers"),v5Button=$("#v5control");
 const screenDlg=$("#screenDlg"),screenImg=$("#screenImg");
 const directDlg=$("#directDlg"),directAction=$("#directAction"),directArgs=$("#directArgs"),directOut=$("#directOut");
@@ -321,13 +362,15 @@ let cloudPollTimer=null;
 let handsFree=false,recognition=null,restartTimer=null,manualRecognition=null;
 let conversationUntil=0;
 let recognitionHadAudio=false,recognitionHadSpeech=false;
+let speechLocaleCursor=0;
 
 const local=JSON.parse(localStorage.getItem("iras-config")||"{}");
 server.value=local.server||location.origin;
 token.value=sessionStorage.getItem("iras-api-token")||"";
 wake.value=local.wakeWord||"IRAS";
 $("#language").value=local.language||"roman-urdu";
-$("#voiceMood").value=local.voiceMood||"calm";
+$("#voiceProfile").value=local.voiceProfile||"iras_human";
+$("#voiceMood").value=local.voiceMood||"warm";
 handsFree=!!local.handsFree;
 
 function escapeHtml(value){
@@ -1075,19 +1118,38 @@ function saveConfig(){
     server:server.value.trim().replace(/\/$/,""),
     wakeWord:(wake.value.trim()||"IRAS"),
     language:($("#language").value||"roman-urdu"),
-    voiceMood:($("#voiceMood").value||"calm"),
+    voiceProfile:($("#voiceProfile").value||"iras_human"),
+    voiceMood:($("#voiceMood").value||"warm"),
     voiceGender:"female",
     handsFree
   }));
+  speechLocaleCursor=0;
   cfg.close();
   setTimeout(()=>initCloudSession({renderHistory:true}).then(startCloudPolling).catch(e=>status.textContent="Cloud sync error: "+e.message),50);
 }
 
 function wakeWord(){return (config().wakeWord||"IRAS").trim()}
-function speechLocale(){
+function automaticSpeechLocale(){
+  const selected=(config().language||"roman-urdu").trim().toLowerCase();
+  return !selected||selected==="auto"||selected==="roman-urdu";
+}
+function speechLocales(){
   const selected=(config().language||"roman-urdu").trim();
-  if(selected==="roman-urdu")return "ur-PK";
-  return selected&&selected!=="auto"?selected:(navigator.language||"ur-PK");
+  if(!automaticSpeechLocale())return [selected];
+
+  // en-IN is the best first pass for Latin-script Roman Urdu + South-Asian
+  // English; native Urdu and generic English are automatic fallbacks.
+  const locales=["en-IN","ur-PK","en-US",navigator.language||""];
+  return [...new Set(locales.filter(Boolean))];
+}
+function speechLocale(){
+  const locales=speechLocales();
+  return locales[speechLocaleCursor%locales.length]||"en-IN";
+}
+function advanceSpeechLocale(){
+  if(!automaticSpeechLocale())return;
+  const locales=speechLocales();
+  speechLocaleCursor=(speechLocaleCursor+1)%Math.max(1,locales.length);
 }
 
 function ttsFallbackLocale(){
@@ -1111,6 +1173,8 @@ function wakeAliases(){
     "eye-rass",
     "Ira's",
     "I R A S",
+    "آئرس",
+    "ایرس",
     "little girl",
     "cute"
   ];
@@ -1141,7 +1205,7 @@ function parseWake(text,{ignoreConversation=false}={}){
   const re=new RegExp(
     "^\\s*(?:(?:hey|okay|ok)\\s+)?"
       +wakeRegex()
-      +"\\b[\\s,.:;!?-]*(.*)$",
+      +"(?=$|[\\s,.:;!?-])[\\s,.:;!?-]*(.*)$",
     "i"
   );
 
@@ -1237,8 +1301,9 @@ async function fetchVoice(text,session){
     body:JSON.stringify({
       text,
       language:(c.language||"roman-urdu"),
-      mood:c.voiceMood||"calm",
-      voice_gender:"female"
+      mood:c.voiceMood||"warm",
+      voice_gender:"female",
+      voice_profile:c.voiceProfile||"iras_human"
     })
   });
 
@@ -1282,8 +1347,9 @@ async function browserSpeak(text,session){
     const voices=window.speechSynthesis.getVoices?.()||[];
     const wanted=utterance.lang.toLowerCase();
     const base=wanted.split("-")[0];
-    const match=voices.find(v=>(v.lang||"").toLowerCase()===wanted)
-      ||voices.find(v=>(v.lang||"").toLowerCase().startsWith(base+"-"));
+    const feminine=/ava|emma|jenny|aria|samantha|zira|female|woman/i;
+    const languageVoices=voices.filter(v=>{const lang=(v.lang||"").toLowerCase();return lang===wanted||lang.startsWith(base+"-")});
+    const match=languageVoices.find(v=>feminine.test(v.name||""))||languageVoices[0];
     if(match)utterance.voice=match;
 
     utterance.onstart=()=>{lastSpokenText=text};
@@ -1597,14 +1663,15 @@ function send(){sendText(msg.value)}
 
 function handleTranscript(transcript){
   const text=(transcript||"").trim();
-  if(!text)return;
+  if(!text)return false;
 
-  if(probableEcho(text,lastSpokenText))return;
+  if(probableEcho(text,lastSpokenText))return false;
 
   const {accepted,command}=parseWake(text);
   if(!accepted){
-    status.textContent="Hands-free · say "+wakeWord();
-    return;
+    advanceSpeechLocale();
+    status.textContent="Hands-free · "+speechLocale()+" · say "+wakeWord();
+    return false;
   }
 
   if(currentAudio||voicePumping||sending){
@@ -1614,11 +1681,12 @@ function handleTranscript(transcript){
   if(!command){
     conversationUntil=Date.now()+8000;
     status.textContent="Yeah? I'm listening.";
-    return;
+    return true;
   }
 
   conversationUntil=Date.now()+20000;
   sendText(command,{interrupt:true});
+  return true;
 }
 
 function recognitionCtor(){
@@ -1705,12 +1773,12 @@ async function startHandsRecognition(){
   r.maxAlternatives=3;
 
   r.onstart=()=>{
-    status.textContent="Hands-free · listening for "+wakeWord();
+    status.textContent="Hands-free · "+r.lang+" · listening for "+wakeWord();
   };
 
   r.onaudiostart=()=>{
     recognitionHadAudio=true;
-    status.textContent="Mic active · say "+wakeWord();
+    status.textContent="Mic active · "+r.lang+" · say "+wakeWord();
   };
 
   r.onspeechstart=()=>{
@@ -1776,6 +1844,12 @@ async function startHandsRecognition(){
       updateHandsButton();
       persistHandsFree();
       status.textContent="Chrome cannot access a microphone. Check your Windows input device.";
+      return;
+    }
+
+    if(code==="language-not-supported"){
+      advanceSpeechLocale();
+      status.textContent="Speech locale unsupported · trying "+speechLocale()+"...";
       return;
     }
 
@@ -1982,14 +2056,32 @@ document.querySelectorAll(".prompt-chip").forEach(btn=>{
   });
 });
 
+function syncVoicePresence(){
+  if(!voicePresence||!voiceStateLabel)return;
+  const value=(status.textContent||"Ready").trim();
+  const low=value.toLowerCase();
+  let state="idle";
+  if(/error|failed|unavailable|blocked/.test(low))state="error";
+  else if(/speaking|voice playback/.test(low))state="speaking";
+  else if(/listening|mic active|hands-free/.test(low))state="listening";
+  else if(/thinking|working|processing|starting|connecting|waiting/.test(low))state="thinking";
+  voicePresence.dataset.state=state;
+  document.body.dataset.uiState=state;
+  const profile=(config().voiceProfile||"iras_human")==="iras_human"?"IRAS Human":"IRAS Voice";
+  const short=value.length>42?value.slice(0,39)+"…":value;
+  voiceStateLabel.textContent=short||profile;
+}
+
 const statusObserver=new MutationObserver(()=>{
   const value=(status.textContent||"").toLowerCase();
   status.classList.remove("busy","error","ok");
   if(/error|failed|unavailable|blocked|required/.test(value))status.classList.add("error");
   else if(/thinking|working|starting|connecting|listening|processing|capturing|waiting/.test(value))status.classList.add("busy");
   else if(/ready|synced|completed|updated|active/.test(value))status.classList.add("ok");
+  syncVoicePresence();
 });
 statusObserver.observe(status,{childList:true,characterData:true,subtree:true});
+syncVoicePresence();
 
 updateHandsButton();
 

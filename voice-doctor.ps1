@@ -76,14 +76,19 @@ from iras.voice.stt import Listener
 status = Listener.microphone_status()
 print("Available:", status.get("available"))
 print("Input devices:", status.get("count"))
-print("Selected:", status.get("selected"))
-
-for dev in status.get("devices", []):
+print("Configured:", status.get("configured"))
+print("Auto-selected:", status.get("selected"), "-", status.get("selected_name"))
+print()
+print("Ranked input devices (highest reliability first):")
+for dev in sorted(status.get("devices", []), key=lambda x: x.get("score", 0), reverse=True):
     index = dev.get("index")
     name = dev.get("name")
     channels = dev.get("channels")
     rate = int(float(dev.get("default_samplerate") or 0))
-    print(f"  [{index}] {name} | {channels} ch | {rate} Hz")
+    host = dev.get("hostapi") or "unknown host API"
+    marker = " <AUTO>" if index == status.get("selected") else ""
+    default = " <WINDOWS DEFAULT>" if dev.get("is_default") else ""
+    print(f"  [{index}] score={dev.get('score', 0):>4} | {host} | {name} | {channels} ch | {rate} Hz{marker}{default}")
 '@
 
 $micInventory | & $Python -
@@ -100,18 +105,66 @@ from iras.voice.stt import Listener
 settings = Settings.load()
 listener = Listener(settings.whisper_model, settings.listen_seconds)
 
+print("LEVEL TEST: speak normally for the next 2 seconds...")
+level = Listener.test_input_level(seconds=2.0)
 print(
-    f"Listening for about {settings.listen_seconds} seconds "
-    f"using Whisper model '{settings.whisper_model}'..."
+    "LEVEL:",
+    f"device={level['device']} ({level['name']})",
+    f"rate={level['sample_rate']}Hz",
+    f"signal={level['signal']}",
+    f"rms={level['rms']:.5f}",
+    f"peak={level['peak']:.5f}",
+    f"dBFS={level['dbfs']:.1f}",
 )
+if level["signal"] in {"silent", "very-low"}:
+    print("MIC LEVEL WARNING: input is very quiet. Check Windows input volume/privacy or try IRAS_MIC_DEVICE=<index>.")
 
+print()
+print(
+    f"WHISPER TEST: say a short English, Roman Urdu, or Urdu sentence "
+    f"using model '{settings.whisper_model}'..."
+)
 heard = listener.listen_once()
 
 if heard:
     print("MIC/STT PASS")
     print("Heard:", heard)
+    print(
+        "Capture:",
+        f"device={listener.last_device} ({listener.last_device_name})",
+        f"rate={listener.last_sample_rate}Hz",
+        f"rms={listener.last_rms:.5f}",
+        f"peak={listener.last_peak:.5f}",
+        f"noise={listener.last_noise_floor:.5f}",
+        f"threshold={listener.last_energy_threshold:.5f}",
+        f"clipping={listener.last_clipping_ratio * 100:.2f}%",
+        f"stt_attempts={listener.last_transcription_attempts}",
+    )
+    if listener.last_clipping_ratio >= 0.01:
+        print("MIC LEVEL WARNING: capture is clipping. Lower Windows microphone input level/boost if recognition remains inaccurate.")
+    print(
+        "Whisper language:",
+        listener.last_language or "unknown",
+        f"confidence={listener.last_language_probability:.3f}",
+    )
 else:
-    print("MIC/STT WARNING: no speech was transcribed.")
+    print("MIC/STT WARNING: audio opened but no speech was transcribed.")
+    print(
+        "Capture:",
+        f"device={listener.last_device} ({listener.last_device_name})",
+        f"rate={listener.last_sample_rate}Hz",
+        f"rms={listener.last_rms:.5f}",
+        f"peak={listener.last_peak:.5f}",
+        f"noise={listener.last_noise_floor:.5f}",
+        f"threshold={listener.last_energy_threshold:.5f}",
+        f"clipping={listener.last_clipping_ratio * 100:.2f}%",
+        f"stt_attempts={listener.last_transcription_attempts}",
+        f"error={listener.last_capture_error or 'none'}",
+    )
+    if listener.last_transcription_rejected_reason:
+        print("STT rejected:", listener.last_transcription_rejected_reason)
+    if listener.last_clipping_ratio >= 0.01:
+        print("MIC LEVEL WARNING: capture is clipping. Lower Windows microphone input level/boost if recognition remains inaccurate.")
 '@
 
     $micTest | & $Python -
@@ -170,30 +223,58 @@ if ($mpv) {
 
 Write-Section "8. Render authentication"
 
-$token = $env:IRAS_CLOUD_TOKEN
-if (-not $token) {
-    $token = $env:IRAS_API_TOKEN
-}
-if (-not $token) {
-    $token = Read-DotEnvValue "IRAS_CLOUD_TOKEN"
-}
-if (-not $token) {
-    $token = Read-DotEnvValue "IRAS_API_TOKEN"
-}
+$tokenProbe = @'
+from iras.config import Settings
+from iras.cloud_auth import cloud_token_candidates
+import httpx
+import os
 
-if (-not $token) {
-    Write-Host "No IRAS_CLOUD_TOKEN or IRAS_API_TOKEN found." -ForegroundColor Yellow
+server = os.environ.get("IRAS_VOICE_DOCTOR_SERVER", "").rstrip("/")
+settings = Settings.load()
+candidates = cloud_token_candidates(settings)
+if not candidates:
+    print("NONE")
+else:
+    with httpx.Client(timeout=20.0, follow_redirects=True) as client:
+        for source, token in candidates:
+            try:
+                response = client.get(
+                    server + "/v1/voice/health",
+                    headers={"Authorization": "Bearer " + token},
+                )
+                if response.status_code != 401:
+                    print(source + "\t" + token)
+                    break
+            except Exception:
+                print(source + "\t" + token)
+                break
+        else:
+            print("REJECTED")
+'@
+
+$env:IRAS_VOICE_DOCTOR_SERVER = $Server
+$tokenResult = ($tokenProbe | & $Python -) | Select-Object -Last 1
+Remove-Item Env:IRAS_VOICE_DOCTOR_SERVER -ErrorAction SilentlyContinue
+
+if ($tokenResult -eq "NONE") {
+    Write-Host "No cloud token found in .env/environment or protected device pairing." -ForegroundColor Yellow
     Write-Host "Render authenticated voice checks are skipped."
-    Write-Host ""
-    Write-Host "Create/configure .env first, then rerun this script."
     exit 0
 }
+if ($tokenResult -eq "REJECTED") {
+    Write-Host "All available cloud tokens were rejected by Render (401)." -ForegroundColor Red
+    Write-Host "Set local IRAS_CLOUD_TOKEN to the exact Render IRAS_API_TOKEN, or re-pair this PC." -ForegroundColor Yellow
+    exit 0
+}
+
+$parts = $tokenResult -split "`t", 2
+$tokenSource = $parts[0]
+$token = $parts[1]
+Write-Host "Cloud token verified via $tokenSource. Value is intentionally not displayed." -ForegroundColor Green
 
 $headers = @{
     Authorization = "Bearer $token"
 }
-
-Write-Host "Cloud token located. Value is intentionally not displayed." -ForegroundColor Green
 
 Write-Section "9. Render voice health"
 

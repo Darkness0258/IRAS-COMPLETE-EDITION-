@@ -511,6 +511,12 @@ class IRASAgent:
                 "previous track",
                 "stop the music",
                 "mute the music",
+                "terminal on my",
+                "powershell on my",
+                "command prompt on my",
+                "cli on my",
+                "run command on my",
+                "run a command on my",
             ),
         )
 
@@ -526,6 +532,48 @@ class IRASAgent:
 
         # Most-specific intent wins. Do not expose every remote action to the
         # model for a simple request such as "open Chrome".
+        terminal_discovery = cls._contains_any(
+            q,
+            (
+                "available cli",
+                "available command",
+                "installed cli",
+                "find cli",
+                "which command",
+                "what cli",
+                "cli tools",
+                "command line tools",
+            ),
+        )
+        if terminal_discovery:
+            return {"device_cli_discover"}
+
+        terminal_execution = cls._contains_any(
+            q,
+            (
+                "terminal",
+                "powershell",
+                "command prompt",
+                "cmd.exe",
+                " cli ",
+                "run command",
+                "run a command",
+                "execute command",
+                "execute a command",
+            ),
+        ) and cls._contains_any(
+            q,
+            (
+                "run",
+                "execute",
+                "use",
+                "launch",
+                "invoke",
+            ),
+        )
+        if terminal_execution:
+            return {"device_cli_discover", "device_run_command"}
+
         if cls._contains_any(
             q,
             (

@@ -38,6 +38,8 @@ public class MainActivity extends Activity {
     private ScrollView chatScroll;
     private EditText input;
     private TextView status;
+    private TextView voiceIdentity;
+    private ImageView voiceOrbView;
     private Button handsButton;
     private Button masterButton;
 
@@ -58,6 +60,8 @@ public class MainActivity extends Activity {
     private volatile boolean handsFree = false;
     private volatile boolean recognitionRunning = false;
     private volatile boolean appForeground = true;
+    private volatile int speechLanguageCursor = 0;
+    private volatile String activeRecognitionLanguage = "";
     private volatile boolean companionPolling = false;
     private volatile boolean cloudSyncing = false;
     private volatile boolean cloudHistoryLoaded = false;
@@ -157,14 +161,53 @@ public class MainActivity extends Activity {
             : value;
     }
 
-    private String speechLanguage() {
+    private boolean automaticSpeechLanguage() {
         String configured = prefs.getString("speech_language", "roman-urdu").trim();
-        if (configured.equalsIgnoreCase("roman-urdu")) return "ur-PK";
-        if (configured.isEmpty() || configured.equalsIgnoreCase("auto")) {
+        return configured.isEmpty()
+            || configured.equalsIgnoreCase("auto")
+            || configured.equalsIgnoreCase("roman-urdu");
+    }
+
+    private List<String> speechLanguageCandidates() {
+        String configured = prefs.getString("speech_language", "roman-urdu").trim();
+        LinkedHashSet<String> candidates = new LinkedHashSet<>();
+
+        if (automaticSpeechLanguage()) {
+            // en-IN tends to preserve Roman Urdu in Latin text while still
+            // understanding South-Asian English. ur-PK and en-US are cycled
+            // automatically when the recognizer returns no-match/unsupported.
+            candidates.add("en-IN");
+            candidates.add("ur-PK");
+            candidates.add("en-US");
+
             String system = Locale.getDefault().toLanguageTag();
-            return system == null || system.trim().isEmpty() ? "ur-PK" : system;
+            if (system != null && !system.trim().isEmpty()) {
+                candidates.add(system.trim());
+            }
+        } else {
+            candidates.add(configured);
         }
-        return configured;
+
+        if (candidates.isEmpty()) {
+            candidates.add("en-IN");
+        }
+        return new ArrayList<>(candidates);
+    }
+
+    private String speechLanguage() {
+        List<String> candidates = speechLanguageCandidates();
+        int index = Math.floorMod(speechLanguageCursor, candidates.size());
+        return candidates.get(index);
+    }
+
+    private void advanceSpeechLanguage() {
+        if (!automaticSpeechLanguage()) {
+            return;
+        }
+        List<String> candidates = speechLanguageCandidates();
+        if (!candidates.isEmpty()) {
+            speechLanguageCursor = (speechLanguageCursor + 1) % candidates.size();
+        }
     }
 
 
@@ -235,11 +278,12 @@ public class MainActivity extends Activity {
 
                     try {
                         configureLocalTtsLanguage();
+                        String profile = prefs.getString("voice_profile", "iras_human");
                         localTts.setSpeechRate(
-                            0.92f
+                            profile.equals("iras_human") ? 0.94f : 0.92f
                         );
                         localTts.setPitch(
-                            0.98f
+                            profile.equals("iras_human") ? 1.03f : 0.98f
                         );
 
                         localTts
@@ -500,6 +544,39 @@ public class MainActivity extends Activity {
             .start();
     }
 
+    private void syncVoicePresence(String value) {
+        if (voiceIdentity == null || voiceOrbView == null) return;
+        String text = value == null ? "Ready" : value.trim();
+        String lower = text.toLowerCase(Locale.US);
+        int border = Color.rgb(54, 72, 105);
+        int glow = Color.rgb(127, 153, 255);
+        String state = "READY";
+        if (lower.contains("speaking") || lower.contains("voice playback")) {
+            state = "SPEAKING";
+            border = Color.rgb(73, 154, 190);
+            glow = Color.rgb(102, 227, 255);
+        } else if (lower.contains("listening") || lower.contains("mic active") || lower.contains("hands-free")) {
+            state = "LISTENING";
+            border = Color.rgb(72, 142, 184);
+            glow = Color.rgb(89, 213, 255);
+        } else if (lower.contains("thinking") || lower.contains("working") || lower.contains("processing") || lower.contains("connecting")) {
+            state = "THINKING";
+            border = Color.rgb(104, 112, 188);
+            glow = Color.rgb(166, 180, 255);
+        } else if (lower.contains("error") || lower.contains("failed") || lower.contains("unavailable")) {
+            state = "ATTENTION";
+            border = Color.rgb(154, 66, 86);
+            glow = Color.rgb(255, 113, 139);
+        }
+        String profile = prefs == null ? "iras_human" : prefs.getString("voice_profile", "iras_human");
+        String identity = profile.equals("iras_human") ? "IRAS HUMAN" : "IRAS VOICE";
+        voiceIdentity.setText(identity + "  ·  " + state);
+        voiceIdentity.setTextColor(glow);
+        voiceOrbView.setBackground(rounded(Color.rgb(16, 24, 40), 18, border));
+        float scale = state.equals("SPEAKING") || state.equals("LISTENING") ? 1.08f : 1.0f;
+        voiceOrbView.animate().scaleX(scale).scaleY(scale).setDuration(180).setInterpolator(new DecelerateInterpolator()).start();
+    }
+
     private void buildUi() {
         getWindow().setStatusBarColor(Color.rgb(7, 10, 17));
         getWindow().setNavigationBarColor(Color.rgb(7, 10, 17));
@@ -517,7 +594,7 @@ public class MainActivity extends Activity {
         root.setBackground(
             gradient(
                 Color.rgb(7, 10, 17),
-                Color.rgb(10, 14, 24),
+                Color.rgb(12, 18, 31),
                 0
             )
         );
@@ -645,6 +722,52 @@ public class MainActivity extends Activity {
         );
         root.addView(stateRow);
 
+        LinearLayout voiceCard = new LinearLayout(this);
+        voiceCard.setGravity(Gravity.CENTER_VERTICAL);
+        voiceCard.setPadding(dp(11), dp(10), dp(12), dp(10));
+        voiceCard.setBackground(
+            gradient(
+                Color.rgb(15, 23, 39),
+                Color.rgb(11, 17, 30),
+                18
+            )
+        );
+        if (Build.VERSION.SDK_INT >= 21) voiceCard.setElevation(dp(2));
+
+        voiceOrbView = new ImageView(this);
+        voiceOrbView.setImageResource(R.drawable.iras_logo);
+        voiceOrbView.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        voiceOrbView.setContentDescription("IRAS human voice activity");
+        voiceOrbView.setClipToOutline(true);
+        voiceOrbView.setBackground(rounded(Color.rgb(16, 24, 40), 18, Color.rgb(54, 72, 105)));
+        LinearLayout.LayoutParams voiceOrbParams = new LinearLayout.LayoutParams(dp(44), dp(44));
+        voiceOrbParams.setMargins(0, 0, dp(11), 0);
+        voiceCard.addView(voiceOrbView, voiceOrbParams);
+
+        LinearLayout voiceCopy = new LinearLayout(this);
+        voiceCopy.setOrientation(LinearLayout.VERTICAL);
+        voiceIdentity = tv("IRAS HUMAN  ·  READY", 10);
+        voiceIdentity.setPadding(0, 0, 0, 0);
+        voiceIdentity.setTypeface(null, android.graphics.Typeface.BOLD);
+        voiceIdentity.setLetterSpacing(0.08f);
+        voiceIdentity.setTextColor(Color.rgb(166, 180, 255));
+        TextView voiceSub = tv("Ava multilingual · warm neural identity", 10);
+        voiceSub.setPadding(0, dp(3), 0, 0);
+        voiceSub.setTextColor(Color.rgb(112, 126, 153));
+        voiceCopy.addView(voiceIdentity);
+        voiceCopy.addView(voiceSub);
+        voiceCard.addView(voiceCopy, new LinearLayout.LayoutParams(0, -2, 1));
+
+        TextView live = tv("LIVE", 9);
+        live.setPadding(dp(9), dp(5), dp(9), dp(5));
+        live.setTypeface(null, android.graphics.Typeface.BOLD);
+        live.setTextColor(Color.rgb(119, 226, 174));
+        live.setBackground(rounded(Color.rgb(12, 35, 30), 999, Color.rgb(35, 77, 64)));
+        voiceCard.addView(live);
+        LinearLayout.LayoutParams voiceCardParams = new LinearLayout.LayoutParams(-1, -2);
+        voiceCardParams.setMargins(0, dp(8), 0, 0);
+        root.addView(voiceCard, voiceCardParams);
+
         chatScroll =
             new ScrollView(this);
         chatScroll.setFillViewport(true);
@@ -750,6 +873,7 @@ public class MainActivity extends Activity {
         );
         composer.addView(send);
 
+        if (Build.VERSION.SDK_INT >= 21) composer.setElevation(dp(5));
         root.addView(composer);
 
         status =
@@ -759,12 +883,21 @@ public class MainActivity extends Activity {
             );
         status.setTextColor(Color.rgb(105, 119, 145));
         status.setPadding(dp(7), dp(7), dp(7), dp(2));
+        status.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
+                syncVoicePresence(value == null ? "" : value.toString());
+            }
+            @Override public void afterTextChanged(android.text.Editable value) {}
+        });
         root.addView(status);
 
         setContentView(root);
+        syncVoicePresence("Ready");
         animateIn(top, 0);
-        animateIn(stateRow, 70);
-        animateIn(composer, 130);
+        animateIn(stateRow, 60);
+        animateIn(voiceCard, 110);
+        animateIn(composer, 160);
     }
 
     private TextView addMessageView(
@@ -907,19 +1040,24 @@ public class MainActivity extends Activity {
         language.setHint("Speech language: roman-urdu, auto, ur-PK, en-US...");
         language.setText(prefs.getString("speech_language", "roman-urdu"));
 
+        EditText voiceProfile = new EditText(this);
+        voiceProfile.setHint("Voice profile: iras_human / anime_soft / anime_cool...");
+        voiceProfile.setText(prefs.getString("voice_profile", "iras_human"));
+
         EditText voiceMood = new EditText(this);
         voiceMood.setHint("Voice mood: calm / warm / bright / neutral");
-        voiceMood.setText(prefs.getString("voice_mood", "calm"));
+        voiceMood.setText(prefs.getString("voice_mood", "warm"));
 
         box.addView(server);
         box.addView(token);
         box.addView(wake);
         box.addView(language);
+        box.addView(voiceProfile);
         box.addView(voiceMood);
 
         new AlertDialog.Builder(this)
             .setTitle(
-                "IRAS Server"
+                "IRAS Settings"
             )
             .setView(box)
             .setPositiveButton(
@@ -964,6 +1102,25 @@ public class MainActivity extends Activity {
                             "roman-urdu";
                     }
 
+                    String profileValue =
+                        voiceProfile
+                            .getText()
+                            .toString()
+                            .trim()
+                            .toLowerCase(Locale.US)
+                            .replace('-', '_')
+                            .replace(' ', '_');
+
+                    if (
+                        !profileValue.equals("iras_human")
+                        && !profileValue.equals("anime_soft")
+                        && !profileValue.equals("anime_cool")
+                        && !profileValue.equals("anime_genki")
+                        && !profileValue.equals("normal")
+                    ) {
+                        profileValue = "iras_human";
+                    }
+
                     String moodValue =
                         voiceMood
                             .getText()
@@ -980,8 +1137,10 @@ public class MainActivity extends Activity {
                         && !moodValue.equals("neutral")
                     ) {
                         moodValue =
-                            "calm";
+                            "warm";
                     }
+
+                    speechLanguageCursor = 0;
 
                     prefs.edit()
                         .putString(
@@ -1009,6 +1168,10 @@ public class MainActivity extends Activity {
                         .putString(
                             "voice_mood",
                             moodValue
+                        )
+                        .putString(
+                            "voice_profile",
+                            profileValue
                         )
                         .apply();
 
@@ -1610,8 +1773,9 @@ public class MainActivity extends Activity {
             );
             String voiceLanguage = prefs.getString("speech_language", "roman-urdu").trim();
             body.put("language", voiceLanguage.isEmpty() ? "roman-urdu" : voiceLanguage);
-            body.put("mood", prefs.getString("voice_mood", "calm"));
+            body.put("mood", prefs.getString("voice_mood", "warm"));
             body.put("voice_gender", "female");
+            body.put("voice_profile", prefs.getString("voice_profile", "iras_human"));
 
             try (
                 OutputStream os =
@@ -2339,6 +2503,8 @@ public class MainActivity extends Activity {
         if (
             !handsFree
             || !appForeground
+            || requestActive
+            || voicePlaybackActive()
         ) {
             return;
         }
@@ -2360,6 +2526,34 @@ public class MainActivity extends Activity {
 
         startRecognizer(
             true
+        );
+    }
+
+    private boolean voicePlaybackActive() {
+        if (player != null) {
+            return true;
+        }
+        if (localTts != null && localTtsReady) {
+            try {
+                return localTts.isSpeaking();
+            } catch (Exception ignored) {}
+        }
+        return false;
+    }
+
+    private void scheduleHandsFreeRecognition(long delayMs) {
+        if (
+            !handsFree
+            || !appForeground
+            || requestActive
+            || voicePlaybackActive()
+        ) {
+            return;
+        }
+
+        mainHandler.postDelayed(
+            this::startHandsFreeListening,
+            Math.max(150L, delayMs)
         );
     }
 
@@ -2395,6 +2589,11 @@ public class MainActivity extends Activity {
                     );
         }
 
+        final String recognitionLanguage =
+            speechLanguage();
+        activeRecognitionLanguage =
+            recognitionLanguage;
+
         recognizer
             .setRecognitionListener(
                 new android.speech.RecognitionListener() {
@@ -2406,13 +2605,22 @@ public class MainActivity extends Activity {
 
                         status.setText(
                             continuousMode
-                                ? "Hands-free · say "
+                                ? "Hands-free · "
+                                    + recognitionLanguage
+                                    + " · say "
                                     + wakeWord()
-                                : "Listening..."
+                                : "Listening · "
+                                    + recognitionLanguage
                         );
                     }
 
-                    public void onBeginningOfSpeech() {}
+                    public void onBeginningOfSpeech() {
+                        status.setText(
+                            "I hear you · "
+                            + recognitionLanguage
+                        );
+                    }
+
                     public void onRmsChanged(float r) {}
                     public void onBufferReceived(byte[] b) {}
 
@@ -2423,6 +2631,10 @@ public class MainActivity extends Activity {
                             status.setText(
                                 "Thinking..."
                             );
+                        } else {
+                            status.setText(
+                                "Processing speech..."
+                            );
                         }
                     }
 
@@ -2430,18 +2642,11 @@ public class MainActivity extends Activity {
                         recognitionRunning =
                             false;
 
-                        boolean fatal =
+                        if (
                             e
                                 == SpeechRecognizer
                                     .ERROR_INSUFFICIENT_PERMISSIONS
-                            || e
-                                == SpeechRecognizer
-                                    .ERROR_LANGUAGE_NOT_SUPPORTED
-                            || e
-                                == SpeechRecognizer
-                                    .ERROR_LANGUAGE_UNAVAILABLE;
-
-                        if (fatal) {
+                        ) {
                             handsFree =
                                 false;
 
@@ -2455,10 +2660,26 @@ public class MainActivity extends Activity {
                             updateHandsButton();
 
                             status.setText(
-                                "Mic unavailable · error "
-                                + e
+                                "Microphone permission denied"
                             );
                             return;
+                        }
+
+                        if (
+                            e
+                                == SpeechRecognizer
+                                    .ERROR_LANGUAGE_NOT_SUPPORTED
+                            || e
+                                == SpeechRecognizer
+                                    .ERROR_LANGUAGE_UNAVAILABLE
+                            || e
+                                == SpeechRecognizer
+                                    .ERROR_NO_MATCH
+                            || e
+                                == SpeechRecognizer
+                                    .ERROR_SPEECH_TIMEOUT
+                        ) {
+                            advanceSpeechLanguage();
                         }
 
                         if (
@@ -2478,13 +2699,16 @@ public class MainActivity extends Activity {
                                         || e
                                             == SpeechRecognizer
                                                 .ERROR_SPEECH_TIMEOUT
-                                            ? 350L
-                                            : 900L
+                                            ? 300L
+                                            : 700L
                                     );
 
-                            mainHandler.postDelayed(
-                                MainActivity.this
-                                    ::startHandsFreeListening,
+                            status.setText(
+                                "Speech retry · "
+                                + speechLanguage()
+                            );
+
+                            scheduleHandsFreeRecognition(
                                 delay
                             );
                         } else {
@@ -2507,6 +2731,9 @@ public class MainActivity extends Activity {
                                     .RESULTS_RECOGNITION
                             );
 
+                        boolean acceptedWake =
+                            false;
+
                         if (
                             results != null
                             && !results.isEmpty()
@@ -2526,6 +2753,8 @@ public class MainActivity extends Activity {
                                     ) {
                                         heard =
                                             candidate;
+                                        acceptedWake =
+                                            true;
                                         break;
                                     }
                                 }
@@ -2533,30 +2762,80 @@ public class MainActivity extends Activity {
                                 handleHandsFreeTranscript(
                                     heard
                                 );
+
+                                if (
+                                    !acceptedWake
+                                    && System.currentTimeMillis()
+                                        >= conversationUntil
+                                ) {
+                                    advanceSpeechLanguage();
+                                }
                             } else {
                                 sendText(
                                     heard,
                                     requestActive
                                 );
                             }
+                        } else if (continuousMode) {
+                            advanceSpeechLanguage();
                         }
 
                         if (
                             continuousMode
-                            && handsFree
-                            && appForeground
                         ) {
-                            mainHandler.postDelayed(
-                                MainActivity.this
-                                    ::startHandsFreeListening,
-                                350
+                            scheduleHandsFreeRecognition(
+                                acceptedWake
+                                    ? 220L
+                                    : 350L
                             );
                         }
                     }
 
                     public void onPartialResults(
                         Bundle b
-                    ) {}
+                    ) {
+                        if (!continuousMode) {
+                            return;
+                        }
+
+                        ArrayList<String> partial =
+                            b.getStringArrayList(
+                                SpeechRecognizer
+                                    .RESULTS_RECOGNITION
+                            );
+
+                        if (
+                            partial == null
+                            || partial.isEmpty()
+                        ) {
+                            return;
+                        }
+
+                        for (
+                            String candidate :
+                            partial
+                        ) {
+                            WakeResult wake =
+                                extractWakeCommand(
+                                    candidate
+                                );
+                            if (wake.accepted) {
+                                if (wake.command.isEmpty()) {
+                                    conversationUntil =
+                                        System.currentTimeMillis()
+                                        + 8000L;
+                                    status.setText(
+                                        "Wake word heard · keep talking..."
+                                    );
+                                } else {
+                                    status.setText(
+                                        "Heard command..."
+                                    );
+                                }
+                                break;
+                            }
+                        }
+                    }
 
                     public void onEvent(
                         int t,
@@ -2581,7 +2860,7 @@ public class MainActivity extends Activity {
         i.putExtra(
             RecognizerIntent
                 .EXTRA_LANGUAGE,
-            speechLanguage()
+            recognitionLanguage
         );
 
         i.putExtra(
@@ -2592,11 +2871,52 @@ public class MainActivity extends Activity {
 
         i.putExtra(
             RecognizerIntent
-                .EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
-            700L
+                .EXTRA_MAX_RESULTS,
+            5
         );
 
+        i.putExtra(
+            RecognizerIntent
+                .EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
+            650L
+        );
+
+        i.putExtra(
+            RecognizerIntent
+                .EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
+            420L
+        );
+
+        i.putExtra(
+            RecognizerIntent
+                .EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS,
+            220L
+        );
+
+        // Android 14+ recognition services may support automatic language
+        // detection. Unknown extras are ignored by older/other services, so
+        // the locale-cycling fallback above remains the compatibility path.
+        if (
+            Build.VERSION.SDK_INT >= 34
+            && automaticSpeechLanguage()
+        ) {
+            i.putExtra(
+                "android.speech.extra.ENABLE_LANGUAGE_DETECTION",
+                true
+            );
+            i.putStringArrayListExtra(
+                "android.speech.extra.LANGUAGE_DETECTION_ALLOWED_LANGUAGES",
+                new ArrayList<>(
+                    speechLanguageCandidates()
+                )
+            );
+        }
+
         try {
+            // Mark busy before startListening. Waiting for onReadyForSpeech left
+            // a race where lifecycle/restart callbacks could launch duplicates.
+            recognitionRunning =
+                true;
             recognizer.startListening(
                 i
             );
@@ -2605,6 +2925,15 @@ public class MainActivity extends Activity {
         ) {
             recognitionRunning =
                 false;
+            if (continuousMode) {
+                scheduleHandsFreeRecognition(
+                    700L
+                );
+            } else {
+                status.setText(
+                    "Mic start failed"
+                );
+            }
         }
     }
 
@@ -2708,6 +3037,8 @@ public class MainActivity extends Activity {
             "eye-rass",
             "Ira's",
             "I R A S",
+            "آئرس",
+            "ایرس",
             "little girl",
             "cute"
         );
@@ -2784,7 +3115,7 @@ public class MainActivity extends Activity {
             Pattern.compile(
                 "^\\s*(?:(?:hey|okay|ok)\\s+)?"
                 + wakePattern()
-                + "\\b[\\s,.:;!?-]*(.*)$",
+                + "(?=$|[\\s,.:;!?-])[\\s,.:;!?-]*(.*)$",
                 Pattern.CASE_INSENSITIVE
             );
 

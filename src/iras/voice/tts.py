@@ -20,7 +20,7 @@ class Speaker:
         self,
         provider: str = "edge",
         voice: str | None = None,
-        profile: str = "anime_soft",
+        profile: str = "iras_human",
     ):
         self.provider = provider
         self.profile_name = normalize_profile(profile)
@@ -43,7 +43,23 @@ class Speaker:
         self.last_language = "en"
         self.last_locale = "en-US"
         self.last_voice = self.voice
-        self.alternate_voice = "en-US-GuyNeural"
+        self.alternate_voice = self._profile_alternate_voice()
+
+
+    def _profile_alternate_voice(self) -> str:
+        for voice_name in self.profile.fallback_voices:
+            if voice_name and voice_name != self.profile.voice:
+                return voice_name
+        return "en-US-JennyNeural"
+
+    def _voice_candidates(self, primary: str | None = None) -> list[str]:
+        ordered = [primary or self.voice, self.alternate_voice, *self.profile.fallback_voices, "en-US-JennyNeural"]
+        unique: list[str] = []
+        for voice_name in ordered:
+            name = str(voice_name or "").strip()
+            if name and name not in unique:
+                unique.append(name)
+        return unique
 
     @property
     def is_speaking(self) -> bool:
@@ -56,6 +72,7 @@ class Speaker:
         self.rate = self.profile.rate
         self.pitch = self.profile.pitch
         self.volume = self.profile.volume
+        self.alternate_voice = self._profile_alternate_voice()
         return self.profile_name
 
     def profile_summary(self) -> str:
@@ -103,7 +120,8 @@ class Speaker:
             selection = resolve_voice(
                 text,
                 english_voice=self.profile.voice,
-                english_alternate="en-US-GuyNeural",
+                english_alternate=self._profile_alternate_voice(),
+                mood=(os.getenv("IRAS_VOICE_MOOD") or ("warm" if self.profile_name == "iras_human" else None)),
             )
             self.voice = selection.voice
             self.alternate_voice = selection.alternate_voice
@@ -198,26 +216,26 @@ class Speaker:
         os.close(fd)
         path = Path(raw_path)
         try:
-            try:
-                await edge_tts.Communicate(
-                    text,
-                    self.voice,
-                    rate=self.rate,
-                    volume=self.volume,
-                    pitch=self.pitch,
-                ).save(str(path))
-            except Exception:
-                if not self.alternate_voice or self.alternate_voice == self.voice:
-                    raise
-                await edge_tts.Communicate(
-                    text,
-                    self.alternate_voice,
-                    rate=self.rate,
-                    volume=self.volume,
-                    pitch=self.pitch,
-                ).save(str(path))
-                self.voice = self.alternate_voice
-                self.last_voice = self.voice
+            errors: list[str] = []
+            rendered = False
+            for voice_name in self._voice_candidates(self.voice):
+                try:
+                    await edge_tts.Communicate(
+                        text,
+                        voice_name,
+                        rate=self.rate,
+                        volume=self.volume,
+                        pitch=self.pitch,
+                    ).save(str(path))
+                    if path.exists() and path.stat().st_size >= 256:
+                        self.voice = voice_name
+                        self.last_voice = voice_name
+                        rendered = True
+                        break
+                except Exception as exc:
+                    errors.append(f"{voice_name}: {type(exc).__name__}: {exc}")
+            if not rendered:
+                raise RuntimeError(" | ".join(errors) or "No IRAS female voice produced audio.")
 
             if self._stop_event.is_set():
                 return "interrupted"

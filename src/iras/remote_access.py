@@ -60,6 +60,7 @@ READ_ACTIONS = {
     "software_show",
     "software_list",
     "software_upgrades",
+    "cli_discover",
 }
 
 SAFE_ACTIONS = {

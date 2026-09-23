@@ -1,8 +1,18 @@
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-if (-not (Test-Path .\.venv\Scripts\iras.exe)) {
-    throw "IRAS is not installed. Run .\install.ps1 first."
+if (-not (Test-Path .\.venv\Scripts\python.exe)) {
+    throw "IRAS virtual environment is missing. Run .\install.ps1 first."
+}
+
+# A Windows console-script wrapper may survive while the editable package was
+# partially uninstalled (for example when the remote bridge locked
+# iras-device.exe during pip install). Verify the import, not only iras.exe.
+& .\.venv\Scripts\python.exe -c "import iras" 2>$null
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path .\.venv\Scripts\iras.exe)) {
+    Write-Host "IRAS package installation is incomplete. Running safe local repair..." -ForegroundColor Yellow
+    & .\repair-local-install.ps1
+    if ($LASTEXITCODE -ne 0) { throw "IRAS local package repair failed." }
 }
 
 $autoVision = $true

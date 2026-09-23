@@ -1021,6 +1021,14 @@ def make_tools(store):
             timeout=360,
         )
 
+    def device_cli_discover(query="", limit=80, include_powershell=True, device_id=None):
+        return request(
+            "cli_discover",
+            {"query": query, "limit": limit, "include_powershell": bool(include_powershell)},
+            device_id,
+            timeout=30,
+        )
+
     def device_run_command(executable, args=None, cwd="", timeout=60.0, device_id=None):
         return request(
             "run_command",
@@ -2130,8 +2138,16 @@ def make_tools(store):
         ),
 
         Tool(
+            "device_cli_discover",
+            "Discover installed CLI programs and PowerShell commands on the paired authorized PC. Read-only; there is no static CLI-name allowlist.",
+            {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 250}, "include_powershell": {"type": "boolean"}, **optional_device}},
+            device_cli_discover,
+            PermissionLevel.READ,
+        ),
+
+        Tool(
             "device_run_command",
-            "Run one explicitly named executable with an argv list and shell=False. Critical: requires a full remote session plus the laptop's local command-execution opt-in.",
+            "Run any installed executable/CLI on the paired authorized PC with an argv list and shell=False. No CLI-name allowlist is used. PowerShell cmdlets/scripts can be invoked through powershell.exe/pwsh -Command. Critical: requires a full remote session plus the laptop's local command-execution opt-in.",
             {"type": "object", "properties": {"executable": {"type": "string"}, "args": {"type": "array", "items": {"type": "string"}, "maxItems": 64}, "cwd": {"type": "string"}, "timeout": {"type": "number", "minimum": 1, "maximum": 300}, **optional_device}, "required": ["executable"]},
             device_run_command,
             PermissionLevel.CRITICAL,
@@ -2173,6 +2189,7 @@ def make_tools(store):
         "device_software_uninstall": "software_uninstall",
         "device_software_prepare_url": "software_prepare_url",
         "device_software_install_prepared": "software_install_prepared",
+        "device_cli_discover": "cli_discover",
         "device_run_command": "run_command",
     }
 

@@ -15,6 +15,7 @@ from iras.config import Settings
 from iras.master_control import MasterControl
 from iras.voice.stt import Listener
 from iras.voice.tts import Speaker
+from iras.cloud_auth import cloud_token_candidates
 
 
 def _state_path() -> Path:
@@ -52,7 +53,8 @@ def _server(settings: Settings, override: str = "") -> str:
 
 
 def _token(settings: Settings, override: str = "") -> str:
-    return (override or os.getenv("IRAS_CLOUD_TOKEN", "") or settings.api_token).strip()
+    candidates = cloud_token_candidates(settings, override)
+    return candidates[0][1] if candidates else ""
 
 
 def _request(client: httpx.Client, method: str, path: str, *, token: str, **kwargs):
@@ -78,9 +80,12 @@ def main() -> None:
     console = Console()
     settings = Settings.load()
     server = _server(settings, args.server)
-    token = _token(settings, args.token)
-    if not token or token == "change-me-before-remote-use":
-        raise SystemExit("Configure IRAS_CLOUD_TOKEN or IRAS_API_TOKEN first.")
+    token_candidates = cloud_token_candidates(settings, args.token)
+    if not token_candidates:
+        raise SystemExit(
+            "Configure IRAS_CLOUD_TOKEN/IRAS_API_TOKEN, or pair this PC so IRAS can reuse the protected cloud token."
+        )
+    token = token_candidates[0][1]
     if not server.lower().startswith("https://") and not server.lower().startswith(("http://127.0.0.1", "http://localhost")):
         raise SystemExit("Remote IRAS Cloud requires HTTPS.")
 
@@ -106,19 +111,38 @@ def main() -> None:
                 f"IRAS Cloud preflight failed for {server}: {exc}"
             ) from exc
 
-        registration = _request(
-            client,
-            "POST",
-            "/v1/cloud/clients/register",
-            token=token,
-            json={
-                "client_id": client_id,
-                "name": os.getenv("COMPUTERNAME", "IRAS Windows"),
-                "platform": "windows",
-                "app_version": __version__,
-                "capabilities": ["chat", "cloud-sync", "remote-node", "voice"],
-            },
-        ).json()
+        registration = None
+        auth_errors = []
+        winning_source = ""
+        for source, candidate in token_candidates:
+            try:
+                registration = _request(
+                    client,
+                    "POST",
+                    "/v1/cloud/clients/register",
+                    token=candidate,
+                    json={
+                        "client_id": client_id,
+                        "name": os.getenv("COMPUTERNAME", "IRAS Windows"),
+                        "platform": "windows",
+                        "app_version": __version__,
+                        "capabilities": ["chat", "cloud-sync", "remote-node", "voice"],
+                    },
+                ).json()
+                token = candidate
+                winning_source = source
+                break
+            except RuntimeError as exc:
+                if "HTTP 401" not in str(exc):
+                    raise
+                auth_errors.append(source)
+        if registration is None:
+            tried = ", ".join(auth_errors) or "configured token"
+            raise SystemExit(
+                "IRAS Cloud rejected every available token (" + tried + "). "
+                "Make the local token match Render IRAS_API_TOKEN, or re-pair this PC."
+            )
+        console.print(f"[dim]Cloud authentication: {winning_source}[/dim]")
         thread_id = str(state.get("thread_id") or registration.get("active_thread_id") or "")
         if args.new_thread:
             thread = _request(

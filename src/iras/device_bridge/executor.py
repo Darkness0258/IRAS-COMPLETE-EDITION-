@@ -23,6 +23,7 @@ from iras.tools.system import (
     launch_app,
     system_info,
 )
+from iras.tools.terminal import terminal_discover as universal_terminal_discover
 from iras.device_bridge.universal_control import (
     UniversalWindowsController,
 )
@@ -116,6 +117,7 @@ DEFAULT_CAPABILITIES = [
     "software_uninstall",
     "software_prepare_url",
     "software_install_prepared",
+    "cli_discover",
     "run_command",
 ]
 
@@ -325,6 +327,7 @@ class DeviceExecutor:
             "software_uninstall": self.software_uninstall,
             "software_prepare_url": self.software_prepare_url,
             "software_install_prepared": self.software_install_prepared,
+            "cli_discover": self.cli_discover,
             "run_command": self.run_command,
         }
 
@@ -1884,6 +1887,18 @@ class DeviceExecutor:
 
     def software_install_prepared(self, receipt_id: str):
         return software_install_prepared_impl(receipt_id)
+
+    def cli_discover(self, query: str = "", limit: int = 80, include_powershell: bool = True):
+        """Discover installed CLI/cmdlet names on this authorized PC.
+
+        Discovery is read-only and intentionally has no static CLI-name allowlist.
+        Execution remains a separate CRITICAL `run_command` action.
+        """
+        return universal_terminal_discover(
+            query=str(query or ""),
+            limit=max(1, min(int(limit), 250)),
+            include_powershell=bool(include_powershell),
+        )
 
     def run_command(
         self,

@@ -12,9 +12,11 @@ from iras.bootstrap import build_runtime
 from iras.config import Settings
 from iras.doctor import run as doctor_run
 from iras.models import ApprovalRequest
+from iras.security.redact import redact
 from iras.voice.stt import Listener
 from iras.voice.tts import Speaker
 from iras.voice.profiles import PROFILES, normalize_profile
+from iras.voice.approval import VoiceApprovalManager
 from iras.persona import build_system_prompt
 from iras.vision.omniparser_runtime import OmniParserRuntimeManager
 from iras.remote_access import RemoteAccessPolicy
@@ -114,6 +116,14 @@ def main():
     s = Settings.load()
 
     speaker = Speaker(s.tts_provider, s.voice, s.voice_profile)
+    listener = Listener(s.whisper_model, s.listen_seconds)
+    voice_approver = VoiceApprovalManager(
+        listener,
+        speaker,
+        enabled=s.voice_approvals,
+        critical_enabled=s.voice_approval_critical,
+        timeout_seconds=s.voice_approval_timeout,
+    )
     vision_runtime = OmniParserRuntimeManager()
     remote_policy = RemoteAccessPolicy()
     emergency_stop = EmergencyStop()
@@ -211,10 +221,20 @@ def main():
         c.print(
             Panel(
                 f"Tool: {req.tool_name}\nLevel: {req.permission.name}\nArguments:\n"
-                f"{json.dumps(req.arguments, indent=2, default=str)[:4000]}",
+                f"{json.dumps(redact(req.arguments), indent=2, default=str)[:4000]}",
                 title='IRAS approval required',
             )
         )
+        if s.voice_approvals:
+            c.print('[dim]Voice approval active — follow the spoken prompt, or use the keyboard fallback.[/dim]')
+            result = voice_approver.request(req)
+            if result.heard:
+                c.print(f'[bold cyan]Heard approval >[/bold cyan] {result.heard}')
+            if result.resolved:
+                c.print('[green]Approved by voice.[/green]' if result.approved else '[yellow]Denied by voice.[/yellow]')
+                return result.approved
+            if result.reason:
+                c.print(f'[dim]Voice approval not resolved ({result.reason}); keyboard fallback active.[/dim]')
         return c.input('[bold yellow]Approve this action? [y/N]: [/bold yellow]').strip().lower() in {'y', 'yes', 'yeah', 'yep', 'yup', 'ok', 'okay', 'approve', 'approved'}
 
     rt = build_runtime(s, approve)
@@ -228,7 +248,6 @@ def main():
     if getattr(rt, "v5", None) is not None:
         rt.v5.start_services()
 
-    listener = Listener(s.whisper_model, s.listen_seconds)
     c.print(
         Panel.fit(
             f'[bold]IRAS {__version__}[/bold]\n'

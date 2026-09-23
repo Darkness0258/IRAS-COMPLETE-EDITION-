@@ -79,7 +79,8 @@ def test_native_arabic_and_hindi_keep_native_voices():
 
 def test_web_separates_recognition_from_roman_urdu_fallback_tts():
     text = Path("clients/web/index.html").read_text(encoding="utf-8")
-    assert 'if(selected==="roman-urdu")return "ur-PK";' in text
+    assert 'const locales=["en-IN","ur-PK","en-US",navigator.language||""];' in text
+    assert "function advanceSpeechLocale()" in text
     assert "function ttsFallbackLocale()" in text
     assert 'if(selected==="roman-urdu")return "en-IN";' in text
     assert "utterance.lang=ttsFallbackLocale();" in text
@@ -90,7 +91,10 @@ def test_android_separates_recognition_from_local_tts():
     text = Path(
         "clients/android/app/src/main/java/com/darkness/iras/MainActivity.java"
     ).read_text(encoding="utf-8")
-    assert 'if (configured.equalsIgnoreCase("roman-urdu")) return "ur-PK";' in text
+    assert 'candidates.add("en-IN");' in text
+    assert 'candidates.add("ur-PK");' in text
+    assert 'candidates.add("en-US");' in text
+    assert "private void advanceSpeechLanguage()" in text
     assert "private String ttsLanguage()" in text
     assert 'if (configured.equalsIgnoreCase("roman-urdu")) return "en-IN";' in text
     assert "ttsLanguage()" in text

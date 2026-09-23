@@ -10,6 +10,7 @@ from iras.memory.store import MemoryStore
 from iras.tools.registry import ToolRegistry
 from iras.tools.filesystem import TOOLS as FILES
 from iras.tools.shell import TOOLS as SHELL
+from iras.tools.terminal import TOOLS as TERMINAL
 from iras.tools.system import TOOLS as SYSTEM
 from iras.tools.web import TOOLS as WEB
 from iras.tools.git import TOOLS as GIT
@@ -24,6 +25,7 @@ from iras.tools.automations import make_tools as automation_tools
 from iras.providers.demo import DemoProvider
 from iras.providers.openai_compatible import OpenAICompatibleProvider
 from iras.providers.openrouter import OpenRouterProvider
+from iras.providers.provider_factory import build_multi_provider
 from iras.core.agent import IRASAgent
 from iras.device_bridge.recovery_learning import RecoveryRoutePerformanceStore
 from iras.device_bridge.local_store import LocalDeviceBridgeStore
@@ -54,7 +56,7 @@ def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.
     app_skills = PersistentSkillStore(skill_path)
     os.environ["IRAS_SKILL_STORE"] = str(skill_path)
     vision = OmniParserRuntimeManager()
-    for t in [*FILES,*SHELL,*SYSTEM,*WEB,*GIT,*API_ACCESS,*REMOTE,*memory_tools(memory),*personality_tools(personality),*browser_tools(browser),*automation_tools(autos),*device_bridge_tools(local_device),*device_skill_tools(local_device, app_skills),*vision_tools(vision),*master_tools(master)]: reg.register(t)
+    for t in [*FILES,*SHELL,*TERMINAL,*SYSTEM,*WEB,*GIT,*API_ACCESS,*REMOTE,*memory_tools(memory),*personality_tools(personality),*browser_tools(browser),*automation_tools(autos),*device_bridge_tools(local_device),*device_skill_tools(local_device, app_skills),*vision_tools(vision),*master_tools(master)]: reg.register(t)
     if s.provider == 'demo':
         provider = DemoProvider()
     elif s.provider == 'openrouter':
@@ -64,6 +66,8 @@ def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.
         )
     elif s.provider in {'openai_compatible', 'ollama'}:
         provider = OpenAICompatibleProvider(s.base_url, s.api_key, s.model, s.request_timeout)
+    elif s.provider == 'multi':
+        provider = build_multi_provider(s)
     else:
         raise ValueError(f'Unknown IRAS_PROVIDER={s.provider}')
     v5 = build_v5_runtime(state_dir=s.data_dir / "v5")
@@ -123,7 +127,7 @@ def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.
         worker_reg = ToolRegistry(worker_perms, audit)
         worker_browser = BrowserSession()
         worker_tools = (
-            [*FILES, *SHELL, *SYSTEM, *WEB, *GIT, *API_ACCESS, *REMOTE,
+            [*FILES, *SHELL, *TERMINAL, *SYSTEM, *WEB, *GIT, *API_ACCESS, *REMOTE,
              *memory_tools(memory), *personality_tools(personality), *browser_tools(worker_browser),
              *automation_tools(autos), *device_bridge_tools(local_device),
              *device_skill_tools(local_device, app_skills), *vision_tools(vision), *master_tools(master), *v5_tools(v5)]
@@ -139,6 +143,8 @@ def build_runtime(settings=None,approval_callback=None,hard_cap=PermissionLevel.
             worker_provider = OpenRouterProvider(api_key=s.api_key, model=s.model, timeout=s.request_timeout, base_url=s.base_url, app_name=s.system_name)
         elif s.provider in {'openai_compatible', 'ollama'}:
             worker_provider = OpenAICompatibleProvider(s.base_url, s.api_key, s.model, s.request_timeout)
+        elif s.provider == 'multi':
+            worker_provider = build_multi_provider(s)
         else:
             raise ValueError(f'Unknown IRAS_PROVIDER={s.provider}')
         role = str(context.get("role_directive") or "You are a bounded read-only IRAS worker.")

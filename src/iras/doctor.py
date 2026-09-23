@@ -18,6 +18,8 @@ from iras.security.secret_store import protection_backend
 from iras.voice.stt import Listener
 from iras.vision.omniparser_runtime import OmniParserRuntimeManager
 from iras.master_control import MasterControl
+from iras.tools.terminal import terminal_capabilities
+from iras.providers.provider_factory import build_multi_provider
 
 
 def _free_gb(path: Path) -> float:
@@ -77,11 +79,24 @@ def run(settings):
         importlib.util.find_spec("faster_whisper") is not None,
         "installed" if importlib.util.find_spec("faster_whisper") else "optional extra not installed",
     )
-    add(
-        "Brain configured",
-        settings.provider in {"demo", "ollama"} or bool(settings.api_key) or settings.provider == "multi",
-        settings.provider,
-    )
+    if settings.provider == "multi":
+        try:
+            multi = build_multi_provider(settings)
+            names = multi.configured_names()
+            real_names = [name for name in names if name != "demo-fallback"]
+            brain_ok = bool(real_names)
+            brain_detail = (
+                "multi: " + " -> ".join(real_names)
+                if real_names
+                else "multi: no LLM configured; bounded demo fallback active"
+            )
+        except Exception as exc:
+            brain_ok = False
+            brain_detail = f"multi: {type(exc).__name__}: {exc}"
+    else:
+        brain_ok = settings.provider in {"demo", "ollama"} or bool(settings.api_key)
+        brain_detail = settings.provider
+    add("Brain configured", brain_ok, brain_detail)
 
     try:
         multitask_workers = max(1, min(int(os.getenv("IRAS_MULTITASK_WORKERS", "4")), 8))
@@ -132,6 +147,31 @@ def run(settings):
         "direct/deterministic/parallel/orchestrate automatic chat routing",
     )
 
+    try:
+        terminal = terminal_capabilities()
+        shells = terminal.get("shells") or {}
+        add(
+            "Universal terminal",
+            bool(shells or os.name != "nt"),
+            (
+                "dynamic CLI discovery enabled; no CLI-name allowlist; "
+                + ("shells=" + ",".join(sorted(shells)) if shells else "shell fallback available")
+            ),
+        )
+    except Exception as exc:
+        add("Universal terminal", False, f"{type(exc).__name__}: {exc}")
+
+    voice_approvals = bool(getattr(settings, "voice_approvals", True))
+    critical_voice = bool(getattr(settings, "voice_approval_critical", True))
+    add(
+        "Voice permissions",
+        voice_approvals,
+        (
+            f"enabled={voice_approvals} critical_challenge={critical_voice} "
+            f"timeout={getattr(settings, 'voice_approval_timeout', 9)}s"
+        ),
+    )
+
     device_ollama_enabled = str(os.getenv("IRAS_DEVICE_OLLAMA_FALLBACK", "true")).strip().lower() in {
         "1", "true", "yes", "on", "enabled"
     }
@@ -163,7 +203,15 @@ def run(settings):
     )
 
     mic = Listener.microphone_status()
-    add("Microphone input", mic.get("available"), f"{mic.get('count', 0)} input device(s)")
+    add(
+        "Microphone input",
+        mic.get("available"),
+        (
+            f"{mic.get('count', 0)} input device(s); "
+            f"configured={mic.get('configured', 'auto')}; "
+            f"selected={mic.get('selected')} ({mic.get('selected_name', 'unknown')})"
+        ),
+    )
 
     vision = OmniParserRuntimeManager().status()
     add(

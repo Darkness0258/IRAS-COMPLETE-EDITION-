@@ -6,6 +6,7 @@ from iras.providers.multi_provider import MultiProvider, ProviderSlot
 from iras.providers.openai_compatible import OpenAICompatibleProvider
 from iras.providers.gemini_compatible import GeminiOpenAICompatibleProvider
 from iras.providers.openrouter import OpenRouterProvider
+from iras.providers.demo import DemoProvider
 
 
 def _env(name: str, default: str = "") -> str:
@@ -124,10 +125,23 @@ def build_multi_provider(settings) -> MultiProvider:
     slots = [ProviderSlot(name=name, provider=providers[name]) for name in ordered_names]
 
     if not slots:
-        raise ValueError(
-            "IRAS_PROVIDER=multi but no providers are configured. Set at least "
-            "one cloud provider key, or enable IRAS_OLLAMA_FALLBACK=true for a local model."
-        )
+        # Keep the local shell/UI alive even when the owner has not configured
+        # an LLM key yet.  DemoProvider is intentionally explicit/degraded: it
+        # can still expose tools and execute direct ``run ...`` commands, but it
+        # never pretends to provide full natural-language reasoning.
+        if _truthy("IRAS_MULTI_DEMO_FALLBACK", True):
+            slots = [ProviderSlot(name="demo-fallback", provider=DemoProvider())]
+            print(
+                "[IRAS PROVIDERS] no cloud/local model configured; "
+                "using bounded demo fallback. Configure a provider key or Ollama "
+                "for full reasoning.",
+                flush=True,
+            )
+        else:
+            raise ValueError(
+                "IRAS_PROVIDER=multi but no providers are configured. Set at least "
+                "one cloud provider key, or enable IRAS_OLLAMA_FALLBACK=true for a local model."
+            )
 
     print(
         "[IRAS PROVIDERS] configured: "

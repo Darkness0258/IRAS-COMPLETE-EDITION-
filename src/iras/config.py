@@ -19,6 +19,14 @@ def _bool(name: str, default: bool) -> bool:
     return os.getenv(name, str(default)).lower() in {'1', 'true', 'yes', 'on'}
 
 
+def _int_env(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(value, maximum))
+
+
 @dataclass(slots=True)
 class Settings:
     provider: str
@@ -41,11 +49,14 @@ class Settings:
     max_agent_steps: int
     system_name: str
     voice_replies: bool = True
-    voice_profile: str = 'anime_soft'
+    voice_profile: str = 'iras_human'
     adaptive_personality: bool = True
     database_url: str = ''
     public_base_url: str = ''
     cors_origins: str = '*'
+    voice_approvals: bool = True
+    voice_approval_critical: bool = True
+    voice_approval_timeout: int = 9
 
     @classmethod
     def load(cls) -> 'Settings':
@@ -89,7 +100,7 @@ class Settings:
             tts_provider=os.getenv('IRAS_TTS_PROVIDER', 'edge'),
             voice=os.getenv('IRAS_VOICE', 'en-US-AriaNeural'),
             voice_replies=_bool('IRAS_VOICE_REPLIES', True),
-            voice_profile=os.getenv('IRAS_VOICE_PROFILE', 'anime_soft'),
+            voice_profile=os.getenv('IRAS_VOICE_PROFILE', 'iras_human'),
             stt_provider=os.getenv('IRAS_STT_PROVIDER', 'whisper_local'),
             whisper_model=os.getenv('IRAS_WHISPER_MODEL', 'base'),
             listen_seconds=int(os.getenv('IRAS_LISTEN_SECONDS', '6')),
@@ -101,6 +112,9 @@ class Settings:
             database_url=os.getenv('DATABASE_URL', '').strip(),
             public_base_url=os.getenv('IRAS_PUBLIC_BASE_URL', '').strip().rstrip('/'),
             cors_origins=os.getenv('IRAS_CORS_ORIGINS', '*').strip(),
+            voice_approvals=_bool('IRAS_VOICE_APPROVALS', True),
+            voice_approval_critical=_bool('IRAS_VOICE_APPROVAL_CRITICAL', True),
+            voice_approval_timeout=_int_env('IRAS_VOICE_APPROVAL_TIMEOUT', 9, 3, 30),
         )
 
     @property

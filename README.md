@@ -15,7 +15,20 @@ IRAS v5 builds on the frozen v4.4 permissioned Windows/control core and exposes 
 
 RC12 adds persistent goal continuity across restarts and interruptions, keeps RC11 perception/deliberate repair, and includes the cross-platform voice reliability hotfix for Windows cloud client, Android, and the Render web client. See `docs/V5_0_RC12_NOTES.md`, `docs/RC12_VOICE_HOTFIX.md`, and `docs/RC12_FULL_AUDIT_REPORT.md`.
 
-### Voice diagnostics
+#
+## RC12 Human Voice + Adaptive UI
+
+IRAS now includes the `iras_human` female multilingual voice identity and adaptive voice-aware interfaces across web/PWA, Android, and Windows desktop. See `docs/RC12_HUMAN_VOICE_ADAPTIVE_UI.md` for configuration and API details.
+
+## RC12 Universal Terminal + Voice Permissions
+
+IRAS now has a runtime-discovered universal terminal rather than a fixed list of supported CLIs. `terminal_discover` / `terminal_which` inspect PATH and PowerShell commands, `terminal_exec` can invoke any installed CLI or shell command, and persistent terminal sessions support incremental output plus stdin. On the paired Windows bridge, `device_cli_discover` is READ-only and `device_run_command` can invoke any installed executable; PowerShell cmdlets/scripts can be reached through `powershell.exe`/`pwsh -Command`. There is no CLI-name allowlist.
+
+Terminal execution remains permissioned and audited. Ordinary execution is `SYSTEM_ACTION`; destructive patterns are promoted to `CRITICAL`. A locally armed Master Control session may authorize the full bounded terminal surface. Interactive PC approvals can also be granted by voice: normal system actions require an explicit **“IRAS approve”**, while CRITICAL actions require a fresh spoken four-digit challenge. Voice approval is convenience, not biometric speaker authentication, so local Master Control enablement and OS/UAC boundaries remain separate.
+
+If an editable reinstall was interrupted because `iras-device.exe` was locked by the scheduled Remote bridge, run `.\repair-local-install.ps1`; it stops only this venv's IRAS wrappers, repairs the package, verifies Remote Protocol `1`, and restarts the bridge task when appropriate.
+
+## Voice diagnostics
 
 For PC microphone/TTS and deployed Render voice checks:
 
@@ -287,7 +300,15 @@ iras --emergency-clear            # local-only recovery
 iras-device --status              # outbound bridge status (redacted)
 ```
 
-`IRAS_MIC_DEVICE` selects a microphone device by sounddevice index or name when Windows default input is unsuitable. `iras --doctor` also checks that the configured cloud advertises the matching v4 remote protocol instead of treating a merely reachable old deployment as healthy.
+IRAS RC12 now auto-ranks Windows input devices when `IRAS_MIC_DEVICE=auto` (or is empty): physical Realtek microphones are preferred, WASAPI wins over duplicate legacy endpoints, and WO Mic/virtual/loopback devices are de-prioritized. Set `IRAS_MIC_DEVICE=<index-or-name>` to override it, or `IRAS_MIC_STRICT=true` to prevent fallback. `IRAS_STT_LANGUAGE=auto` keeps Faster-Whisper multilingual detection active for English, Urdu, Roman Urdu, and code-switching.
+
+For a live microphone diagnosis, including the ranked device list, selected device, sample rate, two-second RMS/peak/dBFS input-level test, Whisper result, and detected language, run:
+
+```powershell
+.\voice-doctor.ps1 -TestMicrophone
+```
+
+If a quiet microphone still misses speech, `IRAS_MIC_ENERGY_THRESHOLD` (default `0.004`) and `IRAS_MIC_NOISE_MULTIPLIER` (default `2.6`) tune the adaptive detector. `iras --doctor` reports the currently auto-selected input and still checks that the configured cloud advertises the matching Remote Protocol 1 deployment instead of treating a merely reachable old deployment as healthy.
 
 ## Worldwide Windows access
 

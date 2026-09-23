@@ -340,7 +340,7 @@ def resolve_voice(
     gender: str | None = None,
     mood: str | None = None,
     english_voice: str = "en-US-JennyNeural",
-    english_alternate: str = "en-US-GuyNeural",
+    english_alternate: str = "",
 ) -> VoiceSelection:
     preferred = preferred_language if preferred_language is not None else os.getenv("IRAS_LANGUAGE", "roman-urdu")
     code, confidence, reason = detect_language(text, preferred=preferred)
@@ -368,7 +368,10 @@ def resolve_voice(
     else:
         female_voice = english_voice if code == "en" and english_voice else spec.female_voice
         voice = female_voice
-        alternate = female_voice
+        if code == "en":
+            alternate = english_alternate or female_voice
+        else:
+            alternate = female_voice
         selected_locale = spec.locale
         selected_label = spec.label
 
@@ -390,9 +393,13 @@ def resolve_voice(
 
 
 def whisper_language_hint() -> str | None:
-    value = normalize_language(os.getenv("IRAS_LANGUAGE", "roman-urdu"))
-    # Roman Urdu is a text/script preference. Keep multilingual Whisper
-    # detection available so explicit language switches still work.
+    # STT can be controlled independently from TTS/text routing. This matters
+    # for mixed English/Urdu/Roman-Urdu conversations where forcing Urdu or
+    # English would make code-switching less reliable.
+    raw = os.getenv("IRAS_STT_LANGUAGE", "").strip()
+    value = normalize_language(raw or os.getenv("IRAS_LANGUAGE", "roman-urdu"))
+    # Roman Urdu is a text/script preference rather than a Whisper language.
+    # Auto detection is the safest default for Roman Urdu + English + Urdu.
     if value in {"auto", "roman-urdu"}:
         return None
     return value
@@ -414,5 +421,5 @@ def status() -> dict[str, Any]:
         "catalog": language_catalog(),
         "roman_urdu_detection": True,
         "mixed_language_tts": "per-response dominant-language routing",
-        "stt": "faster-whisper multilingual model with detected language metadata",
+        "stt": "faster-whisper multilingual auto-detection with Roman Urdu/Urdu/English code-switch support",
     }

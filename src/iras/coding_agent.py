@@ -28,6 +28,21 @@ CODING_AGENT_CORE_TOOLS = {
 
 # Windows interaction is available to the Coding Agent, but it is not an
 # authorization bypass. READ/SAFE/SYSTEM/CRITICAL checks still apply normally.
+CODING_AGENT_TERMINAL_READ_TOOLS = {
+    "terminal_capabilities",
+    "terminal_discover",
+    "terminal_which",
+    "terminal_read",
+    "terminal_sessions",
+}
+
+CODING_AGENT_TERMINAL_ACTION_TOOLS = CODING_AGENT_TERMINAL_READ_TOOLS | {
+    "terminal_exec",
+    "terminal_start",
+    "terminal_send",
+    "terminal_stop",
+}
+
 CODING_AGENT_WINDOWS_TOOLS = {
     "device_computer_status",
     "device_open_project",
@@ -50,12 +65,13 @@ CODING_AGENT_WINDOWS_TOOLS = {
     "device_clipboard_get",
     "device_clipboard_set",
     "device_list_processes",
+    "device_cli_discover",
     # Critical and shell=False. It only executes when the active Remote/local
     # policy permits CRITICAL command execution (for example bounded Master).
     "device_run_command",
 }
 
-CODING_AGENT_TOOL_ALLOWLIST = CODING_AGENT_CORE_TOOLS | CODING_AGENT_WINDOWS_TOOLS
+CODING_AGENT_TOOL_ALLOWLIST = CODING_AGENT_CORE_TOOLS | CODING_AGENT_WINDOWS_TOOLS | CODING_AGENT_TERMINAL_ACTION_TOOLS
 
 
 _WINDOWS_QUOTED_PROJECT_PATH_RE = re.compile(r"[\"'](?P<path>[A-Za-z]:\\[^\r\n\"']+)[\"']")
@@ -137,7 +153,7 @@ def parse_coding_agent_command(text: str) -> tuple[str, str] | None:
         return (command, rest.strip())
     return ("run", remainder)
 
-CODING_AGENT_READ_TOOLS = {
+CODING_AGENT_READ_TOOLS = CODING_AGENT_TERMINAL_READ_TOOLS | {
     "device_computer_status",
     "device_system_info",
     "device_find_projects",
@@ -159,9 +175,14 @@ CODING_AGENT_READ_TOOLS = {
     "device_verify_state",
     "device_clipboard_get",
     "device_list_processes",
+    "device_cli_discover",
 }
 
 CODING_AGENT_TEST_TOOLS = CODING_AGENT_READ_TOOLS | {
+    "terminal_exec",
+    "terminal_start",
+    "terminal_send",
+    "terminal_stop",
     "device_run_tests",
     "device_open_project",
     "device_open_app",
@@ -324,6 +345,12 @@ def coding_agent_status() -> dict[str, Any]:
             ),
         },
         "core_tools": sorted(CODING_AGENT_CORE_TOOLS),
+        "universal_terminal": {
+            "enabled": True,
+            "cli_name_allowlist": False,
+            "read_tools": sorted(CODING_AGENT_TERMINAL_READ_TOOLS),
+            "action_tools": sorted(CODING_AGENT_TERMINAL_ACTION_TOOLS),
+        },
         "commands": [
             "/code <goal>",
             "/code projects [query]",

@@ -141,14 +141,16 @@
     "spotify_startup_sequencing": "Spotify play now uses open/focus -> visual readiness -> search -> search readiness -> play with URI/green-button fallbacks",
     "spotify_uia_invoke": "Content Play prefers the existing audited Windows UI Automation InvokePattern/LegacyIAccessible default action, then scoped mouse/Space fallbacks, with visible playing-state verification after every attempt.",
     "unified_cloud_workspace": "Windows cloud client, web/PWA and Android share persistent cloud thread/history/client presence without moving local device-control enforcement into the public server.",
-    "multilingual_voice_accuracy": "Roman Urdu is marker-detected rather than used as a blanket Latin fallback; Latin-script Roman Urdu uses configurable en-IN-NeerjaNeural by default, while native Urdu script remains on ur-PK-UzmaNeural and other detected languages retain their locale-specific female voices."
+    "multilingual_voice_accuracy": "Roman Urdu is marker-detected rather than used as a blanket Latin fallback; Latin-script Roman Urdu uses configurable en-IN-NeerjaNeural by default, while native Urdu script remains on ur-PK-UzmaNeural and other detected languages retain their locale-specific female voices.",
+    "microphone_stt_reliability": "PC STT auto-ranks physical Realtek inputs with WASAPI preference, de-prioritizes WO Mic/virtual/loopback endpoints, falls back across usable devices/sample rates, fixes early-speech noise-floor poisoning, adds VAD hysteresis and short-command Whisper retry without model VAD, and exposes live RMS/peak/dBFS diagnostics.",
+    "multilingual_hands_free_recognition": "PC Faster-Whisper keeps multilingual auto-detection for Roman Urdu/Urdu/English with wake hotwords; web and Android cycle en-IN, ur-PK and en-US recognition locales for roman-urdu/auto, accept common IRAS wake variants, and Android 14+ receives language-detection allowlists without changing TTS voice routing."
   },
   "local_regression": {
     "android_companion_compile": "static-contract-validated; Android SDK/Gradle build is host-side",
     "failed": 0,
-    "passed": 970,
-    "audit_host": "portable pytest audit host",
-    "windows_validation_target": "970 passed, 2 skipped"
+    "passed": 980,
+    "audit_host": "portable pytest audit host after RC12 STT reliability hardening",
+    "windows_validation_target": "Run voice-doctor.ps1 -TestMicrophone on the Windows host for physical Realtek/Whisper validation; Remote Protocol must remain 1."
   },
   "managed_omniparser": {
     "authenticated_lifecycle": true,
@@ -249,7 +251,9 @@
     "Clean-tree validation excludes legitimate .venv contents, fixing false failures caused by dependency __pycache__ files.",
     "RC5 extends the Software Installer into a permissioned Software Lifecycle Agent with read-only update discovery, exact-package update, explicit update-all, uninstall, and post-action verification.",
     "Software update/uninstall are CRITICAL Remote actions and require laptop-local allow_shell; fixed argv shell=False execution, emergency stop, audit, Remote Protocol 1, and Windows/UAC remain enforced.",
-    "RC12 adds a restart-safe Goal Continuity Ledger: resume decisions are evidence/freshness-aware, every meaningful action remains verification-bound, and side effects are never replayed automatically."
+    "RC12 adds a restart-safe Goal Continuity Ledger: resume decisions are evidence/freshness-aware, every meaningful action remains verification-bound, and side effects are never replayed automatically.",
+    "RC12 STT reliability hardening auto-selects Realtek/WASAPI microphone endpoints, adds multi-rate/device fallback and live microphone level diagnostics.",
+    "RC12 hands-free recognition hardening keeps Roman Urdu, native Urdu and English switching available across PC, web and Android while preserving the female TTS routing contract."
   ],
   "remote_protocol": 1,
   "render_health_hotfix": {
@@ -351,5 +355,44 @@
     "permission_bypass_allowed": false,
     "remote_protocol": 1
   },
-  "hotfix_base_commit": "09bde0ec88685dc580fda82ef23580f424655c7c"
+  "hotfix_base_commit": "72f0b606f8cc846af568e86ac16942cc91cb833c",
+  "universal_terminal_control": {
+    "cli_name_allowlist": false,
+    "local_tools": [
+      "terminal_capabilities",
+      "terminal_discover",
+      "terminal_which",
+      "terminal_exec",
+      "terminal_start",
+      "terminal_read",
+      "terminal_send",
+      "terminal_stop",
+      "terminal_sessions"
+    ],
+    "powershell_discovery": true,
+    "path_discovery": true,
+    "persistent_sessions": true,
+    "default_execution_permission": "SYSTEM_ACTION",
+    "destructive_command_promotion": "CRITICAL",
+    "remote_device_discovery": "device_cli_discover",
+    "remote_device_execution": "device_run_command",
+    "remote_execution_permission": "CRITICAL + locally armed full/allow_shell",
+    "remote_protocol": 1
+  },
+  "voice_permission_authorization": {
+    "enabled_by_default": true,
+    "system_action_phrase": "IRAS approve",
+    "critical_authorization": "fresh randomized four-digit spoken challenge",
+    "voice_is_biometric_authentication": false,
+    "spoken_command_arguments": false,
+    "typed_ui_fallback": true,
+    "emergency_stop_preserved": true,
+    "master_control_voice_activation": false
+  },
+  "local_install_recovery": {
+    "script": "repair-local-install.ps1",
+    "scheduled_bridge_lock_recovery": true,
+    "editable_install_verification": true,
+    "remote_bridge_restart_if_previously_running": true
+  }
 }
