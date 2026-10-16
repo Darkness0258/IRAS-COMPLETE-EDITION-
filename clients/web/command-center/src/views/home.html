@@ -1,0 +1,72 @@
+      <section class="view home" data-view="home" id="view-home" aria-labelledby="homeTitle">
+        <h1 class="sr-only" id="homeTitle">Home</h1>
+
+        <div class="home-main">
+          <div class="orb-stage" id="orbStage">
+            <div class="orb-wrap" id="orbWrap">
+              <canvas id="orb" aria-hidden="true"></canvas>
+              <div class="orb-fallback" aria-hidden="true"></div>
+              <div class="orb-hit" id="orbHit" aria-hidden="true" title="Talk to IRAS (Space)"></div>
+            </div>
+
+            <div class="presence" id="voicePresence">
+              <div class="state-row">
+                <span class="live-dot" aria-hidden="true"></span>
+                <h2 class="state-label display" id="voiceStateLabel">Ready</h2>
+              </div>
+              <p class="state-caption" id="stateCaption">Say “IRAS” or press Space to talk.</p>
+            </div>
+
+            <ol class="pipeline" id="pipeline" aria-label="How IRAS handles a request">
+              <li class="step" data-step="listen"><span class="node">{{i:ear sm}}</span><span class="step-name">Listen</span></li>
+              <li class="step" data-step="understand"><span class="node">{{i:brain sm}}</span><span class="step-name">Understand</span></li>
+              <li class="step gate" data-step="approve"><span class="node">{{i:lock-keyhole sm}}</span><span class="step-name">Approval</span></li>
+              <li class="step" data-step="act"><span class="node">{{i:zap sm}}</span><span class="step-name">Act</span></li>
+            </ol>
+
+            <div class="stage-slot" id="stageSlot">
+              <div class="prompt-grid" id="promptGrid" role="group" aria-label="Try one of these"></div>
+
+              <blockquote class="heard" id="heard"><span id="heardIcon">{{i:mic sm}}</span><p class="heard-text" id="heardText"></p></blockquote>
+
+              <aside class="screen-peek surface" id="screenPeek" aria-label="What IRAS is doing on your screen" aria-hidden="true">
+                <div class="peek-screen" id="peekScreen" role="img" aria-label="A simplified picture of the app IRAS is controlling"></div>
+                <div class="peek-info">
+                  <div class="peek-top">
+                    <span class="peek-app">{{i:monitor sm}}<strong id="peekApp">Spotify</strong></span>
+                    <span class="badge accent" id="peekBadge">{{i:eye sm}}<span>Watching</span></span>
+                  </div>
+                  <p class="peek-step" id="peekStep">Looking for the search box</p>
+                  <ol class="peek-dots" id="peekDots" aria-hidden="true"></ol>
+                </div>
+              </aside>
+            </div>
+          </div>
+
+          <div class="composer-wrap" data-composer="home"></div>
+        </div>
+
+        <aside class="live glass" id="livePanel" aria-label="Live activity">
+          <header class="live-head">
+            <div class="live-title">
+              <span class="live-dot on" aria-hidden="true"></span>
+              <div class="live-title-text">
+                <h2 class="h3">Live activity</h2>
+                <p class="live-latest" id="liveLatest"></p>
+              </div>
+            </div>
+            <button class="live-toggle btn-icon sm" id="liveToggle" type="button" aria-expanded="false" aria-controls="liveList" aria-label="Show more live activity">{{i:chevron-up sm}}</button>
+            <div class="seg sm" role="radiogroup" aria-label="Filter live activity">
+              <label><input type="radio" name="liveFilter" value="all" checked><span>All</span></label>
+              <label><input type="radio" name="liveFilter" value="tool"><span>Actions</span></label>
+              <label><input type="radio" name="liveFilter" value="agent"><span>Agents</span></label>
+            </div>
+          </header>
+          <div class="live-pinned" id="livePinned" hidden></div>
+          <ul class="live-list" id="liveList" tabindex="0" aria-label="Latest actions"></ul>
+          <footer class="live-foot">
+            <span class="muted" id="liveCount">Showing the latest actions</span>
+            <a class="link-btn" href="#/activity">Open audit log</a>
+          </footer>
+        </aside>
+      </section>

@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-skin="cobalt" data-perf="full">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#04070F">
+<title>IRAS Command Center</title>
+<link rel="icon" href="{{FAVICON}}">
+<script>
+/* Set theme and skin before first paint so there is no flash. */
+(function () {
+  try {
+    var s = JSON.parse(localStorage.getItem("iras-cc-settings") || "{}");
+    var theme = s.theme || "auto";
+    if (theme === "auto") theme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    var d = document.documentElement;
+    d.dataset.theme = theme;
+    d.dataset.skin = s.skin === "neon" ? "neon" : "cobalt";
+    d.dataset.perf = s.perf === "lite" ? "lite" : "full";
+    if (s.motion === "reduce") d.dataset.motion = "reduce";
+  } catch (e) {}
+})();
+</script>
+<style>
+{{FONTS}}
+{{CSS}}
+</style>
+</head>
+<body data-ui-state="idle">
+<a class="skip-link" href="#main">Skip to content</a>
+
+<div class="nebula" aria-hidden="true"><i class="blob b1"></i><i class="blob b2"></i><i class="blob b3"></i></div>
+<div class="grain" aria-hidden="true"></div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>
+{{SPRITE}}
+</defs></svg>
+
+<div class="app-shell" id="app">
+
+  <nav class="rail" aria-label="Main">
+    <a class="rail-brand" href="#/home" aria-label="IRAS home">
+      <img class="mark" src="{{MARK}}" width="44" height="44" alt="">
+    </a>
+    <ul class="rail-list">
+      <li><a class="nav-item" href="#/home" data-nav="home">{{i:house}}<span>Home</span></a></li>
+      <li><a class="nav-item" href="#/chat" data-nav="chat">{{i:message-square}}<span>Chat</span></a></li>
+      <li><a class="nav-item" href="#/agents" data-nav="agents">{{i:workflow}}<span>Agents</span></a></li>
+      <li><a class="nav-item" href="#/activity" data-nav="activity">{{i:activity}}<span>Activity</span><b class="nav-badge" id="navBadgeActivity" hidden></b></a></li>
+      <li><a class="nav-item" href="#/memory" data-nav="memory">{{i:share-2}}<span>Memory</span></a></li>
+    </ul>
+    <ul class="rail-list rail-foot">
+      <li><a class="nav-item" href="#/identity" data-nav="identity">{{i:scan-face}}<span>Identity</span></a></li>
+      <li><a class="nav-item" href="#/settings" data-nav="settings">{{i:settings}}<span>Settings</span></a></li>
+    </ul>
+  </nav>
+
+  <div class="stage" id="stage" data-view="home">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-orb" aria-hidden="true"></span>
+        <div class="brand-text">
+          <strong class="brand-name">IRAS</strong>
+          <span class="brand-sub muted" id="brandSub">Command Center</span>
+        </div>
+      </div>
+
+      <div class="chips" role="group" aria-label="System status">
+        <button class="chip" id="chipProvider" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="popProvider">
+          {{i:cpu sm}}<span class="chip-text" id="chipProviderText">Gemini</span>
+        </button>
+        <button class="chip" id="chipMic" type="button" aria-pressed="false">
+          {{i:mic-off sm}}<span class="chip-text" id="chipMicText">Mic off</span>
+        </button>
+        <button class="chip" id="chipCam" type="button" aria-pressed="false">
+          {{i:camera-off sm}}<span class="chip-text" id="chipCamText">Camera off</span>
+        </button>
+        <button class="chip" id="chipSync" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="popSync">
+          {{i:cloud sm}}<span class="chip-text" id="chipSyncText">Synced</span>
+        </button>
+        <span class="chip chip-demo" id="chipDemo" title="This preview runs on sample data. Nothing is sent to your PC.">
+          {{i:flask-conical sm}}<span class="chip-text">Demo data</span>
+        </span>
+      </div>
+
+      <div class="top-actions">
+        <button class="btn stop" id="stopBtn" type="button" hidden>{{i:square sm}}<span>Stop</span></button>
+        <button class="btn-icon" id="paletteBtn" type="button" aria-label="Open command palette (Ctrl+K)" title="Commands (Ctrl+K)">{{i:command}}</button>
+        <button class="btn-icon" id="themeBtn" type="button" aria-label="Switch light or dark" title="Switch light or dark">{{i:moon}}</button>
+        <a class="btn-icon top-settings" href="#/settings" aria-label="Settings">{{i:settings}}</a>
+      </div>
+
+      <div class="popover glass" id="popProvider" role="dialog" aria-label="AI providers" hidden></div>
+      <div class="popover glass" id="popSync" role="dialog" aria-label="Sync status" hidden></div>
+    </header>
+
+    <main id="main" tabindex="-1">
+{{VIEWS}}
+    </main>
+  </div>
+</div>
+
+<!-- toasts and screen-reader announcements -->
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+<div class="sr-only" id="announcer" role="status" aria-live="polite" aria-atomic="true"></div>
+
+<!-- approval overlay: the authority gate -->
+<dialog class="approval glass modal-glass" id="approvalDlg" aria-labelledby="apTitle" aria-describedby="apDetail">
+  <div class="ap-ring" id="apRing" aria-hidden="true">
+    <svg viewBox="0 0 120 120" width="120" height="120">
+      <circle class="ap-track" cx="60" cy="60" r="52"/>
+      <circle class="ap-progress" id="apProgress" cx="60" cy="60" r="52" pathLength="100"/>
+    </svg>
+    <span class="ap-icon" id="apIcon">{{i:shield-alert lg}}</span>
+  </div>
+  <div class="ap-body">
+    <p class="ap-level" id="apLevel">Critical action</p>
+    <h2 class="ap-title" id="apTitle">Delete 3 folders</h2>
+    <p class="ap-detail" id="apDetail"></p>
+    <ul class="ap-effects" id="apEffects"></ul>
+    <div class="ap-voice" id="apVoice">
+      <span class="ap-voice-label">Say</span>
+      <q class="ap-phrase" id="apPhrase">Approve delete</q>
+      <span class="ap-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+    </div>
+    <p class="ap-timer" id="apTimer" role="timer" aria-live="off">9s left</p>
+  </div>
+  <div class="ap-actions">
+    <button class="btn" id="apDeny" type="button">{{i:x sm}}<span>Deny</span></button>
+    <button class="btn authority" id="apApprove" type="button">{{i:check sm}}<span id="apApproveText">Approve</span></button>
+  </div>
+</dialog>
+
+<!-- command palette -->
+<dialog class="palette glass modal-glass" id="paletteDlg" aria-label="Command palette">
+  <div class="pal-search">
+    {{i:search}}
+    <input id="palInput" type="text" placeholder="Type a command or screen name" aria-label="Search commands" autocomplete="off" spellcheck="false">
+    <kbd>Esc</kbd>
+  </div>
+  <ul class="pal-list" id="palList" role="listbox" aria-label="Commands"></ul>
+</dialog>
+
+<script>
+{{JS}}
+</script>
+</body>
+</html>

@@ -1,0 +1,50 @@
+/* ==========================================================================
+   Memory
+   ========================================================================== */
+
+.memory-grid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--s-6); align-items: start; }
+.mem-search { max-width: none; width: 100%; flex: none; margin-bottom: var(--s-2); }
+.mem-status { min-height: 1.5em; margin-bottom: var(--s-2); font-size: var(--fs-14); }
+
+.graph-wrap { position: relative; height: clamp(380px, 56vh, 600px); overflow: hidden; border-radius: var(--r-xl); background:
+  radial-gradient(60% 60% at 50% 45%, var(--accent-soft), transparent 70%), var(--glass); }
+.graph-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.graph-wrap canvas.is-hover { cursor: pointer; }
+.graph-wrap canvas.is-drag { cursor: grabbing; }
+.legend { position: absolute; left: 14px; bottom: 12px; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: var(--fs-12); color: var(--muted); pointer-events: none; max-width: calc(100% - 70px); }
+.legend li { display: inline-flex; align-items: center; gap: 6px; }
+.legend svg { width: 14px; height: 14px; stroke: var(--muted); fill: none; stroke-width: 1.6; }
+.graph-reset { position: absolute; right: 12px; bottom: 12px; }
+
+.mem-list { padding: var(--s-4) var(--s-5); display: grid; gap: var(--s-4); }
+.mem-group h3 { font-size: var(--fs-14); margin-bottom: 6px; color: var(--muted); font-weight: 600; }
+.mem-item { display: flex; align-items: flex-start; gap: 12px; width: 100%; text-align: left; padding: 10px 12px; border-radius: 12px; transition: background-color var(--dur-micro) var(--ease); }
+.mem-item:hover { background: var(--row-hover); }
+.mem-item[aria-pressed="true"] { background: var(--accent-soft); }
+.mem-item .i { color: var(--accent); margin-top: 2px; }
+.mem-item strong { font-size: var(--fs-15); font-weight: 600; }
+.mem-item span { display: block; color: var(--muted); font-size: var(--fs-13); }
+
+.mem-side { display: grid; gap: var(--s-4); }
+.mem-card { padding: var(--s-5); border-radius: var(--r-lg); display: grid; gap: var(--s-3); align-content: start; }
+.facts-list { display: grid; gap: var(--s-3); }
+.fact { display: grid; gap: 8px; padding: 12px 14px; border-radius: 14px; background: var(--row); }
+.fact p { font-weight: 600; font-size: var(--fs-15); line-height: 1.4; }
+.fact small { color: var(--muted); font-size: var(--fs-13); display: block; }
+.conf { display: flex; align-items: center; gap: 10px; font-size: var(--fs-13); color: var(--muted); }
+.conf .bar { flex: 1; }
+.fact-actions { display: flex; gap: 8px; }
+
+.node-head { display: flex; align-items: flex-start; gap: 12px; }
+.node-head h2 { font-size: var(--fs-18); line-height: 1.3; overflow-wrap: anywhere; }
+.node-kind { color: var(--muted); font-size: var(--fs-13); }
+.links { display: flex; flex-wrap: wrap; gap: 6px; }
+.link-chip { display: inline-flex; align-items: center; min-height: 32px; padding: 0 12px; border-radius: var(--r-pill); background: var(--row); border: 1px solid var(--line); font-size: var(--fs-13); font-weight: 500; }
+.link-chip:hover { border-color: var(--accent-line); background: var(--row-hover); }
+
+@media (max-width: 1100px) {
+  .memory-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  .graph-wrap { height: 420px; }
+}

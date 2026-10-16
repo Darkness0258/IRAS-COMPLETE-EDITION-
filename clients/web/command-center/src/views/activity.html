@@ -1,0 +1,29 @@
+      <section class="view activity" data-view="activity" id="view-activity" hidden aria-labelledby="activityTitle">
+        <header class="view-head">
+          <div>
+            <h1 class="title" id="activityTitle">Activity</h1>
+            <p>Every action IRAS takes, in order. Secrets are removed before anything is written here.</p>
+          </div>
+          <button class="btn" id="exportLog" type="button">{{i:download sm}}<span>Export log</span></button>
+        </header>
+
+        <div class="stats" id="activityStats"></div>
+
+        <div class="activity-grid">
+          <div class="act-main">
+            <div class="act-tools">
+              <div class="seg" role="radiogroup" aria-label="Show">
+                <label><input type="radio" name="actFilter" value="all" checked><span>All</span></label>
+                <label><input type="radio" name="actFilter" value="tool"><span>Actions</span></label>
+                <label><input type="radio" name="actFilter" value="agent"><span>Agents</span></label>
+                <label><input type="radio" name="actFilter" value="approval"><span>Approvals</span></label>
+                <label><input type="radio" name="actFilter" value="system"><span>System</span></label>
+              </div>
+              <label class="search-field">{{i:search sm}}<input id="actSearch" type="search" placeholder="Search actions" aria-label="Search activity" autocomplete="off"></label>
+            </div>
+            <ol class="timeline" id="actList"></ol>
+            <p class="muted act-count" id="actCount" aria-live="polite"></p>
+          </div>
+          <aside class="inspector glass" id="inspector" aria-label="Event details"></aside>
+        </div>
+      </section>

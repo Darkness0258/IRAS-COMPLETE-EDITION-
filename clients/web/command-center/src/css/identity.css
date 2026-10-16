@@ -1,0 +1,54 @@
+/* ==========================================================================
+   Identity: Face ID and Voice ID enrollment
+   ========================================================================== */
+
+.id-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-5); align-items: start; margin-bottom: var(--s-5); }
+.id-card { padding: var(--s-5); border-radius: var(--r-xl); display: grid; gap: var(--s-4); align-content: start; }
+.id-head { display: flex; align-items: center; gap: 14px; }
+.id-head .grow { flex: 1; min-width: 0; }
+.id-head p { font-size: var(--fs-14); }
+
+.face-stage { position: relative; width: min(100%, 340px); aspect-ratio: 1; margin: 0 auto; border-radius: 50%; overflow: hidden; background: radial-gradient(circle at 50% 40%, var(--accent-soft), var(--surface-solid) 70%); box-shadow: 0 0 0 1px var(--line), 0 20px 60px -24px var(--glow); }
+.face-stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+.face-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.voice-stage { height: 150px; border-radius: var(--r-lg); background: radial-gradient(70% 90% at 50% 50%, var(--accent-soft), var(--surface-solid)); border: 1px solid var(--line); overflow: hidden; }
+.voice-stage canvas { width: 100%; height: 100%; display: block; }
+
+.id-prompt { text-align: center; font-family: var(--font-display); font-weight: 500; font-size: var(--fs-18); min-height: 1.6em; text-wrap: balance; }
+
+.id-steps { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; }
+.id-steps li { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 12px 0 9px; border-radius: var(--r-pill); border: 1px solid var(--line); background: var(--row); font-size: var(--fs-13); font-weight: 500; color: var(--muted); }
+.id-steps li .i { width: 15px; height: 15px; }
+.id-steps li[data-s="now"] { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+.id-steps li[data-s="now"] .i { color: var(--accent); animation: spin 1.1s linear infinite; }
+.id-steps li[data-s="done"] { color: var(--text); border-color: var(--accent-line); }
+.id-steps li[data-s="done"] .i { color: var(--accent); }
+
+.phrases { display: grid; gap: 8px; }
+.phrases li { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; background: var(--row); border: 1px solid transparent; font-family: var(--font-display); font-weight: 500; font-size: var(--fs-16); color: var(--muted); }
+.phrases li .i { flex: none; }
+.phrases li[data-s="now"] { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+.phrases li[data-s="now"] .i { color: var(--accent); animation: spin 1.1s linear infinite; }
+.phrases li[data-s="done"] { color: var(--text); }
+.phrases li[data-s="done"] .i { color: var(--accent); }
+
+.meter { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; font-size: var(--fs-14); }
+.meter-label { color: var(--muted); }
+
+.id-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-3) var(--s-5); }
+.switch-row { display: inline-flex; align-items: center; gap: 12px; font-size: var(--fs-14); font-weight: 500; cursor: pointer; }
+
+.unlocks { padding: var(--s-5); border-radius: var(--r-xl); display: grid; gap: var(--s-4); }
+.unlocks ul { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-4); }
+.unlocks li { display: flex; gap: 14px; align-items: flex-start; }
+.unlocks li > .i { color: var(--accent); margin-top: 2px; width: 22px; height: 22px; }
+.unlocks strong { display: block; font-size: var(--fs-15); }
+.unlocks span { display: block; color: var(--muted); font-size: var(--fs-14); margin-top: 2px; }
+
+@media (max-width: 1100px) {
+  .id-grid { grid-template-columns: minmax(0, 1fr); }
+  .unlocks ul { grid-template-columns: minmax(0, 1fr); }
+}
+
+.title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.title-row .badge { font-family: var(--font-ui); letter-spacing: 0; }

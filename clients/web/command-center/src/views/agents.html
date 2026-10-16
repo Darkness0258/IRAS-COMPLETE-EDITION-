@@ -1,0 +1,23 @@
+      <section class="view agents" data-view="agents" id="view-agents" hidden aria-labelledby="agentsTitle">
+        <header class="view-head">
+          <div>
+            <h1 class="title" id="agentsTitle">Agents</h1>
+            <p>Start a task and watch every step. IRAS asks before anything risky.</p>
+          </div>
+          <button class="btn primary" id="newTask" type="button">{{i:plus sm}}<span>New task</span></button>
+        </header>
+
+        <div class="stats" id="agentStats"></div>
+
+        <div class="agents-grid">
+          <div class="agents-main">
+            <div class="agent-tiles" id="agentTiles"></div>
+            <h2 class="h3 sec-title">Runs</h2>
+            <div class="runs" id="runList"></div>
+          </div>
+          <aside class="agents-side" aria-label="Routines">
+            <h2 class="h3 sec-title">Routines</h2>
+            <div class="routines surface" id="routineList"></div>
+          </aside>
+        </div>
+      </section>

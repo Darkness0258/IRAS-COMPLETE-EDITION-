@@ -1,0 +1,138 @@
+      <section class="view settings" data-view="settings" id="view-settings" hidden aria-labelledby="settingsTitle">
+        <header class="view-head">
+          <div>
+            <h1 class="title" id="settingsTitle">Settings</h1>
+            <p>Make IRAS look and sound the way you like. Changes apply right away.</p>
+          </div>
+        </header>
+
+        <div class="settings-col">
+
+          <section class="set-card surface" aria-labelledby="setLook">
+            <h2 class="h3" id="setLook">Look and feel</h2>
+            <div class="set-row">
+              <div class="set-text"><span class="label" id="lblTheme">Theme</span><p class="hint">Auto follows your device.</p></div>
+              <div class="seg" role="radiogroup" aria-labelledby="lblTheme">
+                <label><input type="radio" name="theme" value="auto"><span>{{i:monitor sm}}Auto</span></label>
+                <label><input type="radio" name="theme" value="dark"><span>{{i:moon sm}}Dark</span></label>
+                <label><input type="radio" name="theme" value="light"><span>{{i:sun sm}}Light</span></label>
+              </div>
+            </div>
+            <div class="set-row">
+              <div class="set-text"><span class="label" id="lblSkin">Skin</span><p class="hint">Cobalt is blue and black. Neon is green and black.</p></div>
+              <div class="skins" role="radiogroup" aria-labelledby="lblSkin">
+                <label class="skin-card"><input type="radio" name="skin" value="cobalt"><span class="skin-prev" data-skin="cobalt"></span><span class="skin-name">Cobalt</span></label>
+                <label class="skin-card"><input type="radio" name="skin" value="neon"><span class="skin-prev" data-skin="neon"></span><span class="skin-name">Neon</span></label>
+              </div>
+            </div>
+            <div class="set-row">
+              <div class="set-text"><span class="label" id="lblPerf">Performance</span><p class="hint">Performance mode turns off blur, particles and loops. Auto switches to it if this device struggles.</p></div>
+              <div class="seg" role="radiogroup" aria-labelledby="lblPerf">
+                <label><input type="radio" name="perf" value="auto"><span>Auto</span></label>
+                <label><input type="radio" name="perf" value="full"><span>Full</span></label>
+                <label><input type="radio" name="perf" value="lite"><span>Performance</span></label>
+              </div>
+            </div>
+            <div class="set-row">
+              <div class="set-text"><label class="label" for="setMotion">Reduce motion</label><p class="hint">Follows your device setting. Turn it on to force it. The orb stays still and shows state with colour and words.</p></div>
+              <label class="switch"><input type="checkbox" role="switch" id="setMotion"><span class="track"></span></label>
+            </div>
+          </section>
+
+          <section class="set-card surface" aria-labelledby="setVoice">
+            <h2 class="h3" id="setVoice">Voice</h2>
+            <div class="set-row">
+              <div class="set-text"><label class="label" for="voiceProfile">Voice identity</label></div>
+              <select class="field" id="voiceProfile">
+                <option value="iras_human">IRAS Human · Ava Multilingual</option>
+                <option value="anime_soft">Soft · Jenny Neural</option>
+                <option value="anime_cool">Cool · Aria Neural</option>
+                <option value="anime_genki">Energetic · Jenny Neural</option>
+                <option value="normal">Neutral · Aria Neural</option>
+              </select>
+            </div>
+            <div class="set-row">
+              <div class="set-text"><label class="label" for="voiceMood">Voice mood</label></div>
+              <select class="field" id="voiceMood"><option value="warm">Warm, the natural default</option><option value="calm">Calm</option><option value="bright">Bright</option><option value="neutral">Neutral</option></select>
+            </div>
+            <div class="set-row">
+              <div class="set-text"><label class="label" for="language">Speech language</label></div>
+              <select class="field" id="language">
+                <option value="roman-urdu">Roman Urdu (default)</option><option value="auto">Auto detect</option><option value="ur-PK">Urdu script, Pakistan</option><option value="en-US">English (US)</option>
+                <option value="hi-IN">Hindi</option><option value="ar-SA">Arabic</option><option value="pa-IN">Punjabi</option><option value="fa-IR">Persian</option><option value="bn-IN">Bengali</option>
+                <option value="tr-TR">Turkish</option><option value="fr-FR">French</option><option value="es-ES">Spanish</option><option value="de-DE">German</option><option value="it-IT">Italian</option>
+                <option value="pt-BR">Portuguese</option><option value="ru-RU">Russian</option><option value="uk-UA">Ukrainian</option><option value="ja-JP">Japanese</option><option value="ko-KR">Korean</option>
+                <option value="zh-CN">Mandarin Chinese</option><option value="vi-VN">Vietnamese</option>
+              </select>
+            </div>
+            <div class="set-row">
+              <div class="set-text"><label class="label" for="wake">Wake word</label><p class="hint">Say it to wake IRAS.</p></div>
+              <input class="field" id="wake" placeholder="IRAS" maxlength="24" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="set-row">
+              <div class="set-text"><label class="label" for="setSpeak">Speak replies when I speak</label><p class="hint">Typed requests get a typed answer.</p></div>
+              <label class="switch"><input type="checkbox" role="switch" id="setSpeak"><span class="track"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-text"><label class="label" for="setRealMic">Let the orb hear my real voice</label><p class="hint">Uses your microphone in this page only. Audio is not sent or saved.</p></div>
+              <label class="switch"><input type="checkbox" role="switch" id="setRealMic"><span class="track"></span></label>
+            </div>
+          </section>
+
+          <section class="set-card surface" aria-labelledby="setConn">
+            <h2 class="h3" id="setConn">Connection</h2>
+            <div class="set-row">
+              <div class="set-text"><span class="label" id="lblSource">Data source</span><p class="hint">Demo uses sample data. Live sends your typed messages to your own IRAS server.</p></div>
+              <div class="seg" role="radiogroup" aria-labelledby="lblSource">
+                <label><input type="radio" name="source" value="demo"><span>{{i:flask-conical sm}}Demo</span></label>
+                <label><input type="radio" name="source" value="live"><span>{{i:server sm}}Live</span></label>
+              </div>
+            </div>
+            <div id="liveFields">
+              <div class="set-row">
+                <div class="set-text"><label class="label" for="server">Server address</label><p class="hint">For example https://iras-cloud.onrender.com</p></div>
+                <input class="field" id="server" type="url" placeholder="https://iras-cloud.onrender.com" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="set-row">
+                <div class="set-text"><label class="label" for="token">Access token</label><p class="hint">Kept for this browser tab only. Never saved to disk.</p></div>
+                <input class="field" id="token" type="password" placeholder="Your IRAS_API_TOKEN" autocomplete="off">
+              </div>
+              <div class="set-row">
+                <div class="set-text"><span class="label">Check it</span><p class="hint" id="connStatus" role="status" aria-live="polite">Not checked yet.</p></div>
+                <div class="set-actions">
+                  <button class="btn" id="connTest" type="button">{{i:wifi sm}}<span>Test connection</span></button>
+                  <button class="btn ghost" id="connImport" type="button" hidden>{{i:download sm}}<span>Import from classic web app</span></button>
+                </div>
+              </div>
+              <p class="hint live-note">In Live mode this page streams chat replies, provider status and activity. Voice, approvals and agents arrive in a later step. Memory, routines and Identity stay as samples.</p>
+            </div>
+          </section>
+
+          <section class="set-card surface" aria-labelledby="setAuth">
+            <h2 class="h3" id="setAuth">Who decides</h2>
+            <p class="muted">IRAS can do a lot, but being able to is not the same as being allowed to. Every action has a level, and the screen always shows it with an icon and a word.</p>
+            <ul class="levels">
+              <li><span class="badge accent">{{i:check sm}}Safe</span><div><strong>Reading and everyday actions</strong><span>IRAS just does it and logs it. Examples: read your calendar, play music.</span></div></li>
+              <li><span class="badge warn">{{i:shield sm}}System action</span><div><strong>Changes on your PC</strong><span>IRAS asks first, in amber. Examples: install software, send a message.</span></div></li>
+              <li><span class="badge crit">{{i:shield-alert sm}}Critical</span><div><strong>Can’t be undone</strong><span>IRAS asks in red and wants your voice within 9 seconds. Examples: delete files.</span></div></li>
+            </ul>
+          </section>
+
+          <section class="set-card surface" aria-labelledby="setKeys">
+            <h2 class="h3" id="setKeys">Keyboard</h2>
+            <dl class="keys">
+              <div><dt><kbd>Space</kbd></dt><dd>Talk to IRAS, or stop listening</dd></div>
+              <div><dt><kbd>Esc</kbd></dt><dd>Stop what IRAS is doing. Inside an approval it means no</dd></div>
+              <div><dt><kbd>Ctrl</kbd><kbd>K</kbd></dt><dd>Open the command palette</dd></div>
+              <div><dt><kbd>/</kbd></dt><dd>Jump to the message box</dd></div>
+              <div><dt><kbd>Enter</kbd></dt><dd>Send your message</dd></div>
+            </dl>
+          </section>
+
+          <section class="set-card surface" aria-labelledby="setAbout">
+            <h2 class="h3" id="setAbout">About this preview</h2>
+            <p class="muted">IRAS Command Center, design preview. One file, no network requests. Fonts: Sora, Instrument Sans and JetBrains Mono (SIL Open Font License). Icons: Lucide (ISC license).</p>
+            <div class="set-actions"><button class="btn" id="resetSettings" type="button">{{i:rotate-ccw sm}}<span>Reset all settings</span></button></div>
+          </section>
+        </div>
+      </section>

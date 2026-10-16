@@ -1,0 +1,20 @@
+      <section class="view chat" data-view="chat" id="view-chat" hidden aria-labelledby="chatTitle">
+        <div class="chat-col">
+          <header class="view-head">
+            <div>
+              <h1 class="title" id="chatTitle">Conversation</h1>
+              <p>Type or talk. Replies stream in as IRAS thinks, with every tool it used.</p>
+            </div>
+            <button class="btn" id="newThread" type="button">{{i:plus sm}}<span>New chat</span></button>
+          </header>
+          <div class="thread" id="thread" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation">
+            <div class="chat-empty" id="chatEmpty">
+              <img class="mark" src="{{MARK}}" width="56" height="56" alt="">
+              <h2 class="title">What should IRAS do?</h2>
+              <p class="muted">Pick one to see how it works, or write your own below.</p>
+              <div class="chat-suggest" id="chatSuggest"></div>
+            </div>
+          </div>
+          <div class="composer-wrap" data-composer="chat"></div>
+        </div>
+      </section>

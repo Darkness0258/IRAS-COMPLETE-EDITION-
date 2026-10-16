@@ -1,0 +1,37 @@
+      <section class="view memory" data-view="memory" id="view-memory" hidden aria-labelledby="memoryTitle">
+        <header class="view-head">
+          <div>
+            <h1 class="title" id="memoryTitle">Memory</h1>
+            <p>What IRAS remembers about you and how it is connected. You can correct or remove anything.</p>
+          </div>
+          <div class="seg" role="radiogroup" aria-label="How to look at memory">
+            <label><input type="radio" name="memView" value="graph" checked><span>{{i:share-2 sm}}Map</span></label>
+            <label><input type="radio" name="memView" value="list"><span>{{i:list sm}}List</span></label>
+          </div>
+        </header>
+
+        <div class="stats" id="memStats"></div>
+
+        <div class="memory-grid">
+          <div class="mem-main">
+            <label class="search-field mem-search">{{i:search sm}}<input id="memSearch" type="search" placeholder="Ask your memory, for example: music" aria-label="Search memory" autocomplete="off"></label>
+            <p class="muted mem-status" id="memStatus" role="status" aria-live="polite"></p>
+
+            <div class="graph-wrap surface" id="graphWrap">
+              <canvas id="graph" role="img" aria-label="A map of what IRAS remembers. Switch to List for a text version."></canvas>
+              <ul class="legend" aria-hidden="true" id="graphLegend"></ul>
+              <button type="button" class="btn-icon sm graph-reset" id="graphReset" aria-label="Reset the map layout" title="Reset layout">{{i:rotate-ccw sm}}</button>
+            </div>
+            <div class="mem-list surface" id="memList" hidden></div>
+          </div>
+
+          <aside class="mem-side">
+            <section class="surface mem-card" aria-labelledby="factsTitle">
+              <h2 class="h3" id="factsTitle">Waiting for your review</h2>
+              <p class="muted">IRAS noticed these. Keep what is right and forget the rest.</p>
+              <ul class="facts-list" id="factList"></ul>
+            </section>
+            <section class="surface mem-card" id="nodeCard" aria-live="polite" aria-labelledby="nodeTitle"></section>
+          </aside>
+        </div>
+      </section>

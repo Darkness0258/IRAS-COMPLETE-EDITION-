@@ -1,0 +1,204 @@
+/* ==========================================================================
+   IRAS design tokens
+   One accent per skin. Amber and red are reserved for authority
+   (SYSTEM_ACTION and CRITICAL): capability is not authority.
+   Contrast values were measured on the glass surface, see DESIGN.md.
+   ========================================================================== */
+
+:root {
+  /* type */
+  --font-display: "Sora", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --font-ui: "Instrument Sans", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Noto Sans", sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
+
+  /* type scale, ratio 1.25 */
+  --fs-12: .75rem;
+  --fs-13: .8125rem;
+  --fs-14: .875rem;
+  --fs-15: .9375rem;
+  --fs-16: 1rem;
+  --fs-18: 1.125rem;
+  --fs-20: 1.25rem;
+  --fs-25: 1.5625rem;
+  --fs-31: 1.9375rem;
+  --fs-39: 2.4375rem;
+  --fs-49: 3.0625rem;
+
+  /* spacing, 4px base */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+  --s-16: 64px;
+
+  /* radius follows hierarchy: big surfaces are softer than the things inside them */
+  --r-xs: 8px;
+  --r-sm: 12px;
+  --r-md: 16px;
+  --r-lg: 20px;
+  --r-xl: 28px;
+  --r-pill: 999px;
+
+  /* motion: micro 120-160ms, panels 240-320ms, exits about 30% faster */
+  --ease: cubic-bezier(.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0, 0, .2, 1);
+  --ease-in: cubic-bezier(.4, 0, 1, 1);
+  --dur-micro: 140ms;
+  --dur-panel: 280ms;
+  --dur-exit: 200ms;
+  --dur-ambient: 4s;
+
+  /* layout */
+  --rail-w: 84px;
+  --side-w: 392px;
+  --topbar-h: 68px;
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-t: env(safe-area-inset-top, 0px);
+
+  /* glass recipe: blur 20-28px + saturate 160%, a 1px edge, a faint top highlight */
+  --blur: 24px;
+  --sat: 160%;
+
+  /* ------- LIGHT (default) · Cobalt ------- */
+  color-scheme: light;
+  --bg: #EEF3FB;
+  --bg-deep: #E3EBF8;
+  --glass: rgba(255, 255, 255, .62);
+  --glass-strong: rgba(255, 255, 255, .82);
+  --edge: rgba(255, 255, 255, .85);
+  --edge-line: rgba(10, 18, 38, .08);
+  --highlight: rgba(255, 255, 255, .9);
+  --surface-solid: #F7F9FD;
+  --text: #0A1226;
+  --muted: #4A5877;
+  --row: rgba(10, 18, 38, .04);
+  --row-hover: rgba(10, 18, 38, .07);
+  --line: rgba(10, 18, 38, .10);
+  --input: rgba(255, 255, 255, .72);
+  --scrim: rgba(10, 18, 38, .38);
+
+  --knob: #FFFFFF;            /* switch knob on an accent fill */
+  --accent: #1D4ED8;          /* text, icons, active states */
+  --accent-fill: #1D4ED8;     /* button and badge fills */
+  --on-accent: #FFFFFF;       /* text on a fill */
+  --accent-soft: rgba(29, 78, 216, .10);
+  --accent-line: rgba(29, 78, 216, .32);
+  --glow: rgba(29, 78, 216, .28);
+  --orb-core: #FFFFFF;
+  --orb-mid: #9DB9FF;
+  --orb-deep: #3B63E8;
+
+  --warn: #92400E;            /* SYSTEM_ACTION text and icons */
+  --warn-fill: #D97706;       /* fills, rings and the orb */
+  --on-warn: #1A0F00;
+  --warn-soft: rgba(217, 119, 6, .14);
+  --crit: #B3122F;            /* CRITICAL text and icons */
+  --crit-fill: #E11D48;
+  --on-crit: #FFFFFF;
+  --crit-soft: rgba(225, 29, 72, .10);
+
+  --blob-1: rgba(76, 141, 255, .38);
+  --blob-2: rgba(150, 120, 255, .24);
+  --blob-3: rgba(0, 190, 255, .20);
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, .8) inset, 0 12px 32px -16px rgba(10, 18, 38, .22);
+  --shadow-2: 0 1px 0 rgba(255, 255, 255, .9) inset, 0 28px 60px -28px rgba(10, 18, 38, .32);
+}
+
+/* ------- DARK · Cobalt ------- */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #04070F;
+  --bg-deep: #02040A;
+  --glass: rgba(255, 255, 255, .07);
+  --glass-strong: rgba(255, 255, 255, .11);
+  --edge: rgba(255, 255, 255, .14);
+  --edge-line: rgba(255, 255, 255, .06);
+  --highlight: rgba(255, 255, 255, .22);
+  --surface-solid: #0B1224;
+  --text: #EAF1FF;
+  --muted: #9AA9C7;
+  --row: rgba(255, 255, 255, .05);
+  --row-hover: rgba(255, 255, 255, .09);
+  --line: rgba(255, 255, 255, .10);
+  --input: rgba(255, 255, 255, .06);
+  --scrim: rgba(2, 4, 10, .66);
+
+  --accent: #4C8DFF;
+  --accent-fill: #4C8DFF;
+  --on-accent: #04070F;
+  --accent-soft: rgba(76, 141, 255, .14);
+  --accent-line: rgba(76, 141, 255, .45);
+  --glow: rgba(76, 141, 255, .45);
+  --orb-core: #EAF4FF;
+  --orb-mid: #5E96FF;
+  --orb-deep: #1B3FB8;
+
+  --warn: #FFB020;
+  --warn-fill: #FFB020;
+  --on-warn: #1A1200;
+  --warn-soft: rgba(255, 176, 32, .14);
+  --crit: #FF5C74;
+  --crit-fill: #FF5C74;
+  --on-crit: #25030B;
+  --crit-soft: rgba(255, 92, 116, .14);
+
+  --blob-1: rgba(38, 92, 255, .46);
+  --blob-2: rgba(112, 70, 255, .30);
+  --blob-3: rgba(0, 170, 255, .22);
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, .06) inset, 0 16px 40px -18px rgba(0, 0, 0, .7);
+  --shadow-2: 0 1px 0 rgba(255, 255, 255, .08) inset, 0 32px 80px -30px rgba(0, 0, 0, .85);
+}
+
+/* ------- Neon skin (green and black) ------- */
+/* Neon on a light background fails at 1.27:1, so in light mode neon is only a
+   fill or glow with dark text on it. Green text and icons use the deep green. */
+[data-skin="neon"] {
+  --knob: #03120A;
+  --accent: #006B3C;
+  --accent-fill: #2DFF9A;
+  --on-accent: #03120A;
+  --accent-soft: rgba(0, 107, 60, .10);
+  --accent-line: rgba(0, 107, 60, .38);
+  --glow: rgba(45, 255, 154, .35);
+  --orb-core: #F2FFF8;
+  --orb-mid: #6BF0B4;
+  --orb-deep: #0B9B5E;
+  --blob-1: rgba(45, 255, 154, .30);
+  --blob-2: rgba(0, 160, 120, .20);
+  --blob-3: rgba(120, 220, 255, .22);
+}
+
+[data-theme="dark"][data-skin="neon"] {
+  --accent: #2DFF9A;
+  --accent-fill: #2DFF9A;
+  --on-accent: #03120A;
+  --accent-soft: rgba(45, 255, 154, .12);
+  --accent-line: rgba(45, 255, 154, .42);
+  --glow: rgba(45, 255, 154, .35);
+  --orb-core: #EFFFF7;
+  --orb-mid: #3DF0A0;
+  --orb-deep: #057A48;
+  --blob-1: rgba(0, 255, 150, .22);
+  --blob-2: rgba(0, 130, 100, .34);
+  --blob-3: rgba(20, 200, 255, .12);
+}
+
+/* No-JS fallback: follow the OS until the script sets data-theme */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --bg: #04070F;
+    --glass: rgba(255, 255, 255, .07);
+    --edge: rgba(255, 255, 255, .14);
+    --text: #EAF1FF;
+    --muted: #9AA9C7;
+    --accent: #4C8DFF;
+    --accent-fill: #4C8DFF;
+    --on-accent: #04070F;
+  }
+}

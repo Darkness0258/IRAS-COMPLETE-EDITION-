@@ -1,0 +1,55 @@
+      <section class="view identity" data-view="identity" id="view-identity" hidden aria-labelledby="identityTitle">
+        <header class="view-head">
+          <div>
+            <h1 class="title title-row" id="identityTitle">Identity <span class="badge accent">{{i:flask-conical sm}}Preview</span></h1>
+            <p>Teach IRAS your face and your voice, so it knows it is you before it unlocks or approves anything big.</p>
+          </div>
+        </header>
+
+        <div class="id-grid">
+          <article class="id-card surface" id="faceCard" aria-labelledby="faceTitle">
+            <header class="id-head">
+              <span class="ico-tile">{{i:scan-face}}</span>
+              <div class="grow"><h2 class="h3" id="faceTitle">Face ID</h2><p class="muted">Unlocks IRAS when you sit down.</p></div>
+              <span class="badge" id="faceBadge">Not set up</span>
+            </header>
+            <div class="face-stage" id="faceStage">
+              <video id="faceVideo" playsinline muted hidden></video>
+              <canvas id="faceCanvas" aria-hidden="true"></canvas>
+            </div>
+            <p class="id-prompt" id="facePrompt" role="status" aria-live="polite">Press start. Keep your face inside the circle.</p>
+            <ol class="id-steps" id="faceSteps"></ol>
+            <div class="id-actions">
+              <button class="btn primary" id="faceStart" type="button">{{i:play sm}}<span>Start Face ID</span></button>
+              <label class="switch-row"><span class="switch"><input type="checkbox" role="switch" id="faceCamToggle"><span class="track"></span></span><span>Use my camera</span></label>
+            </div>
+            <p class="hint">Preview only. Face matching is not connected in this demo. Nothing is recorded or saved.</p>
+          </article>
+
+          <article class="id-card surface" id="voiceCard" aria-labelledby="voiceTitle">
+            <header class="id-head">
+              <span class="ico-tile">{{i:audio-lines}}</span>
+              <div class="grow"><h2 class="h3" id="voiceTitle">Voice ID</h2><p class="muted">Lets you approve big actions by voice.</p></div>
+              <span class="badge" id="voiceBadge">Not set up</span>
+            </header>
+            <div class="voice-stage"><canvas id="voiceCanvas" aria-hidden="true"></canvas></div>
+            <p class="id-prompt" id="voicePrompt" role="status" aria-live="polite">Press start, then read each line out loud.</p>
+            <ol class="phrases" id="phraseList"></ol>
+            <div class="meter"><span class="meter-label">Voice quality</span><div class="bar" id="voiceBar" style="--p:0" role="progressbar" aria-label="Voice quality" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><span class="num" id="voicePct">0%</span></div>
+            <div class="id-actions">
+              <button class="btn primary" id="voiceStart" type="button">{{i:play sm}}<span>Start Voice ID</span></button>
+              <label class="switch-row"><span class="switch"><input type="checkbox" role="switch" id="voiceMicToggle"><span class="track"></span></span><span>Use my microphone</span></label>
+            </div>
+            <p class="hint">Preview only. Nothing you say is recorded or saved.</p>
+          </article>
+        </div>
+
+        <section class="unlocks surface" aria-labelledby="unlockTitle">
+          <h2 class="h3" id="unlockTitle">What this unlocks</h2>
+          <ul>
+            <li>{{i:lock-keyhole}}<div><strong>Approve critical actions by voice</strong><span>IRAS checks that the voice saying the phrase is yours.</span></div></li>
+            <li>{{i:scan-face}}<div><strong>Unlock when you sit down</strong><span>No password, and it locks again when you leave.</span></div></li>
+            <li>{{i:users}}<div><strong>Share the PC safely</strong><span>Others can talk to IRAS, but only you can approve. <em class="badge plain">Later</em></span></div></li>
+          </ul>
+        </section>
+      </section>
