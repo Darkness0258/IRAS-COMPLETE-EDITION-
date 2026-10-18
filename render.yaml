@@ -31,5 +31,7 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: IRAS_DATABASE_REQUIRED
+        value: "false"
       - key: IRAS_VAULT_MASTER_KEY
         sync: false

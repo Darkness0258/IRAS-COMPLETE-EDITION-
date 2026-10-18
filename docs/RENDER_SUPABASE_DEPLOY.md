@@ -157,6 +157,64 @@ Render Free services may sleep after inactivity. If IRAS has been idle, the firs
 
 Supabase stores the durable memory, so Render sleeping or restarting does not erase the shared IRAS memory/personality.
 
+## 7. If the server will not start: the database
+
+The Render log shows a message like this:
+
+```text
+FATAL:  (ENOTFOUND) tenant/user postgres.xxxxxxxxxxxxxxxxxxxx not found
+```
+
+It means Supabase's connection gate (the "pooler") does not know your project at that address.
+It is **not** a wrong password. A wrong password says `password authentication failed`.
+
+Check these, in this order:
+
+1. **Is the project paused?** Free Supabase projects pause after about a week without use.
+   Open the Supabase dashboard. If you see "Project paused", press **Restore project** and wait two minutes.
+2. **Copy the string again. Do not edit it.** In Supabase press **Connect**, choose **Session pooler**
+   and copy the whole string. The host looks like `aws-0-<region>.pooler.supabase.com` or
+   `aws-1-<region>.pooler.supabase.com`. The number and the region both have to match your project,
+   and newer projects use `aws-1`.
+3. **Paste it into Render.** Render, `iras-cloud`, Environment, `DATABASE_URL`, Save. Render redeploys.
+4. **Symbols in the password?** The characters `@ # / : ? %` break the address unless they are written as
+   `%40 %23 %2F %3A %3F %25`. The easy way out: Supabase, Project Settings, Database, Reset database
+   password, and choose letters and numbers only.
+5. **Do not use the "Direct connection" string on Render.** It is IPv6 only and Render cannot reach it.
+
+### Check it on your PC before you deploy
+
+PowerShell, in the IRAS folder:
+
+```powershell
+$env:DATABASE_URL = "paste the string here"
+python -m iras.memory.db_diagnose
+```
+
+If it says the project was not found, let it look through every Supabase region:
+
+```powershell
+python -m iras.memory.db_diagnose --all-regions
+```
+
+It prints the host that knows your project. It never prints your password (add `--reveal` only if you
+want the full string on your own screen). A region that does not know the project answers before any
+password is sent.
+
+### What the server does when the database is wrong
+
+It no longer crashes and restarts in a loop. It prints `[IRAS DB]` lines that explain the problem in plain
+words, then starts on temporary local storage so the web app, the phone and the PC can still reach it.
+`/ready` tells the truth:
+
+```json
+{ "database": "sqlite-fallback", "database_ok": false, "database_help": "Supabase does not recognise the project in DATABASE_URL. ..." }
+```
+
+While it runs like this, memory is **not shared between devices** and is lost when Render restarts.
+Fix `DATABASE_URL` and redeploy. If you would rather have the server refuse to start, set
+`IRAS_DATABASE_REQUIRED=true`.
+
 ## Security
 
 Never expose these:

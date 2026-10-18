@@ -2003,6 +2003,7 @@ def agent_status(
 def readiness():
     """Detailed runtime status for diagnostics; not used as Render's health gate."""
     profile = get_profile(settings.voice_profile)
+    db_status = getattr(runtime, "database_status", None) or {}
     return {
         "ok": True,
         "service": "IRAS Cloud",
@@ -2018,7 +2019,11 @@ def readiness():
             settings.provider,
         ),
         "ai_providers": _cloud_provider_rows(),
-        "database": "postgres" if settings.database_url else "sqlite-local",
+        # postgres, sqlite-local, or sqlite-fallback (DATABASE_URL is set but could
+        # not be reached, so the server is running on temporary local storage).
+        "database": db_status.get("mode") or ("postgres" if settings.database_url else "sqlite-local"),
+        "database_ok": bool(db_status.get("ok", True)),
+        "database_help": db_status.get("help", ""),
         "voice_profile": settings.voice_profile,
         "voice": profile.voice,
         "streaming": True,

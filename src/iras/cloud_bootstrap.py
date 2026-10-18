@@ -6,6 +6,13 @@ from iras.config import Settings
 from iras.core.agent import IRASAgent
 from iras.device_bridge.recovery_learning import RecoveryRoutePerformanceStore
 from iras.memory.store import MemoryStore
+from iras.memory.db_diagnose import (
+    PUBLIC_HELP,
+    database_required,
+    describe_failure,
+    drop_database_url,
+    probe_database,
+)
 from iras.memory.postgres_store import PostgresMemoryStore
 from iras.models import PermissionLevel
 from iras.persona import build_system_prompt
@@ -47,6 +54,14 @@ class CloudRuntime:
         self.device_bridge = device_bridge
         self.app_skills = app_skills
         self.v5 = None
+        # Filled in by build_cloud_runtime. /ready reports it.
+        self.database_status = {
+            "configured": bool(getattr(settings, "database_url", "")),
+            "mode": "postgres" if getattr(settings, "database_url", "") else "sqlite-local",
+            "ok": True,
+            "category": "",
+            "help": "",
+        }
 
 
 class CloudWorker:
@@ -174,6 +189,55 @@ def build_cloud_worker(
     return CloudWorker(agent, registry, provider, personality)
 
 
+def _check_database(s: Settings) -> dict:
+    """Try the database once, before any store opens it.
+
+    A wrong DATABASE_URL used to crash the whole server at start with a long
+    traceback, so Render kept restarting it. Now the server says what is wrong in
+    plain words and, unless IRAS_DATABASE_REQUIRED=true, keeps running on local
+    temporary storage so the web app, the phone and the PC can still reach it.
+    """
+    status = {
+        "configured": bool(s.database_url),
+        "mode": "sqlite-local",
+        "ok": True,
+        "category": "",
+        "help": "",
+    }
+    if not s.database_url:
+        return status
+
+    probe = probe_database(s.database_url)
+    if probe.ok:
+        status["mode"] = "postgres"
+        return status
+
+    for line in describe_failure(probe):
+        print(line, flush=True)
+
+    if database_required():
+        raise RuntimeError(
+            "DATABASE_URL could not be used and IRAS_DATABASE_REQUIRED is true. "
+            + probe.summary
+        )
+
+    print(
+        "[IRAS DB] Starting on local temporary storage so the server stays up. "
+        "Memory is not shared between devices and is lost on restart until "
+        "DATABASE_URL works. Set IRAS_DATABASE_REQUIRED=true to refuse to start "
+        "instead.",
+        flush=True,
+    )
+    drop_database_url(s)
+    status.update(
+        mode="sqlite-fallback",
+        ok=False,
+        category=probe.category,
+        help=PUBLIC_HELP.get(probe.category, PUBLIC_HELP["unknown"]),
+    )
+    return status
+
+
 def build_cloud_runtime(settings: Settings | None = None) -> CloudRuntime:
     s = settings or Settings.load()
 
@@ -184,6 +248,8 @@ def build_cloud_runtime(settings: Settings | None = None) -> CloudRuntime:
         )
 
     audit = AuditLogger(s.audit_path)
+
+    database_status = _check_database(s)
 
     if s.database_url:
         memory = PostgresMemoryStore(s.database_url)
@@ -235,7 +301,7 @@ def build_cloud_runtime(settings: Settings | None = None) -> CloudRuntime:
         app_skills=app_skills,
     )
 
-    return CloudRuntime(
+    runtime = CloudRuntime(
         s,
         agent,
         registry,
@@ -245,3 +311,5 @@ def build_cloud_runtime(settings: Settings | None = None) -> CloudRuntime:
         device_bridge,
         app_skills,
     )
+    runtime.database_status = database_status
+    return runtime
