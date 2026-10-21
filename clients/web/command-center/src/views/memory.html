@@ -2,7 +2,7 @@
         <header class="view-head">
           <div>
             <h1 class="title" id="memoryTitle">Memory</h1>
-            <p>What IRAS remembers about you and how it is connected. You can correct or remove anything.</p>
+            <p>What IRAS remembers about you, saved on your server. You can add or remove anything.</p>
           </div>
           <div class="seg" role="radiogroup" aria-label="How to look at memory">
             <label><input type="radio" name="memView" value="graph" checked><span>{{i:share-2 sm}}Map</span></label>
@@ -27,9 +27,11 @@
 
           <aside class="mem-side">
             <section class="surface mem-card" aria-labelledby="factsTitle">
-              <h2 class="h3" id="factsTitle">Waiting for your review</h2>
-              <p class="muted">IRAS noticed these. Keep what is right and forget the rest.</p>
-              <ul class="facts-list" id="factList"></ul>
+              <h2 class="h3" id="factsTitle">Remember something</h2>
+              <p class="muted">Write a fact or a habit. IRAS keeps it and uses it in later chats.</p>
+              <label class="label" for="memNew">What should IRAS remember?</label>
+              <textarea class="field" id="memNew" rows="3" maxlength="2000" placeholder="For example: I prefer short answers in the evening."></textarea>
+              <div class="fact-actions"><button type="button" class="btn sm primary" id="memAdd">{{i:check sm}}<span>Save to memory</span></button></div>
             </section>
             <section class="surface mem-card" id="nodeCard" aria-live="polite" aria-labelledby="nodeTitle"></section>
           </aside>

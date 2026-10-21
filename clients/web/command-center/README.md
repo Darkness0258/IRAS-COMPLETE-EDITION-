@@ -1,3 +1,5 @@
+> **Merged build.** This is now the main IRAS screen. `python build.py` writes `clients/web/index.html`, served at `/app/`. It uses the same server address by default (Live). The sample-data demo is hidden. The old page is kept at `clients/web/classic/` for the remote screen, tasks and master control.
+
 # IRAS Command Center
 
 The new look of IRAS, working: a living orb, glass panels, an approval gate, and seven screens.

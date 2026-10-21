@@ -49,9 +49,9 @@
       <li><a class="nav-item" href="#/agents" data-nav="agents">{{i:workflow}}<span>Agents</span></a></li>
       <li><a class="nav-item" href="#/activity" data-nav="activity">{{i:activity}}<span>Activity</span><b class="nav-badge" id="navBadgeActivity" hidden></b></a></li>
       <li><a class="nav-item" href="#/memory" data-nav="memory">{{i:share-2}}<span>Memory</span></a></li>
+      <li><a class="nav-item" href="#/identity" data-nav="identity">{{i:scan-face}}<span>Identity</span></a></li>
     </ul>
     <ul class="rail-list rail-foot">
-      <li><a class="nav-item" href="#/identity" data-nav="identity">{{i:scan-face}}<span>Identity</span></a></li>
       <li><a class="nav-item" href="#/settings" data-nav="settings">{{i:settings}}<span>Settings</span></a></li>
     </ul>
   </nav>
@@ -79,13 +79,12 @@
         <button class="chip" id="chipSync" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="popSync">
           {{i:cloud sm}}<span class="chip-text" id="chipSyncText">Synced</span>
         </button>
-        <span class="chip chip-demo" id="chipDemo" title="This preview runs on sample data. Nothing is sent to your PC.">
-          {{i:flask-conical sm}}<span class="chip-text">Demo data</span>
-        </span>
+        <span class="chip" id="chipStore" title="Checking where memory is saved…">{{i:database sm}}<span class="chip-text" id="chipStoreText">Storage</span></span>
       </div>
 
       <div class="top-actions">
         <button class="btn stop" id="stopBtn" type="button" hidden>{{i:square sm}}<span>Stop</span></button>
+        <a class="btn-icon" href="/app/classic/" aria-label="Open classic controls" title="Classic controls: remote screen, tasks, master control">{{i:sliders-horizontal}}</a>
         <button class="btn-icon" id="paletteBtn" type="button" aria-label="Open command palette (Ctrl+K)" title="Commands (Ctrl+K)">{{i:command}}</button>
         <button class="btn-icon" id="themeBtn" type="button" aria-label="Switch light or dark" title="Switch light or dark">{{i:moon}}</button>
         <a class="btn-icon top-settings" href="#/settings" aria-label="Settings">{{i:settings}}</a>

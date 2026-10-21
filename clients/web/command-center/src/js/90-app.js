@@ -17,15 +17,6 @@
       goto("home", "Home", "house"), goto("chat", "Conversation", "message-square"), goto("agents", "Agents and routines", "workflow"),
       goto("activity", "Activity and audit log", "activity"), goto("memory", "Memory", "share-2"), goto("identity", "Face ID and Voice ID", "scan-face"), goto("settings", "Settings", "settings"),
 
-      { group: "Try in the demo", label: "Talk to IRAS", icon: "mic", hint: "Space", kw: "voice listen mic", run: () => { IRAS.go("home"); IRAS.toggleMic(); } },
-      { group: "Try in the demo", label: "Play a guided demo", icon: "circle-play", kw: "tour", run: () => IRAS.sim.tour() },
-      { group: "Try in the demo", label: "Play something calm on Spotify", icon: "music", kw: "screen apps", run: () => IRAS.run("Play something calm on Spotify") },
-      { group: "Try in the demo", label: "Summarize my unread emails", icon: "mail", run: () => IRAS.run("Summarize my unread emails") },
-      { group: "Try in the demo", label: "Install VS Code", icon: "package", kw: "approval amber system action", run: () => IRAS.run("Install VS Code") },
-      { group: "Try in the demo", label: "Delete old build folders", icon: "trash-2", kw: "approval red critical voice", run: () => IRAS.run("Delete old build folders") },
-      { group: "Try in the demo", label: "/code fix the failing test", icon: "bug", kw: "agent", run: () => IRAS.run("/code fix the failing test") },
-      { group: "Try in the demo", label: "/research local speech-to-text", icon: "flask-conical", kw: "agent", run: () => IRAS.run("/research local speech-to-text on low-end laptops") },
-      { group: "Try in the demo", label: "Simulate an AI provider failover", icon: "cpu", kw: "gemini openrouter", run: () => { IRAS.go("home"); IRAS.sim.play("failover"); } },
 
       { group: "Look and feel", label: "Dark theme", icon: "moon", kw: "appearance", run: () => setSetting("theme", "dark") },
       { group: "Look and feel", label: "Light theme", icon: "sun", kw: "appearance", run: () => setSetting("theme", "light") },

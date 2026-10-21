@@ -53,7 +53,7 @@ const DEFAULTS = {
   skin: "cobalt",         // cobalt | neon
   perf: "auto",           // auto | full | lite
   motion: "system",       // system | reduce
-  source: "demo",         // demo | live
+  source: "live",         // demo | live
   server: "",
   voiceProfile: "iras_human",
   mood: "warm",

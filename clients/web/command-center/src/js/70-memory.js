@@ -22,15 +22,52 @@
     col = { accent: v("--accent"), fill: v("--accent-fill"), text: v("--text"), muted: v("--muted"), bg: v("--surface-solid"), line: v("--line"), soft: v("--accent-soft"), onAccent: v("--on-accent") };
   }
 
-  /* ---------- data ---------- */
-  function load() {
-    const src = IRAS.data.graph;
-    nodes = src.nodes.map((n, i) => {
-      const a = (i / src.nodes.length) * Math.PI * 2;
-      return Object.assign({}, n, { x: Math.cos(a) * 160 + rand(-20, 20), y: Math.sin(a) * 120 + rand(-20, 20), vx: 0, vy: 0, r: R_BY[n.type] || 12, pinned: false });
-    });
-    const byId = new Map(nodes.map((n) => [n.id, n]));
-    edges = src.edges.map(([a, b]) => ({ a: byId.get(a), b: byId.get(b) })).filter((e) => e.a && e.b);
+  /* ---------- data: the real memory on your server ---------- */
+  const YOU = { id: "you", label: "You", type: "you", detail: "Everything on this map was saved for you." };
+  const TYPE_BY_KIND = { project: "project", device: "device", service: "service", app: "service", tool: "service", model: "model" };
+  let searched = false, newest = 0;
+  const mk = (n, i, count) => { const a = (i / count) * Math.PI * 2; return Object.assign({}, n, { x: Math.cos(a) * 160 + rand(-20, 20), y: Math.sin(a) * 120 + rand(-20, 20), vx: 0, vy: 0, r: R_BY[n.type] || 12, pinned: false }); };
+  const api = (path, opts = {}) => {
+    const b = String(settings.server || "").trim().replace(/\/+$/, ""), tk = store.sget("iras-api-token", "");
+    if (!b) return Promise.reject(new Error("Add your server address in Settings first."));
+    return fetch(b + path, Object.assign({}, opts, { headers: Object.assign({ "X-Device-ID": "web" }, tk ? { Authorization: "Bearer " + tk } : {}, opts.headers || {}) }))
+      .then((r) => { if (!r.ok) throw new Error(r.status === 401 || r.status === 403 ? "The server refused the access token." : "The server answered " + r.status + "."); return r.json(); });
+  };
+  async function loadReal(q) {
+    searched = !!q;
+    try {
+      const list = (await api("/v1/v5/memory/search?limit=60&q=" + encodeURIComponent(q || ""))).memories || [];
+      const you = mk(YOU, 0, list.length + 1);
+      const mems = list.map((m, i) => { const t = String(m.text || ""); return mk({ id: m.memory_id, label: t.length > 34 ? t.slice(0, 33) + "…" : t, type: TYPE_BY_KIND[String(m.kind || "").toLowerCase()] || "preference", detail: t + (m.source ? " (from " + m.source + ")" : "") }, i + 1, list.length + 1); });
+      nodes = [you].concat(mems);
+      edges = mems.map((n) => ({ a: you, b: n }));
+      if (!q) newest = list.reduce((t, m) => Math.max(t, Date.parse(m.created_at) || 0), 0);
+      selected = null; hover = null;
+      settle(300);
+      $("#memStatus").textContent = !list.length && !q ? "Nothing is saved yet. Add something on the right." : "";
+    } catch (err) { $("#memStatus").textContent = "Could not read memory. " + err.message; }
+    renderStats(); renderCard(); renderList(); if (q) setStatus(); reheat(.6);
+  }
+  async function forgetReal(id) {
+    const n = nodes.find((x) => x.id === id);
+    if (!n) return;
+    try {
+      await api("/v1/v5/memory/" + encodeURIComponent(id), { method: "DELETE" });
+      nodes = nodes.filter((x) => x !== n); edges = edges.filter((x) => x.a !== n && x.b !== n);
+      selected = null; hover = null;
+      renderCard(); renderList(); renderStats(); reheat(.5);
+      toast("Forgot “" + n.label + "”.", { icon: "trash-2" });
+    } catch (err) { toast("Could not forget it. " + err.message, { icon: "cloud-off", timeout: 7000 }); }
+  }
+  async function addReal() {
+    const box = $("#memNew"), text = box.value.trim();
+    if (!text) { toast("Write what IRAS should remember first.", { icon: "info" }); box.focus(); return; }
+    try {
+      await api("/v1/v5/memory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, namespace: "default", kind: "note", source: "web" }) });
+      box.value = "";
+      toast("Saved to memory.", { icon: "check" });
+      loadReal("");
+    } catch (err) { toast("Could not save it. " + err.message, { icon: "cloud-off", timeout: 7000 }); }
   }
 
   /* ---------- layout ---------- */
@@ -89,7 +126,7 @@
       default: g.arc(x, y, r, 0, Math.PI * 2);
     }
   }
-  const matches = (n) => !query || (n.label + " " + (n.detail || "")).toLowerCase().includes(query);
+  const matches = (n) => !query || searched || (n.label + " " + (n.detail || "")).toLowerCase().includes(query);
   const connected = (n, m) => edges.some((e) => (e.a === n && e.b === m) || (e.a === m && e.b === n));
 
   function draw() {
@@ -216,26 +253,18 @@
   }
 
   function renderStats() {
+    const n = Math.max(0, nodes.length - 1);
     $("#memStats").innerHTML = [
-      ["Things remembered", "212", "facts, habits and settings", "brain"],
-      ["Connected apps", String(nodes.filter((n) => n.app).length), "IRAS can use these", "link"],
-      ["Waiting for review", String(IRAS.data.facts.length), IRAS.data.facts.length ? "right side of this page" : "all caught up", "circle-check"],
-      ["Last sync", relTime(S.sync.at), "across your devices", "cloud"],
-    ].map(([l, n, sub, ic]) => `<div class="stat"><div class="stat-label">${icon(ic, "i-sm")}${l}</div><div class="stat-num num">${n}</div><div class="stat-sub">${sub}</div></div>`).join("");
-  }
-
-  function renderFacts() {
-    const host = $("#factList");
-    if (!IRAS.data.facts.length) { host.innerHTML = `<li class="empty">${icon("circle-check")}<strong>All caught up</strong><span>New things IRAS learns will wait here for you.</span></li>`; return; }
-    host.innerHTML = IRAS.data.facts.map((f) => `<li class="fact" data-id="${f.id}"><p>${esc(f.text)}</p><small>${esc(f.source)}. ${esc(f.use)}</small>
-      <div class="conf"><div class="bar thin" style="--p:${f.conf / 100}" role="img" aria-label="${f.conf} percent sure"><i></i></div><span class="num">${f.conf}% sure</span></div>
-      <div class="fact-actions"><button type="button" class="btn sm primary" data-keep="${f.id}">${icon("check", "i-sm")}<span>Keep</span></button><button type="button" class="btn sm" data-drop="${f.id}">${icon("x", "i-sm")}<span>Forget</span></button></div></li>`).join("");
+      ["Things remembered", String(n), n >= 60 ? "the latest 60 are shown" : "facts, habits and notes", "brain"],
+      ["Newest", newest ? relTime(newest) : "none yet", "when it was saved", "clock"],
+      ["Saved in", ($("#chipStoreText") || {}).textContent || "Unknown", "see the top bar", "cloud"],
+    ].map(([l, v, sub, ic]) => `<div class="stat"><div class="stat-label">${icon(ic, "i-sm")}${l}</div><div class="stat-num num">${esc(v)}</div><div class="stat-sub">${sub}</div></div>`).join("");
   }
 
   function setStatus() {
     const el = $("#memStatus");
     if (!query) { el.textContent = ""; return; }
-    const m = nodes.filter(matches);
+    const m = nodes.filter((n) => n.type !== "you" && matches(n));
     el.textContent = m.length ? `${m.length} ${m.length === 1 ? "memory matches" : "memories match"}: ${m.slice(0, 4).map((n) => n.label).join(", ")}${m.length > 4 ? "…" : ""}` : "Nothing in memory matches that.";
   }
 
@@ -245,37 +274,13 @@
     const go = e.target.closest("[data-go]");
     if (go) { select(go.dataset.go); return; }
     const forget = e.target.closest("[data-forget]");
-    if (forget) {
-      const id = forget.dataset.forget, n = nodes.find((x) => x.id === id);
-      if (!n) return;
-      nodes = nodes.filter((x) => x !== n);
-      edges = edges.filter((x) => x.a !== n && x.b !== n);
-      selected = null; hover = null;
-      renderCard(); renderList(); renderStats(); reheat(.5);
-      toast(`Forgot “${n.label}”.`, { icon: "trash-2" });
-      return;
-    }
-    const keep = e.target.closest("[data-keep]");
-    if (keep) {
-      const f = IRAS.data.facts.find((x) => x.id === keep.dataset.keep);
-      IRAS.data.facts = IRAS.data.facts.filter((x) => x !== f);
-      const id = "m-" + f.id;
-      const label = f.text.length > 34 ? f.text.slice(0, 33) + "…" : f.text.replace(/\.$/, "");
-      const you = nodes.find((n) => n.type === "you");
-      const nn = { id, label, type: "preference", detail: f.text + " " + f.use, x: you.x + rand(-30, 30), y: you.y + rand(-30, 30), vx: 0, vy: 0, r: R_BY.preference, pinned: false };
-      nodes.push(nn); edges.push({ a: you, b: nn });
-      renderFacts(); renderStats(); renderList(); select(id); reheat(.7);
-      toast("Remembered. It is on the map now.", { icon: "check" });
-      return;
-    }
-    const drop = e.target.closest("[data-drop]");
-    if (drop) {
-      IRAS.data.facts = IRAS.data.facts.filter((x) => x.id !== drop.dataset.drop);
-      renderFacts(); renderStats();
-      toast("Forgotten. IRAS will not use it.", { icon: "x" });
-    }
+    if (forget) forgetReal(forget.dataset.forget);
   });
-  $("#memSearch").addEventListener("input", (e) => { query = e.target.value.trim().toLowerCase(); setStatus(); renderList(); draw(); });
+  let timer = 0;
+  $("#memSearch").addEventListener("input", (e) => {
+    query = e.target.value.trim().toLowerCase(); setStatus(); renderList(); draw();
+    clearTimeout(timer); timer = setTimeout(() => loadReal(e.target.value.trim()), 350);
+  });
   $$("input[name='memView']").forEach((r) => r.addEventListener("change", () => {
     const list = r.value === "list";
     $("#graphWrap").hidden = list; $("#memList").hidden = !list;
@@ -285,15 +290,15 @@
 
   IRAS.initMemory = function () {
     readColors();
-    load();
-    settle(520);
-    renderStats(); renderFacts(); renderCard(); renderList();
+    nodes = [mk(YOU, 0, 1)]; edges = [];
+    renderStats(); renderCard(); renderList();
+    $("#memAdd").addEventListener("click", addReal);
     $("#graphLegend").innerHTML = [["circle", "You, apps"], ["square", "Devices"], ["hex", "Projects"], ["diamond", "Preferences"]].map(([s, t]) => {
       const shapeSvg = s === "circle" ? '<circle cx="8" cy="8" r="5.5"/>' : s === "square" ? '<rect x="2.5" y="2.5" width="11" height="11" rx="2.5"/>' : s === "hex" ? '<path d="M8 1.5l5.6 3.2v6.6L8 14.5l-5.6-3.2V4.7z"/>' : '<path d="M8 1.5l6.5 6.5L8 14.5 1.5 8z"/>';
       return `<li><svg viewBox="0 0 16 16">${shapeSvg}</svg>${t}</li>`;
     }).join("");
     new ResizeObserver(() => { if (IRAS.view() === "memory") resize(); }).observe(wrap);
-    bus.on("view", (e) => { if (e.view === "memory") { readColors(); resize(); renderStats(); if (!IRAS.env.reduceMotion) { alpha = .15; } loop(); } });
+    bus.on("view", (e) => { if (e.view === "memory") { readColors(); resize(); renderStats(); loadReal(query); if (!IRAS.env.reduceMotion) { alpha = .15; } loop(); } });
     bus.on("appearance", () => { readColors(); draw(); });
   };
 })();

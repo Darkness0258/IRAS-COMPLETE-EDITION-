@@ -53,6 +53,7 @@
     const res = await live.test();
     live.ok = !!res.ok;
     bus.emit("sync", { state: res.ok || res.partial ? "synced" : "offline" });
+    live.checkStorage();
     if (res.provider) {
       const p = res.provider;
       const active = pretty(p.active_provider || (p.providers || []).find((x) => x.active)?.name);
@@ -119,7 +120,8 @@
       audit.update(item.id, { status: "done", ms, detail: text.slice(0, 120) });
       bus.emit("done", { timing_ms: ms });
       if (done && done.execution_mode === "authorization_required") {
-        toast("This request needs your approval on your PC or phone. Approvals on this screen arrive in a later step.", { icon: "shield", timeout: 9000 });
+        toast("This request needs your approval. It opens here in a moment.", { icon: "shield", timeout: 6000 });
+        setTimeout(() => IRAS.pollApprovals && IRAS.pollApprovals(), 700);
       }
     } catch (err) {
       if (err && err.name === "AbortError") { audit.update(item.id, { status: "failed", detail: "Stopped by you" }); return; }
@@ -132,11 +134,23 @@
     }
   };
 
+  /* where is memory saved: a cloud database (shared) or only on this server? */
+  live.checkStorage = async function () {
+    const chip = $("#chipStore"), txt = $("#chipStoreText");
+    if (!chip || !txt) return;
+    const show = (label, tip, warn) => { txt.textContent = label; chip.title = tip; chip.classList.toggle("chip-demo", !!warn); };
+    try {
+      const r = await fetch(base() + "/ready", { headers: headers() });
+      const j = await r.json();
+      if (j.database === "postgres" && j.database_ok !== false) show("Cloud database", "Memory is saved in your cloud database and shared between your devices.", false);
+      else show("Local only", String(j.database_help || "Memory is kept on this server only. It is lost when the server restarts and is not shared between devices.").slice(0, 220), true);
+    } catch (e) { show("Storage unknown", "Could not read the server status.", true); }
+  };
+
   /* switch between sample data and the real server */
   IRAS.applySource = function () {
     const on = settings.source === "live";
     document.body.dataset.source = on ? "live" : "demo";
-    $("#chipDemo").hidden = on;
     if (IRAS.sim) IRAS.sim.cancel();
     live.cancel();
     audit.items.length = 0;
@@ -153,9 +167,14 @@
     if (!settings.server) {
       try {
         const c = JSON.parse(rawGet("iras-config") || "null");
-        if (c && c.server) { settings.server = c.server; saveSettings(); }
+        if (c && c.server) settings.server = c.server;
       } catch (e) { /* ignore */ }
     }
+    /* served by IRAS itself: use the same address, nothing to type */
+    if (!settings.server && /^https?:$/.test(location.protocol)) settings.server = location.origin;
+    settings.source = "live";
+    saveSettings();
     IRAS.applySource();
+    setInterval(() => { if (!document.hidden) live.checkStorage(); }, 60000);
   };
 })();

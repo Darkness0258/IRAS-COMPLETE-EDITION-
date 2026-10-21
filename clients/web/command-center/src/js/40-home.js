@@ -103,7 +103,6 @@
     { icon: "bug", text: "/code fix the failing test" },
     { icon: "package", text: "Install VS Code" },
     { icon: "trash-2", text: "Delete old build folders" },
-    { icon: "circle-play", text: "Play a guided demo", tour: true },
   ];
   function renderPrompts() {
     const host = $("#promptGrid");
@@ -322,23 +321,21 @@
     if (!text) return;
     if (IRAS.view() !== "home" && IRAS.view() !== "chat") IRAS.go("home");
     if (S.busy && S.ui !== "speaking") { toast("IRAS is busy. Press Stop to cancel the current task.", { icon: "info" }); return; }
-    if (S.ui === "speaking") { IRAS.sim.cancel(); bus.emit("cancel"); }
+    if (S.ui === "speaking") { IRAS.voice.stopSpeaking(); IRAS.sim.cancel(); bus.emit("cancel"); }
     S.heard = text; S.heardVia = via === "voice" ? "voice" : "text";
     bus.emit("submit", { text, via });
     if (settings.source === "live" && IRAS.live) IRAS.live.send(text, { via }); else IRAS.sim.route(text, { via });
   };
 
   IRAS.toggleMic = function () {
-    if (S.ui === "listening") { IRAS.sim.cancel(); bus.emit("cancel"); return; }
-    if (S.busy && S.ui !== "speaking") { toast("IRAS is busy. Press Stop to cancel the current task.", { icon: "info" }); return; }
-    if (settings.source === "live") { toast("Voice input is not wired to your server in this preview. Type a message instead.", { icon: "keyboard" }); return; }
-    if (S.ui === "speaking") { IRAS.sim.cancel(); bus.emit("cancel"); }
-    IRAS.sim.voice();
+    if (S.busy && S.ui !== "speaking" && S.ui !== "listening") { toast("IRAS is busy. Press Stop to cancel the current task.", { icon: "info" }); return; }
+    IRAS.voice.toggle();
   };
 
   IRAS.stopAll = function () {
     if (S.ui === "idle") return;
     IRAS.sim.cancel();
+    if (IRAS.voice) IRAS.voice.stopSpeaking();
     if (IRAS.live) IRAS.live.cancel();
     if (S.ui === "approval" && S.pending) IRAS.resolveApproval("deny", "button");
     bus.emit("cancel");

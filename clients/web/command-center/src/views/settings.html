@@ -81,13 +81,6 @@
 
           <section class="set-card surface" aria-labelledby="setConn">
             <h2 class="h3" id="setConn">Connection</h2>
-            <div class="set-row">
-              <div class="set-text"><span class="label" id="lblSource">Data source</span><p class="hint">Demo uses sample data. Live sends your typed messages to your own IRAS server.</p></div>
-              <div class="seg" role="radiogroup" aria-labelledby="lblSource">
-                <label><input type="radio" name="source" value="demo"><span>{{i:flask-conical sm}}Demo</span></label>
-                <label><input type="radio" name="source" value="live"><span>{{i:server sm}}Live</span></label>
-              </div>
-            </div>
             <div id="liveFields">
               <div class="set-row">
                 <div class="set-text"><label class="label" for="server">Server address</label><p class="hint">For example https://iras-cloud.onrender.com</p></div>
@@ -104,7 +97,7 @@
                   <button class="btn ghost" id="connImport" type="button" hidden>{{i:download sm}}<span>Import from classic web app</span></button>
                 </div>
               </div>
-              <p class="hint live-note">In Live mode this page streams chat replies, provider status and activity. Voice, approvals and agents arrive in a later step. Memory, routines and Identity stay as samples.</p>
+              <p class="hint live-note">This page streams chat replies and shows provider status, approvals, activity and memory from your server. Voice, agents and the remote screen are in the classic controls for now.</p>
             </div>
           </section>
 

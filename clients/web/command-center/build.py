@@ -2,7 +2,7 @@
 """
 Builds index.html: one self-contained file with no network requests.
 
-    python build.py                  write index.html next to this script
+    python build.py                  write ../index.html (the page served at /app/)
     python build.py --check          also fail on missing icons or external URLs
     python build.py --out PATH       write somewhere else
 
@@ -117,7 +117,7 @@ def render():
 
 
 def main(argv):
-    out = ROOT / "index.html"
+    out = ROOT.parent / "index.html"
     if "--out" in argv:
         out = Path(argv[argv.index("--out") + 1]).resolve()
     page, problems, st = render()
