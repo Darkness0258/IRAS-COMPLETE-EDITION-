@@ -53,7 +53,7 @@
   };
 
   /* ---------- speaking: a queue of sentences ---------- */
-  let sess = 0, buf = "", inCode = false, queue = [], busy = false, done = true, started = false, failed = false, wanted = false, player = null, endNow = null, ctx = null;
+  let sess = 0, spoken = 0, cut = false, buf = "", inCode = false, queue = [], busy = false, done = true, started = false, failed = false, wanted = false, player = null, endNow = null, ctx = null;
 
   async function fetchAudio(text) {
     const r = await fetch(base() + "/v1/tts", {
@@ -124,9 +124,11 @@
   }
 
   function begin(want) {   // a new answer starts: forget the old one
-    sess++; buf = ""; inCode = false; queue = []; done = false; failed = false; wanted = want;
+    sess++; spoken = 0; cut = false; buf = ""; inCode = false; queue = []; done = false; failed = false; wanted = want;
   }
 
+  const MAX_SPOKEN = 380;   // about 3 or 4 sentences; the rest stays on screen
+  const TAILS = ["The rest is on your screen.", "I put the details on your screen.", "You can read the rest there."];
   const minChunk = () => (/^gemini_/.test(settings.voiceProfile || "") ? 110 : 28);
   const BOUND = /[.!?…]["')\]]*(?=\s|$)/g;
   function flush(final) {
@@ -140,7 +142,7 @@
       const fences = (chunk.match(/```/g) || []).length;
       const skip = inCode || fences > 0;   // code stays on screen, she does not read it
       if (fences % 2) inCode = !inCode;
-      if (!skip) enqueue(chunk);
+      if (!skip) { if (spoken >= MAX_SPOKEN) cut = true; else { spoken += chunk.length; enqueue(chunk); } }
     }
   }
 
@@ -175,5 +177,8 @@
 
   bus.on("submit", () => begin(!!settings.speakReplies));
   bus.on("token", (e) => { if (wanted && !done) { buf += (e && e.text) || ""; flush(false); } });
-  bus.on("done", () => { if (wanted) flush(true); done = true; pump(); });
+  bus.on("done", () => {
+    if (wanted) { flush(true); if (cut) enqueue(TAILS[Math.floor(Math.random() * TAILS.length)]); }
+    done = true; pump();
+  });
 })();

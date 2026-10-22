@@ -30,6 +30,29 @@
   const err = (e, what) => toast(what + " " + (e.message || ""), { icon: "cloud-off", timeout: 8000 });
   const empty = (t, s) => `<div class="empty surface">${icon("workflow")}<strong>${t}</strong><span>${s}</span></div>`;
 
+  /* ---------- reminders: read a time like "in 10 minutes", "at 5pm", "tomorrow at 9" ---------- */
+  function parseWhen(input) {
+    const s = String(input || "").toLowerCase().trim();
+    let m = s.match(/^(?:in\s+)?(\d+(?:\.\d+)?|an?|half an)\s*(minutes?|mins?|m|hours?|hrs?|h|days?|d)\b/);
+    if (m) {
+      const n = /^an?$/.test(m[1]) ? 1 : m[1] === "half an" ? 0.5 : parseFloat(m[1]);
+      return new Date(Date.now() + n * (m[2][0] === "m" ? 60e3 : m[2][0] === "h" ? 3600e3 : 86400e3));
+    }
+    const tomorrow = /\btomorrow\b/.test(s);
+    m = s.match(/(?:\bat\s+)?\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*$/);
+    if (m && (/\bat\b/.test(s) || m[2] || m[3])) {
+      let h = +m[1]; const min = +(m[2] || 0);
+      if (m[3] === "pm" && h < 12) h += 12;
+      if (m[3] === "am" && h === 12) h = 0;
+      if (h > 23 || min > 59) return null;
+      const d = new Date(); d.setHours(h, min, 0, 0);
+      if (tomorrow) d.setDate(d.getDate() + 1); else if (d <= new Date()) d.setDate(d.getDate() + 1);
+      return d;
+    }
+    if (tomorrow) { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d; }
+    return null;
+  }
+
   /* ---------- runs ---------- */
   function stepHTML(s) {
     const ic = s.status === "done" ? "check" : s.status === "running" ? "loader-circle" : s.status === "failed" ? "circle-alert" : "circle-dot";
@@ -66,7 +89,7 @@
     $("#routineList").innerHTML = sched.length ? sched.map((j) => {
       const on = j.enabled && !j.paused, s = j.interval_seconds;
       const every = s ? "Every " + (s >= 3600 ? Math.round(s / 360) / 10 + " h" : Math.max(1, Math.round(s / 60)) + " min") : "Once";
-      return `<div class="routine${on ? "" : " is-off"}"><div><div class="rt-name">${esc(j.name)}</div><div class="rt-desc">${esc(j.prompt)}</div></div><div class="rt-actions">${del("data-del-job", j.job_id, j.name)}${sw("data-job", j.job_id, j.name, on)}</div><div class="rt-meta"><span>${icon("clock", "i-sm")}${every}</span><span>${icon("history", "i-sm")}Last: ${esc(j.last_run ? when(j.last_run) : "not yet")}</span></div></div>`;
+      return `<div class="routine${on ? "" : " is-off"}"><div><div class="rt-name">${esc(j.name)}</div><div class="rt-desc">${esc(String(j.prompt).replace(/^\[reminder\]\s*/i, "Reminder: "))}</div></div><div class="rt-actions">${del("data-del-job", j.job_id, j.name)}${sw("data-job", j.job_id, j.name, on)}</div><div class="rt-meta"><span>${icon("clock", "i-sm")}${every}</span><span>${icon("history", "i-sm")}Last: ${esc(j.last_run ? when(j.last_run) : "not yet")}</span></div></div>`;
     }).join("") : none("Nothing yet. Add a routine and she does it on her own.");
     $("#goalList").innerHTML = goals.length ? goals.map((g) => {
       const pr = Number(g.progress) || 0, pc = Math.round(pr <= 1 ? pr * 100 : pr);
@@ -91,7 +114,7 @@
   async function pullSide() {
     try {
       const [a, b, c] = await Promise.all([IRAS.api("/v1/v5/schedules"), IRAS.api("/v1/v5/goals"), IRAS.api("/v1/v5/monitors")]);
-      sched = a.schedules || []; goals = b.goals || []; mons = c.monitors || [];
+      sched = (a.schedules || []).filter((j) => !(/^\[reminder\]/i.test(String(j.prompt)) && !j.enabled)); goals = b.goals || []; mons = c.monitors || [];
     } catch (e) { /* the lists keep what they had */ }
     renderSide();
   }
@@ -126,6 +149,17 @@
       const body = { name: prompt.length > 40 ? prompt.slice(0, 39) + "…" : prompt, prompt };
       if (mins > 0) body.interval_seconds = Math.round(mins * 60);
       try { await post("/v1/v5/schedules", body); toast("Routine added.", { icon: "check" }); pullSide(); } catch (e) { err(e, "Could not add it."); }
+    });
+    $("#addReminder").addEventListener("click", async () => {
+      const text = ask("What should she remind you about?");
+      if (!text) return;
+      const at = parseWhen(ask("When? For example: in 10 minutes, at 5pm, tomorrow at 9.", "in 10 minutes"));
+      if (!at) { toast("I could not understand that time. Try: in 10 minutes, at 5pm, or tomorrow at 9.", { icon: "info", timeout: 8000 }); return; }
+      try {
+        await post("/v1/v5/schedules", { name: "Reminder: " + text.slice(0, 60), prompt: "[reminder] " + text, next_run: at.toISOString().replace(/\.\d{3}Z$/, "+00:00") });
+        toast("Okay. I will remind you at " + fmtTime(at.getTime()) + ".", { icon: "check" });
+        pullSide();
+      } catch (e) { err(e, "Could not set it."); }
     });
     $("#addGoal").addEventListener("click", async () => {
       const title = ask("What goal should IRAS work toward?");

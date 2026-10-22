@@ -2003,7 +2003,7 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
             <div class="runs" id="runList"></div>
           </div>
           <aside class="agents-side" aria-label="Routines">
-          <div class="side-head" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:14px"><h2 class="h3">Routines</h2><button type="button" class="btn sm" id="addRoutine"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg><span>Add</span></button></div>
+          <div class="side-head" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:14px"><h2 class="h3">Routines</h2><span style="display:flex;gap:6px"><button type="button" class="btn sm" id="addReminder"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg><span>Remind me</span></button><button type="button" class="btn sm" id="addRoutine"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg><span>Add</span></button></span></div>
           <div class="routines" id="routineList"></div>
           <div class="side-head" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:14px"><h2 class="h3">Goals</h2><button type="button" class="btn sm" id="addGoal"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg><span>Add</span></button></div>
           <div class="routines" id="goalList"></div>
@@ -3488,7 +3488,7 @@ IRAS.closeDialog = closeDialog;
   };
 
   /* ---------- speaking: a queue of sentences ---------- */
-  let sess = 0, buf = "", inCode = false, queue = [], busy = false, done = true, started = false, failed = false, wanted = false, player = null, endNow = null, ctx = null;
+  let sess = 0, spoken = 0, cut = false, buf = "", inCode = false, queue = [], busy = false, done = true, started = false, failed = false, wanted = false, player = null, endNow = null, ctx = null;
 
   async function fetchAudio(text) {
     const r = await fetch(base() + "/v1/tts", {
@@ -3559,9 +3559,11 @@ IRAS.closeDialog = closeDialog;
   }
 
   function begin(want) {   // a new answer starts: forget the old one
-    sess++; buf = ""; inCode = false; queue = []; done = false; failed = false; wanted = want;
+    sess++; spoken = 0; cut = false; buf = ""; inCode = false; queue = []; done = false; failed = false; wanted = want;
   }
 
+  const MAX_SPOKEN = 380;   // about 3 or 4 sentences; the rest stays on screen
+  const TAILS = ["The rest is on your screen.", "I put the details on your screen.", "You can read the rest there."];
   const minChunk = () => (/^gemini_/.test(settings.voiceProfile || "") ? 110 : 28);
   const BOUND = /[.!?…]["')\]]*(?=\s|$)/g;
   function flush(final) {
@@ -3575,7 +3577,7 @@ IRAS.closeDialog = closeDialog;
       const fences = (chunk.match(/```/g) || []).length;
       const skip = inCode || fences > 0;   // code stays on screen, she does not read it
       if (fences % 2) inCode = !inCode;
-      if (!skip) enqueue(chunk);
+      if (!skip) { if (spoken >= MAX_SPOKEN) cut = true; else { spoken += chunk.length; enqueue(chunk); } }
     }
   }
 
@@ -3610,7 +3612,10 @@ IRAS.closeDialog = closeDialog;
 
   bus.on("submit", () => begin(!!settings.speakReplies));
   bus.on("token", (e) => { if (wanted && !done) { buf += (e && e.text) || ""; flush(false); } });
-  bus.on("done", () => { if (wanted) flush(true); done = true; pump(); });
+  bus.on("done", () => {
+    if (wanted) { flush(true); if (cut) enqueue(TAILS[Math.floor(Math.random() * TAILS.length)]); }
+    done = true; pump();
+  });
 })();
 
 /* ---- 39-proactive.js ---- */
@@ -3636,7 +3641,8 @@ IRAS.closeDialog = closeDialog;
     const body = String(n.body || "").slice(0, 240);
     audit.add({ kind: "system", status: "done", title: String(n.title || "IRAS noticed something"), detail: body, tags: ["her own"], payload: { notice: n } });
     toast(String(n.title || "IRAS noticed something") + (body ? ": " + body.slice(0, 110) : ""), { icon: bad ? "shield-alert" : "info", timeout: 9000 });
-    if (settings.speakReplies && IRAS.voice) IRAS.voice.speak((n.title || "") + ". " + body);
+    const reminder = /^reminder/i.test(String(n.title || ""));
+    if ((settings.speakReplies || reminder) && IRAS.voice) IRAS.voice.speak(reminder ? "Hey, quick reminder. " + body : (n.title || "") + ". " + body);
   }
 
   async function pull() {
@@ -3652,7 +3658,7 @@ IRAS.closeDialog = closeDialog;
     } catch (e) { /* the next check tries again */ }
   }
 
-  setInterval(pull, 30000);
+  setInterval(pull, 20000);
   bus.on("sync", (e) => { if (e.state === "synced") pull(); });
 })();
 
@@ -4438,6 +4444,29 @@ IRAS.closeDialog = closeDialog;
   const err = (e, what) => toast(what + " " + (e.message || ""), { icon: "cloud-off", timeout: 8000 });
   const empty = (t, s) => `<div class="empty surface">${icon("workflow")}<strong>${t}</strong><span>${s}</span></div>`;
 
+  /* ---------- reminders: read a time like "in 10 minutes", "at 5pm", "tomorrow at 9" ---------- */
+  function parseWhen(input) {
+    const s = String(input || "").toLowerCase().trim();
+    let m = s.match(/^(?:in\s+)?(\d+(?:\.\d+)?|an?|half an)\s*(minutes?|mins?|m|hours?|hrs?|h|days?|d)\b/);
+    if (m) {
+      const n = /^an?$/.test(m[1]) ? 1 : m[1] === "half an" ? 0.5 : parseFloat(m[1]);
+      return new Date(Date.now() + n * (m[2][0] === "m" ? 60e3 : m[2][0] === "h" ? 3600e3 : 86400e3));
+    }
+    const tomorrow = /\btomorrow\b/.test(s);
+    m = s.match(/(?:\bat\s+)?\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*$/);
+    if (m && (/\bat\b/.test(s) || m[2] || m[3])) {
+      let h = +m[1]; const min = +(m[2] || 0);
+      if (m[3] === "pm" && h < 12) h += 12;
+      if (m[3] === "am" && h === 12) h = 0;
+      if (h > 23 || min > 59) return null;
+      const d = new Date(); d.setHours(h, min, 0, 0);
+      if (tomorrow) d.setDate(d.getDate() + 1); else if (d <= new Date()) d.setDate(d.getDate() + 1);
+      return d;
+    }
+    if (tomorrow) { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d; }
+    return null;
+  }
+
   /* ---------- runs ---------- */
   function stepHTML(s) {
     const ic = s.status === "done" ? "check" : s.status === "running" ? "loader-circle" : s.status === "failed" ? "circle-alert" : "circle-dot";
@@ -4474,7 +4503,7 @@ IRAS.closeDialog = closeDialog;
     $("#routineList").innerHTML = sched.length ? sched.map((j) => {
       const on = j.enabled && !j.paused, s = j.interval_seconds;
       const every = s ? "Every " + (s >= 3600 ? Math.round(s / 360) / 10 + " h" : Math.max(1, Math.round(s / 60)) + " min") : "Once";
-      return `<div class="routine${on ? "" : " is-off"}"><div><div class="rt-name">${esc(j.name)}</div><div class="rt-desc">${esc(j.prompt)}</div></div><div class="rt-actions">${del("data-del-job", j.job_id, j.name)}${sw("data-job", j.job_id, j.name, on)}</div><div class="rt-meta"><span>${icon("clock", "i-sm")}${every}</span><span>${icon("history", "i-sm")}Last: ${esc(j.last_run ? when(j.last_run) : "not yet")}</span></div></div>`;
+      return `<div class="routine${on ? "" : " is-off"}"><div><div class="rt-name">${esc(j.name)}</div><div class="rt-desc">${esc(String(j.prompt).replace(/^\[reminder\]\s*/i, "Reminder: "))}</div></div><div class="rt-actions">${del("data-del-job", j.job_id, j.name)}${sw("data-job", j.job_id, j.name, on)}</div><div class="rt-meta"><span>${icon("clock", "i-sm")}${every}</span><span>${icon("history", "i-sm")}Last: ${esc(j.last_run ? when(j.last_run) : "not yet")}</span></div></div>`;
     }).join("") : none("Nothing yet. Add a routine and she does it on her own.");
     $("#goalList").innerHTML = goals.length ? goals.map((g) => {
       const pr = Number(g.progress) || 0, pc = Math.round(pr <= 1 ? pr * 100 : pr);
@@ -4499,7 +4528,7 @@ IRAS.closeDialog = closeDialog;
   async function pullSide() {
     try {
       const [a, b, c] = await Promise.all([IRAS.api("/v1/v5/schedules"), IRAS.api("/v1/v5/goals"), IRAS.api("/v1/v5/monitors")]);
-      sched = a.schedules || []; goals = b.goals || []; mons = c.monitors || [];
+      sched = (a.schedules || []).filter((j) => !(/^\[reminder\]/i.test(String(j.prompt)) && !j.enabled)); goals = b.goals || []; mons = c.monitors || [];
     } catch (e) { /* the lists keep what they had */ }
     renderSide();
   }
@@ -4534,6 +4563,17 @@ IRAS.closeDialog = closeDialog;
       const body = { name: prompt.length > 40 ? prompt.slice(0, 39) + "…" : prompt, prompt };
       if (mins > 0) body.interval_seconds = Math.round(mins * 60);
       try { await post("/v1/v5/schedules", body); toast("Routine added.", { icon: "check" }); pullSide(); } catch (e) { err(e, "Could not add it."); }
+    });
+    $("#addReminder").addEventListener("click", async () => {
+      const text = ask("What should she remind you about?");
+      if (!text) return;
+      const at = parseWhen(ask("When? For example: in 10 minutes, at 5pm, tomorrow at 9.", "in 10 minutes"));
+      if (!at) { toast("I could not understand that time. Try: in 10 minutes, at 5pm, or tomorrow at 9.", { icon: "info", timeout: 8000 }); return; }
+      try {
+        await post("/v1/v5/schedules", { name: "Reminder: " + text.slice(0, 60), prompt: "[reminder] " + text, next_run: at.toISOString().replace(/\.\d{3}Z$/, "+00:00") });
+        toast("Okay. I will remind you at " + fmtTime(at.getTime()) + ".", { icon: "check" });
+        pullSide();
+      } catch (e) { err(e, "Could not set it."); }
     });
     $("#addGoal").addEventListener("click", async () => {
       const title = ask("What goal should IRAS work toward?");

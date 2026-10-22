@@ -20,7 +20,8 @@
     const body = String(n.body || "").slice(0, 240);
     audit.add({ kind: "system", status: "done", title: String(n.title || "IRAS noticed something"), detail: body, tags: ["her own"], payload: { notice: n } });
     toast(String(n.title || "IRAS noticed something") + (body ? ": " + body.slice(0, 110) : ""), { icon: bad ? "shield-alert" : "info", timeout: 9000 });
-    if (settings.speakReplies && IRAS.voice) IRAS.voice.speak((n.title || "") + ". " + body);
+    const reminder = /^reminder/i.test(String(n.title || ""));
+    if ((settings.speakReplies || reminder) && IRAS.voice) IRAS.voice.speak(reminder ? "Hey, quick reminder. " + body : (n.title || "") + ". " + body);
   }
 
   async function pull() {
@@ -36,6 +37,6 @@
     } catch (e) { /* the next check tries again */ }
   }
 
-  setInterval(pull, 30000);
+  setInterval(pull, 20000);
   bus.on("sync", (e) => { if (e.state === "synced") pull(); });
 })();

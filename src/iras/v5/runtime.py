@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from .common import EventBus, SQLiteDB, new_id, utc_now
 from .scheduler import PersistentScheduler
+from .reminders import deliver as deliver_reminder
 from .automation_engine import AutomationEngine
 from .cognitive_core import CognitiveCore
 from .strengthening_core import RC8StrengtheningCore
@@ -261,6 +262,9 @@ class V5Runtime:
             pass
 
     def submit_scheduled_prompt(self, prompt: str, row: dict[str, Any]) -> Any:
+        delivered = deliver_reminder(prompt, row, self.notifications, getattr(self, "mobile", None))
+        if delivered is not None:
+            return delivered
         if self.orchestration_manager is None:
             raise RuntimeError("No orchestration manager is attached to v5 scheduled autonomy.")
         return self.orchestration_manager.submit_objective(
