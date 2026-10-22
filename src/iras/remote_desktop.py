@@ -225,6 +225,16 @@ class IRASRemoteDesktop:
             padx=(6, 0),
         )
 
+        tk.Button(
+            row,
+            text="Command Center",
+            command=self.open_command_center,
+            width=14,
+        ).pack(
+            side="left",
+            padx=(6, 0),
+        )
+
         self.status = tk.StringVar(
             value="Not connected"
         )
@@ -298,6 +308,36 @@ class IRASRemoteDesktop:
         ):
             self.configure()
         self.rebuild_client()
+
+    def open_command_center(self):
+        """Open the new IRAS screen in its own app window (Edge or Chrome)."""
+        import shutil
+        import subprocess
+        import webbrowser
+
+        url = str(self.config.get("server_url") or "").strip().rstrip("/")
+        if not url:
+            url = "https://iras-cloud.onrender.com"
+        token = str(self.config.get("token") or "").strip()
+        target = url + "/" + ("#token=" + token if token else "")
+        candidates = []
+        for root in (
+            os.environ.get("ProgramFiles(x86)", ""),
+            os.environ.get("ProgramFiles", ""),
+            os.environ.get("LocalAppData", ""),
+        ):
+            if root:
+                candidates.append(os.path.join(root, "Microsoft", "Edge", "Application", "msedge.exe"))
+                candidates.append(os.path.join(root, "Google", "Chrome", "Application", "chrome.exe"))
+        candidates += [shutil.which("msedge") or "", shutil.which("chrome") or ""]
+        for exe in candidates:
+            if exe and os.path.exists(exe):
+                try:
+                    subprocess.Popen([exe, "--app=" + target])
+                    return
+                except OSError:
+                    continue
+        webbrowser.open(target)
 
     def configure(self):
         url = simpledialog.askstring(

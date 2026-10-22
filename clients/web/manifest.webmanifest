@@ -2,8 +2,8 @@
   "name": "IRAS Intelligence Workspace",
   "short_name": "IRAS",
   "description": "Unified IRAS workspace for cloud, voice, autonomy and permissioned device control.",
-  "start_url": "/app/",
-  "scope": "/app/",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#070910",
@@ -19,5 +19,6 @@
       "type": "image/png",
       "purpose": "any maskable"
     }
-  ]
+  ],
+  "id": "/"
 }

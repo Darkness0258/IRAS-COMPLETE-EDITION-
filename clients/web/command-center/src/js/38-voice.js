@@ -16,13 +16,39 @@
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const base = () => String(settings.server || "").trim().replace(/\/+$/, "");
   const token = () => store.sget("iras-api-token", "");
-  const voice = (IRAS.voice = { supported: !!SR });
+  const voice = (IRAS.voice = { supported: !!SR || !!(window.IRASNative) });
   let rec = null, said = "";
 
   /* ---------- listening ---------- */
+  const native = () => { try { return !!(window.IRASNative && window.IRASNative.canListen()); } catch (e) { return false; } };
+  let nativeOn = false;
+
+  function finishHeard() {
+    if (said) {
+      S.heard = said; S.heardVia = "voice";
+      begin(true);
+      bus.emit("speech_end", { text: said });
+      IRAS.live.send(said, { via: "voice" });
+    } else if (S.ui === "listening") bus.emit("cancel");
+  }
+
+  function startNative() {   // inside the Android app, which has no browser speech recognition
+    said = ""; nativeOn = true;
+    window.IRASNativeSpeech = {
+      event(e) {
+        if (e.type === "partial" || e.type === "final") { said = e.text; bus.emit("partial_transcript", { text: said, final: e.type === "final" }); }
+        else if (e.type === "error" && e.text !== "6" && e.text !== "7") toast("I could not hear you (code " + e.text + ").", { icon: "mic-off" });
+        else if (e.type === "end") { nativeOn = false; finishHeard(); }
+      },
+    };
+    bus.emit("wake", { via: "mic" });
+    window.IRASNative.listen(settings.voiceLang || navigator.language || "en-US");
+  }
   voice.toggle = function () {
+    if (nativeOn) { window.IRASNative.stop(); return; }
     if (rec) { rec.stop(); return; }                 // second tap: stop and send what she heard
     if (S.ui === "speaking") voice.stopSpeaking();   // you spoke over her
+    if (native()) { startNative(); return; }
     if (!SR) { toast("This browser cannot listen. Use Chrome, Edge or Safari, or type.", { icon: "mic-off", timeout: 7000 }); return; }
     rec = new SR();
     rec.lang = settings.voiceLang || navigator.language || "en-US";
@@ -40,15 +66,7 @@
       if (ev.error === "not-allowed" || ev.error === "service-not-allowed") toast("The microphone is blocked. Allow it for this site, then try again.", { icon: "mic-off", timeout: 8000 });
       else if (ev.error !== "no-speech" && ev.error !== "aborted") toast("I could not hear you (" + ev.error + ").", { icon: "mic-off" });
     };
-    rec.onend = () => {
-      rec = null;
-      if (said) {
-        S.heard = said; S.heardVia = "voice";
-        begin(true);
-        bus.emit("speech_end", { text: said });
-        IRAS.live.send(said, { via: "voice" });
-      } else if (S.ui === "listening") bus.emit("cancel");
-    };
+    rec.onend = () => { rec = null; finishHeard(); };
     try { rec.start(); } catch (e) { rec = null; bus.emit("cancel"); }
   };
 

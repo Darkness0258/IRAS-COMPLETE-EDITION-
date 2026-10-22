@@ -11,6 +11,14 @@
 "use strict";
 
 (function () {
+  /* The Windows and Android apps open this page as /#token=... once. Keep it for this window only. */
+  try {
+    const m = /^#token=([^&]+)/.exec(location.hash);
+    if (m) { sessionStorage.setItem("iras-api-token", decodeURIComponent(m[1])); history.replaceState(null, "", location.pathname + location.search); }
+  } catch (e) { /* ignore */ }
+})();
+
+(function () {
   const live = IRAS.live;
   const base = () => String(settings.server || "").trim().replace(/\/+$/, "");
   const token = () => store.sget("iras-api-token", "");
