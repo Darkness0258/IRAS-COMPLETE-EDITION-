@@ -110,7 +110,7 @@
     host.addEventListener("click", (e) => {
       const b = e.target.closest(".prompt");
       if (!b) return;
-      if (b.hasAttribute("data-tour")) IRAS.sim.tour(); else IRAS.run(b.dataset.text, { via: "text" });
+      IRAS.run(b.dataset.text, { via: "text" });
     });
   }
   IRAS.PROMPTS = PROMPTS;
@@ -321,10 +321,10 @@
     if (!text) return;
     if (IRAS.view() !== "home" && IRAS.view() !== "chat") IRAS.go("home");
     if (S.busy && S.ui !== "speaking") { toast("IRAS is busy. Press Stop to cancel the current task.", { icon: "info" }); return; }
-    if (S.ui === "speaking") { IRAS.voice.stopSpeaking(); IRAS.sim.cancel(); bus.emit("cancel"); }
+    if (S.ui === "speaking") { IRAS.voice.stopSpeaking(); bus.emit("cancel"); }
     S.heard = text; S.heardVia = via === "voice" ? "voice" : "text";
     bus.emit("submit", { text, via });
-    if (settings.source === "live" && IRAS.live) IRAS.live.send(text, { via }); else IRAS.sim.route(text, { via });
+    IRAS.live.send(text, { via });
   };
 
   IRAS.toggleMic = function () {
@@ -334,7 +334,6 @@
 
   IRAS.stopAll = function () {
     if (S.ui === "idle") return;
-    IRAS.sim.cancel();
     if (IRAS.voice) IRAS.voice.stopSpeaking();
     if (IRAS.live) IRAS.live.cancel();
     if (S.ui === "approval" && S.pending) IRAS.resolveApproval("deny", "button");
@@ -396,7 +395,7 @@
     const rows2 = [["Windows PC", "Just now", "laptop"], ["Android phone", "4 min ago", "smartphone"], ["This browser tab", "Live", "globe"]];
     pops.sync.innerHTML = `<p class="pop-title">Sync across your devices</p>` +
       rows2.map(([n, t, ic]) => `<div class="pop-row">${icon(ic, "i-sm")}<span class="grow">${esc(n)}<small>${esc(t)}</small></span><span class="dot on" aria-hidden="true"></span></div>`).join("") +
-      `<p class="hint">Memory and conversations stay in step through your own cloud.${settings.source === "demo" ? " This preview shows sample data." : ""}</p>`;
+      `<p class="hint">Memory and conversations stay in step through your own cloud.</p>`;
   }
   Object.entries(chip).filter(([k]) => k === "prov" || k === "sync").forEach(([k, btn]) => {
     btn.addEventListener("click", (e) => {

@@ -104,6 +104,10 @@ from iras.software_installer import (
 )
 from iras.config import Settings
 from iras.v5 import build_v5_runtime
+from iras.voice.gemini_tts import (
+    synthesize as gemini_synthesize,
+    voice_for as gemini_voice_for,
+)
 from iras.voice.humanize import (
     speech_text,
 )
@@ -4173,6 +4177,34 @@ async def tts(
             ),
         )
 
+    # A more natural voice from Gemini when asked for. If it fails she falls
+    # back to the Edge voices below and the reason goes in X-IRAS-Voice-Note.
+    gemini_headers: dict[str, str] = {}
+    gemini_voice = gemini_voice_for(body.voice_profile)
+    if gemini_voice:
+        try:
+            wav = await gemini_synthesize(
+                clean_text,
+                gemini_voice,
+                mood=body.mood or "warm",
+            )
+            return Response(
+                content=wav,
+                media_type="audio/wav",
+                headers={
+                    "Cache-Control": "no-store",
+                    "X-IRAS-Voice": "gemini:" + gemini_voice,
+                    "X-IRAS-Voice-Fallback": "false",
+                },
+            )
+        except Exception as gemini_exc:
+            note = " ".join(
+                f"Gemini voice failed ({type(gemini_exc).__name__}: {gemini_exc})".split()
+            )
+            print("[IRAS TTS] " + note, flush=True)
+            gemini_headers["X-IRAS-Voice-Note"] = note.encode("ascii", "ignore").decode()[:300]
+            if str(body.voice_profile or "").lower().startswith("gemini_"):
+                body.voice_profile = ""
     profile_name = normalize_profile(
         body.voice_profile
         or settings.voice_profile
@@ -4264,6 +4296,7 @@ async def tts(
             content=bytes(audio),
             media_type="audio/mpeg",
             headers={
+                **gemini_headers,
                 "Cache-Control": (
                     "no-store"
                 ),
@@ -4300,7 +4333,7 @@ async def tts(
 
         raise HTTPException(
             status_code=502,
-            detail=f"IRAS voice generation failed: {detail}",
+            detail=f"IRAS voice generation failed: {detail} {gemini_headers.get('X-IRAS-Voice-Note', '')}".strip(),
         ) from exc
 
 

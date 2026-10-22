@@ -105,7 +105,6 @@
   function boot() {
     document.documentElement.dataset.hidden = document.hidden ? "1" : "0";
     applyAppearance(true);
-    IRAS.seedAudit();
     IRAS.initHome();
     ["initChat", "initAgents", "initActivity", "initMemory", "initIdentity", "initSettings", "initLive"].forEach((fn) => { try { if (IRAS[fn]) IRAS[fn](); } catch (e) { console.error("[IRAS] " + fn + " failed", e); } });
     routeFromHash(true);

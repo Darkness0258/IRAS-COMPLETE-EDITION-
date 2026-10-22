@@ -15,6 +15,14 @@
   const base = () => String(settings.server || "").trim().replace(/\/+$/, "");
   const token = () => store.sget("iras-api-token", "");
   const hdr = (extra = {}) => Object.assign({ "X-Device-ID": "web" }, token() ? { Authorization: "Bearer " + token() } : {}, extra);
+  IRAS.api = (path, opts = {}) => {
+    if (!base()) return Promise.reject(new Error("Add your server address in Settings first."));
+    return fetch(base() + path, Object.assign({}, opts, { headers: hdr(opts.headers || {}) })).then(async (r) => {
+      let j = null; try { j = await r.json(); } catch (e) { /* no body */ }
+      if (!r.ok) throw new Error((j && typeof j.detail === "string" && j.detail) || (r.status === 401 || r.status === 403 ? "The server refused the access token." : "The server answered " + r.status + "."));
+      return j;
+    });
+  };
   const ready = () => settings.source === "live" && base() && live.ok;
   const human = (s) => { const t = String(s || "request").replace(/[._-]+/g, " ").trim(); return t.charAt(0).toUpperCase() + t.slice(1); };
   const hash = (s) => { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); };

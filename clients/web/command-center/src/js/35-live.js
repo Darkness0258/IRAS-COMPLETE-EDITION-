@@ -151,11 +151,9 @@
   IRAS.applySource = function () {
     const on = settings.source === "live";
     document.body.dataset.source = on ? "live" : "demo";
-    if (IRAS.sim) IRAS.sim.cancel();
     live.cancel();
     audit.items.length = 0;
     audit.byId.clear();
-    if (!on) IRAS.seedAudit();
     bus.emit("audit:reset", {});
     if (IRAS.renderLive) IRAS.renderLive();
     if (on) live.connect();

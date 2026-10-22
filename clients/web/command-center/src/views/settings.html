@@ -44,6 +44,11 @@
             <div class="set-row">
               <div class="set-text"><label class="label" for="voiceProfile">Voice identity</label></div>
               <select class="field" id="voiceProfile">
+                <option value="gemini_leda">Human · Gemini Leda (youthful)</option>
+                <option value="gemini_aoede">Human · Gemini Aoede (breezy)</option>
+                <option value="gemini_sulafat">Human · Gemini Sulafat (warm)</option>
+                <option value="gemini_zephyr">Human · Gemini Zephyr (bright)</option>
+                <option value="gemini_despina">Human · Gemini Despina (smooth)</option>
                 <option value="iras_human">IRAS Human · Ava Multilingual</option>
                 <option value="anime_soft">Soft · Jenny Neural</option>
                 <option value="anime_cool">Cool · Aria Neural</option>
@@ -54,6 +59,10 @@
             <div class="set-row">
               <div class="set-text"><label class="label" for="voiceMood">Voice mood</label></div>
               <select class="field" id="voiceMood"><option value="warm">Warm, the natural default</option><option value="calm">Calm</option><option value="bright">Bright</option><option value="neutral">Neutral</option></select>
+            </div>
+            <div class="set-row">
+              <div class="set-text"><span class="label">Hear her voice</span><span class="hint">Plays one sentence and shows which voice your server used, or why it could not make one.</span></div>
+              <button type="button" class="btn sm" id="voiceTest">{{i:play sm}}<span>Test her voice</span></button>
             </div>
             <div class="set-row">
               <div class="set-text"><label class="label" for="language">Speech language</label></div>

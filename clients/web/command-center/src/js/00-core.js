@@ -55,7 +55,7 @@ const DEFAULTS = {
   motion: "system",       // system | reduce
   source: "live",         // demo | live
   server: "",
-  voiceProfile: "iras_human",
+  voiceProfile: "gemini_leda",
   mood: "warm",
   language: "roman-urdu",
   wake: "IRAS",

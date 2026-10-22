@@ -2,7 +2,11 @@
    Voice: she listens to you and answers in her own voice.
 
    Listening  the browser's speech recognition (Chrome, Edge, Safari).
-   Speaking   POST /v1/tts on your server, so she keeps the voice you set there.
+   Speaking   POST /v1/tts on your server, one sentence at a time. She starts
+              talking after the first sentence, while the rest is still being
+              written, and the next sentence is ready before the last one ends.
+              If the server cannot make her voice, you see the reason. The page
+              never swaps in a robot voice on its own.
 
    She speaks when you spoke to her, or when "Speak replies" is on.
    ========================================================================== */
@@ -12,9 +16,8 @@
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const base = () => String(settings.server || "").trim().replace(/\/+$/, "");
   const token = () => store.sget("iras-api-token", "");
-  let rec = null, said = "", reply = "", viaVoice = false, player = null, playId = 0, ctx = null;
-
   const voice = (IRAS.voice = { supported: !!SR });
+  let rec = null, said = "";
 
   /* ---------- listening ---------- */
   voice.toggle = function () {
@@ -40,7 +43,8 @@
     rec.onend = () => {
       rec = null;
       if (said) {
-        S.heard = said; S.heardVia = "voice"; viaVoice = true; reply = "";
+        S.heard = said; S.heardVia = "voice";
+        begin(true);
         bus.emit("speech_end", { text: said });
         IRAS.live.send(said, { via: "voice" });
       } else if (S.ui === "listening") bus.emit("cancel");
@@ -48,8 +52,21 @@
     try { rec.start(); } catch (e) { rec = null; bus.emit("cancel"); }
   };
 
-  /* ---------- speaking ---------- */
-  const clean = (t) => String(t || "").replace(/```[\s\S]*?```/g, " ").replace(/[*_`#>|~]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 900);
+  /* ---------- speaking: a queue of sentences ---------- */
+  let sess = 0, buf = "", inCode = false, queue = [], busy = false, done = true, started = false, failed = false, wanted = false, player = null, endNow = null, ctx = null;
+
+  async function fetchAudio(text) {
+    const r = await fetch(base() + "/v1/tts", {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json", "X-Device-ID": "web" }, token() ? { Authorization: "Bearer " + token() } : {}),
+      body: JSON.stringify({ text, mood: settings.voiceMood || "warm", voice_gender: "female", voice_profile: settings.voiceProfile || "iras_human" }),
+    });
+    if (!r.ok) {
+      let d = ""; try { d = (await r.json()).detail; } catch (e) { /* no body */ }
+      throw new Error(typeof d === "string" && d ? d : "The server answered " + r.status + ".");
+    }
+    return { blob: await r.blob(), voice: r.headers.get("X-IRAS-Voice") || "", fallback: r.headers.get("X-IRAS-Voice-Fallback") === "true", note: r.headers.get("X-IRAS-Voice-Note") || "" };
+  }
 
   function meter(el) {   // lets the orb move with her voice
     try {
@@ -57,50 +74,106 @@
       if (ctx.state === "suspended") ctx.resume();
       const an = ctx.createAnalyser(); an.fftSize = 256;
       const src = ctx.createMediaElementSource(el); src.connect(an); an.connect(ctx.destination);
-      const buf = new Uint8Array(an.frequencyBinCount);
+      const data = new Uint8Array(an.frequencyBinCount);
       const tick = () => {
         if (el !== player) return;
-        an.getByteFrequencyData(buf);
-        let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i];
-        bus.emit("audio_level", { source: "tts", level: Math.min(1, sum / buf.length / 110) });
+        an.getByteFrequencyData(data);
+        let sum = 0; for (let i = 0; i < data.length; i++) sum += data[i];
+        bus.emit("audio_level", { source: "tts", level: Math.min(1, sum / data.length / 110) });
         setTimeout(tick, 50);
       };
       tick();
     } catch (e) { /* the orb stays calm; the sound still plays */ }
   }
 
-  voice.speak = async function (raw) {
-    const text = clean(raw);
-    if (!text || !base()) return;
-    const id = ++playId;
-    try {
-      const r = await fetch(base() + "/v1/tts", {
-        method: "POST",
-        headers: Object.assign({ "Content-Type": "application/json", "X-Device-ID": "web" }, token() ? { Authorization: "Bearer " + token() } : {}),
-        body: JSON.stringify({ text }),
-      });
-      if (!r.ok) throw new Error("The server answered " + r.status + ".");
-      const blob = await r.blob();
-      if (id !== playId) return;   // you cut her off while she was getting ready
-      const url = URL.createObjectURL(blob);
-      const el = (player = new Audio(url));
-      el.onended = el.onerror = () => { URL.revokeObjectURL(url); if (el === player) { player = null; bus.emit("tts_end", {}); } };
-      bus.emit("tts_start", { text });
+  function play(blob) {
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(blob), el = new Audio(url);
+      player = el;
+      const end = () => { URL.revokeObjectURL(url); if (player === el) player = null; endNow = null; resolve(); };
+      endNow = end; el.onended = end; el.onerror = end;
+      if (!started) { started = true; bus.emit("tts_start", { text: "" }); }
       meter(el);
-      await el.play();
+      el.play().catch(end);
+    });
+  }
+
+  async function pump() {
+    if (busy) return;
+    const item = queue.shift();
+    if (!item) { if (done && started) { started = false; bus.emit("tts_end", {}); } return; }
+    if (item.my !== sess) return pump();
+    busy = true;
+    try {
+      const a = await item.p;
+      if (item.my === sess) await play(a.blob);
     } catch (err) {
-      player = null; bus.emit("tts_end", {});
-      toast("I could not speak that. " + (err.message || ""), { icon: "cloud-off", timeout: 6000 });
+      if (!failed && item.my === sess) { failed = true; toast("I could not speak. " + (err.message || ""), { icon: "cloud-off", timeout: 12000 }); }
     }
-  };
+    busy = false;
+    pump();
+  }
+
+  function enqueue(text) {
+    const t = text.trim();
+    if (!t) return;
+    const p = fetchAudio(t);
+    p.catch(() => { /* shown when its turn comes */ });
+    queue.push({ p, my: sess });
+    pump();
+  }
+
+  function begin(want) {   // a new answer starts: forget the old one
+    sess++; buf = ""; inCode = false; queue = []; done = false; failed = false; wanted = want;
+  }
+
+  const minChunk = () => (/^gemini_/.test(settings.voiceProfile || "") ? 110 : 28);
+  const BOUND = /[.!?…]["')\]]*(?=\s|$)/g;
+  function flush(final) {
+    for (;;) {
+      let cut = -1;
+      BOUND.lastIndex = 0;
+      for (let m; (m = BOUND.exec(buf)); ) { if (m.index + m[0].length >= minChunk()) { cut = m.index + m[0].length; break; } }
+      if (cut < 0 && final && buf.trim()) cut = buf.length;
+      if (cut < 0) return;
+      const chunk = buf.slice(0, cut); buf = buf.slice(cut);
+      const fences = (chunk.match(/```/g) || []).length;
+      const skip = inCode || fences > 0;   // code stays on screen, she does not read it
+      if (fences % 2) inCode = !inCode;
+      if (!skip) enqueue(chunk);
+    }
+  }
 
   voice.stopSpeaking = function () {
-    playId++;
-    if (player) { player.pause(); player = null; }
-    if (S.ui === "speaking") bus.emit("tts_end", {});
+    sess++; queue = []; buf = ""; done = true;
+    if (player) { try { player.pause(); } catch (e) { /* already stopped */ } }
+    if (endNow) endNow();
+    if (started) { started = false; bus.emit("tts_end", {}); }
   };
 
-  bus.on("submit", () => { reply = ""; viaVoice = false; });
-  bus.on("token", (e) => { reply += (e && e.text) || ""; });
-  bus.on("done", () => { if (viaVoice || settings.speakReplies) voice.speak(reply); viaVoice = false; });
+  voice.speak = function (raw) {   // one-off lines, such as her own notices
+    if (started || busy || !base()) return;
+    begin(true); done = true;
+    enqueue(String(raw || ""));
+  };
+
+  voice.test = async function () {
+    if (!base()) { toast("Add your server address in Settings first.", { icon: "cloud-off" }); return; }
+    voice.stopSpeaking();
+    toast("Asking your server for her voice…", { icon: "info", timeout: 3000 });
+    try {
+      const a = await fetchAudio("Hi, it's me. Can you hear me clearly? This is how I sound.");
+      toast(a.note ? a.note + " She used a backup voice: " + a.voice : a.fallback ? "She used a backup voice: " + a.voice : "Her voice works: " + (a.voice || "default"), { icon: a.note || a.fallback ? "info" : "check", timeout: a.note ? 20000 : 7000 });
+      begin(true); done = true;
+      queue.push({ p: Promise.resolve(a), my: sess });
+      pump();
+    } catch (err) {
+      toast("Her voice failed: " + (err.message || "unknown error") + " If it mentions 403 or a handshake, the voice service may be refusing your Render server.", { icon: "cloud-off", timeout: 20000 });
+    }
+  };
+  document.addEventListener("click", (e) => { if (e.target.closest && e.target.closest("#voiceTest")) voice.test(); });
+
+  bus.on("submit", () => begin(!!settings.speakReplies));
+  bus.on("token", (e) => { if (wanted && !done) { buf += (e && e.text) || ""; flush(false); } });
+  bus.on("done", () => { if (wanted) flush(true); done = true; pump(); });
 })();
