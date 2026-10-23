@@ -104,6 +104,7 @@ from iras.software_installer import (
 )
 from iras.config import Settings
 from iras.v5 import build_v5_runtime
+from iras.agenda.routes import register_agenda_routes
 from iras.identity.routes import register_identity_routes
 from iras.voice.gemini_tts import (
     synthesize as gemini_synthesize,
@@ -5140,6 +5141,7 @@ web_dir = next(
 )
 
 register_identity_routes(app, _authorized, lambda: v5_runtime.db)
+register_agenda_routes(app, _authorized, lambda: v5_runtime)
 
 if web_dir:
     app.mount(

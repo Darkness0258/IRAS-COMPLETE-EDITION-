@@ -13,7 +13,7 @@ COPY clients/web ./clients/web
 # v5 cloud includes PostgreSQL persistence, browser workflows, artifact output,
 # encrypted sync/vault support, and signed skill verification.
 RUN pip install --upgrade pip && \
-    pip install ".[cloud,browser,artifacts,crypto,identity]" && \
+    pip install ".[cloud,browser,artifacts,crypto,identity,calendar]" && \
     python -m playwright install --with-deps chromium
 
 RUN useradd --create-home --uid 10001 iras && \

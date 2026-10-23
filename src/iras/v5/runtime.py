@@ -265,6 +265,11 @@ class V5Runtime:
         delivered = deliver_reminder(prompt, row, self.notifications, getattr(self, "mobile", None))
         if delivered is not None:
             return delivered
+        from iras.agenda.service import handle_scheduled as handle_calendar_job
+
+        handled = handle_calendar_job(prompt, row, self)
+        if handled is not None:
+            return handled
         if self.orchestration_manager is None:
             raise RuntimeError("No orchestration manager is attached to v5 scheduled autonomy.")
         return self.orchestration_manager.submit_objective(

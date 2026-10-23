@@ -19,6 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 identity = ["numpy>=1.26", "onnxruntime>=1.18", "opencv-python-headless>=4.9"]
+calendar = ["icalendar>=6.1", "recurring-ical-events>=3.4"]
 voice = [
   "numpy>=1.26",
   "sounddevice>=0.5",

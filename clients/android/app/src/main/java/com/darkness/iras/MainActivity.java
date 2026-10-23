@@ -2,6 +2,7 @@ package com.darkness.iras;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -12,6 +13,8 @@ import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.webkit.JavascriptInterface;
+import android.webkit.JsPromptResult;
+import android.webkit.JsResult;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
@@ -19,6 +22,7 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.EditText;
 
 import org.json.JSONObject;
 
@@ -93,6 +97,42 @@ public class MainActivity extends Activity {
         });
 
         web.setWebChromeClient(new WebChromeClient() {
+            // A web view shows no pop-up questions by itself, so the app draws them.
+            @Override
+            public boolean onJsAlert(WebView view, String url, String message, final JsResult result) {
+                new AlertDialog.Builder(MainActivity.this)
+                    .setMessage(message)
+                    .setPositiveButton(android.R.string.ok, (d, w) -> result.confirm())
+                    .setOnCancelListener(d -> result.cancel())
+                    .show();
+                return true;
+            }
+
+            @Override
+            public boolean onJsConfirm(WebView view, String url, String message, final JsResult result) {
+                new AlertDialog.Builder(MainActivity.this)
+                    .setMessage(message)
+                    .setPositiveButton(android.R.string.ok, (d, w) -> result.confirm())
+                    .setNegativeButton(android.R.string.cancel, (d, w) -> result.cancel())
+                    .setOnCancelListener(d -> result.cancel())
+                    .show();
+                return true;
+            }
+
+            @Override
+            public boolean onJsPrompt(WebView view, String url, String message, String defaultValue, final JsPromptResult result) {
+                final EditText input = new EditText(MainActivity.this);
+                input.setText(defaultValue == null ? "" : defaultValue);
+                new AlertDialog.Builder(MainActivity.this)
+                    .setMessage(message)
+                    .setView(input)
+                    .setPositiveButton(android.R.string.ok, (d, w) -> result.confirm(input.getText().toString()))
+                    .setNegativeButton(android.R.string.cancel, (d, w) -> result.cancel())
+                    .setOnCancelListener(d -> result.cancel())
+                    .show();
+                return true;
+            }
+
             @Override
             public void onPermissionRequest(final PermissionRequest request) {
                 runOnUiThread(() -> {

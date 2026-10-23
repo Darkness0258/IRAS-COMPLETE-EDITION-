@@ -2014,6 +2014,8 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
           <div class="routines" id="goalList"></div>
           <div class="side-head" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:14px"><h2 class="h3">Watching</h2><button type="button" class="btn sm" id="addMonitor"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg><span>Add</span></button></div>
           <div class="routines" id="monitorList"></div>
+        <div class="side-head" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:14px"><h2 class="h3">Calendar</h2><button type="button" class="btn sm" id="addCalendar"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg><span>Add</span></button></div>
+          <div class="routines" id="calendarList"></div>
         </aside>
         </div>
       </section>
@@ -4556,7 +4558,35 @@ IRAS.closeDialog = closeDialog;
     } catch (e) { /* the lists keep what they had */ }
     renderSide();
   }
-  const refresh = () => { pullRuns(); pullSide(); };
+  /* ---------- calendar ---------- */
+  let cal = { feeds: [], events: [], reason: "" };
+  const atTime = (e) => new Date(e.all_day ? e.start + "T00:00:00" : e.start);
+  const dayLabel = (d) => {
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    const n = Math.round((new Date(d).setHours(0, 0, 0, 0) - t.getTime()) / 864e5);
+    return n === 0 ? "Today" : n === 1 ? "Tomorrow" : d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "short" });
+  };
+  function renderCal() {
+    const el = $("#calendarList");
+    if (cal.reason) { el.innerHTML = none(esc(cal.reason)); return; }
+    if (!cal.feeds.length) { el.innerHTML = none("No calendar yet. Add your private iCal link and she reminds you before each event, out loud."); return; }
+    let last = "";
+    const rows = cal.events.slice(0, 12).map((e) => {
+      const d = atTime(e), day = dayLabel(d), head = day !== last ? `<div class="rt-desc" style="margin-top:8px"><strong>${esc(day)}</strong></div>` : "";
+      last = day;
+      return head + `<div class="routine"><div><div class="rt-name">${esc(e.title)}</div><div class="rt-desc">${e.all_day ? "All day" : esc(d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}${e.location ? ", " + esc(e.location) : ""}</div></div></div>`;
+    }).join("");
+    const feeds = cal.feeds.map((f) => `<div class="routine"><div><div class="rt-name">${esc(f.name)}</div><div class="rt-desc">${esc(f.host)}, reminder ${f.lead_minutes} min before${f.last_error ? ". Problem: " + esc(String(f.last_error).slice(0, 80)) : ""}</div></div><div class="rt-actions">${del("data-del-cal", f.feed_id, f.name)}</div></div>`).join("");
+    el.innerHTML = (rows || none("Nothing coming up in the next 7 days.")) + `<div style="margin-top:10px">${feeds}</div>`;
+  }
+  async function pullCal() {
+    try {
+      const [s, e] = await Promise.all([IRAS.api("/v1/calendar/status"), IRAS.api("/v1/calendar/events?days=7")]);
+      cal = { feeds: s.feeds || [], events: e.events || [], reason: s.available === false ? s.reason : "" };
+      renderCal();
+    } catch (x) { /* an older server has no calendar yet: keep what is shown */ }
+  }
+  const refresh = () => { pullRuns(); pullSide(); pullCal(); };
 
   /* ---------- actions ---------- */
   const post = (path, body) => IRAS.api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
@@ -4569,6 +4599,7 @@ IRAS.closeDialog = closeDialog;
     $("#agentTiles").addEventListener("click", (e) => { const b = e.target.closest("[data-sample]"); if (b) IRAS.run(b.dataset.sample); });
     runList.innerHTML = empty("No runs yet", "Press New task and describe what she should do. Its steps appear here.");
     renderSide();
+    renderCal();
 
     $("#newTask").addEventListener("click", async () => {
       const objective = ask("What should IRAS do? Describe the goal in one or two sentences.");
@@ -4598,6 +4629,22 @@ IRAS.closeDialog = closeDialog;
         toast("Okay. I will remind you at " + fmtTime(at.getTime()) + ".", { icon: "check" });
         pullSide();
       } catch (e) { err(e, "Could not set it."); }
+    });
+    $("#addCalendar").addEventListener("click", async () => {
+      const url = ask("Paste your calendar's secret iCal link.\nGoogle Calendar: Settings, your calendar, Integrate calendar, \"Secret address in iCal format\".");
+      if (!url) return;
+      toast("Reading your calendar…", { icon: "info", timeout: 3000 });
+      try {
+        const r = await post("/v1/calendar/feeds", { url });
+        toast("Calendar added: " + r.upcoming + " events in the next 7 days. I will remind you " + r.feed.lead_minutes + " minutes before each one.", { icon: "check", timeout: 9000 });
+        pullCal();
+      } catch (e) { err(e, "Could not add it."); }
+    });
+    $("#calendarList").addEventListener("click", async (e) => {
+      const b = e.target.closest("[data-del-cal]");
+      if (!b || !window.confirm("Remove this calendar and its reminders?")) return;
+      try { await IRAS.api("/v1/calendar/feeds/" + encodeURIComponent(b.dataset.delCal), { method: "DELETE" }); } catch (x) { err(x, "Could not remove it."); }
+      pullCal();
     });
     $("#addGoal").addEventListener("click", async () => {
       const title = ask("What goal should IRAS work toward?");
