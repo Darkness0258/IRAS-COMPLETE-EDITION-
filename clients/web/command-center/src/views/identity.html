@@ -1,8 +1,8 @@
       <section class="view identity" data-view="identity" id="view-identity" hidden aria-labelledby="identityTitle">
         <header class="view-head">
           <div>
-            <h1 class="title title-row" id="identityTitle">Identity <span class="badge accent">{{i:flask-conical sm}}Preview</span></h1>
-            <p>Teach IRAS your face and your voice, so it knows it is you before it unlocks or approves anything big.</p>
+            <h1 class="title" id="identityTitle">Identity</h1>
+            <p>Teach IRAS your face so she knows who is there. She keeps 512 numbers for each picture, never the picture itself.</p>
           </div>
         </header>
 
@@ -10,46 +10,39 @@
           <article class="id-card surface" id="faceCard" aria-labelledby="faceTitle">
             <header class="id-head">
               <span class="ico-tile">{{i:scan-face}}</span>
-              <div class="grow"><h2 class="h3" id="faceTitle">Face ID</h2><p class="muted">Unlocks IRAS when you sit down.</p></div>
+              <div class="grow"><h2 class="h3" id="faceTitle">Face ID</h2><p class="muted">She greets you by name and knows who is talking.</p></div>
               <span class="badge" id="faceBadge">Not set up</span>
             </header>
-            <div class="face-stage" id="faceStage">
-              <video id="faceVideo" playsinline muted hidden></video>
-              <canvas id="faceCanvas" aria-hidden="true"></canvas>
+            <div style="position:relative;max-width:420px;margin:0 auto;aspect-ratio:4/3;background:#05080f;border-radius:16px;overflow:hidden">
+              <video id="faceVideo" playsinline muted autoplay style="width:100%;height:100%;object-fit:cover;transform:scaleX(-1)"></video>
             </div>
-            <p class="id-prompt" id="facePrompt" role="status" aria-live="polite">Press start. Keep your face inside the circle.</p>
-            <ol class="id-steps" id="faceSteps"></ol>
-            <div class="id-actions">
-              <button class="btn primary" id="faceStart" type="button">{{i:play sm}}<span>Start Face ID</span></button>
-              <label class="switch-row"><span class="switch"><input type="checkbox" role="switch" id="faceCamToggle"><span class="track"></span></span><span>Use my camera</span></label>
+            <p class="id-prompt" id="facePrompt" role="status" aria-live="polite">Press Start camera.</p>
+            <div class="id-actions" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+              <button class="btn" id="faceCam" type="button">{{i:camera sm}}<span>Start camera</span></button>
+              <input class="field" id="faceName" placeholder="Your name" maxlength="60" aria-label="Your name" style="max-width:170px">
+              <button class="btn primary" id="faceEnroll" type="button">{{i:scan-face sm}}<span>Teach her my face</span></button>
+              <button class="btn" id="faceCheck" type="button">{{i:users sm}}<span>Who is this?</span></button>
             </div>
-            <p class="hint">Preview only. Face matching is not connected to your server yet. Nothing is recorded or saved.</p>
+            <ul id="faceList" style="list-style:none;margin:12px 0 0;padding:0"></ul>
+            <p class="hint" id="faceHint"></p>
           </article>
 
           <article class="id-card surface" id="voiceCard" aria-labelledby="voiceTitle">
             <header class="id-head">
               <span class="ico-tile">{{i:audio-lines}}</span>
-              <div class="grow"><h2 class="h3" id="voiceTitle">Voice ID</h2><p class="muted">Lets you approve big actions by voice.</p></div>
-              <span class="badge" id="voiceBadge">Not set up</span>
+              <div class="grow"><h2 class="h3" id="voiceTitle">Voice ID</h2><p class="muted">Knows who is speaking, not just what was said.</p></div>
+              <span class="badge">Next</span>
             </header>
-            <div class="voice-stage"><canvas id="voiceCanvas" aria-hidden="true"></canvas></div>
-            <p class="id-prompt" id="voicePrompt" role="status" aria-live="polite">Press start, then read each line out loud.</p>
-            <ol class="phrases" id="phraseList"></ol>
-            <div class="meter"><span class="meter-label">Voice quality</span><div class="bar" id="voiceBar" style="--p:0" role="progressbar" aria-label="Voice quality" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><span class="num" id="voicePct">0%</span></div>
-            <div class="id-actions">
-              <button class="btn primary" id="voiceStart" type="button">{{i:play sm}}<span>Start Voice ID</span></button>
-              <label class="switch-row"><span class="switch"><input type="checkbox" role="switch" id="voiceMicToggle"><span class="track"></span></span><span>Use my microphone</span></label>
-            </div>
-            <p class="hint">Preview only. Nothing you say is recorded or saved.</p>
+            <p class="id-prompt">Not built yet. It comes after Face ID.</p>
           </article>
         </div>
 
         <section class="unlocks surface" aria-labelledby="unlockTitle">
-          <h2 class="h3" id="unlockTitle">What this unlocks</h2>
+          <h2 class="h3" id="unlockTitle">What she does with it</h2>
           <ul>
-            <li>{{i:lock-keyhole}}<div><strong>Approve critical actions by voice</strong><span>IRAS checks that the voice saying the phrase is yours.</span></div></li>
-            <li>{{i:scan-face}}<div><strong>Unlock when you sit down</strong><span>No password, and it locks again when you leave.</span></div></li>
-            <li>{{i:users}}<div><strong>Share the PC safely</strong><span>Others can talk to IRAS, but only you can approve. <em class="badge plain">Later</em></span></div></li>
+            <li>{{i:users}}<div><strong>Knows who is there</strong><span>Teach her more than one person. Each one is greeted by name.</span></div></li>
+            <li>{{i:lock-keyhole}}<div><strong>Never skips an approval</strong><span>Knowing your face is not permission. Big actions still ask you first.</span></div></li>
+            <li>{{i:trash-2}}<div><strong>You can forget anyone</strong><span>Delete a person and every faceprint of them is gone from your server.</span></div></li>
           </ul>
         </section>
       </section>

@@ -34,6 +34,7 @@ import java.util.ArrayList;
 public class MainActivity extends Activity {
     private static final String DEFAULT_SERVER = "https://iras-cloud.onrender.com";
     private static final int MIC_PERMISSION = 7;
+    private static final int WEB_PERMISSION = 8;
     private static final String BACKGROUND = "#04070F";
     private static final String OFFLINE_HTML =
         "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'></head>"
@@ -51,6 +52,7 @@ public class MainActivity extends Activity {
     private SharedPreferences prefs;
     private SpeechRecognizer recognizer;
     private String pendingLanguage = "";
+    private PermissionRequest pendingWebRequest;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -93,7 +95,25 @@ public class MainActivity extends Activity {
         web.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onPermissionRequest(final PermissionRequest request) {
-                runOnUiThread(() -> request.grant(request.getResources()));
+                runOnUiThread(() -> {
+                    ArrayList<String> needed = new ArrayList<>();
+                    for (String resource : request.getResources()) {
+                        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)
+                                && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                            needed.add(Manifest.permission.CAMERA);
+                        }
+                        if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)
+                                && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                            needed.add(Manifest.permission.RECORD_AUDIO);
+                        }
+                    }
+                    if (needed.isEmpty()) {
+                        request.grant(request.getResources());
+                    } else {
+                        pendingWebRequest = request;
+                        requestPermissions(needed.toArray(new String[0]), WEB_PERMISSION);
+                    }
+                });
             }
         });
 
@@ -186,6 +206,24 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == WEB_PERMISSION) {
+            PermissionRequest waiting = pendingWebRequest;
+            pendingWebRequest = null;
+            if (waiting != null) {
+                boolean all = grantResults.length > 0;
+                for (int result : grantResults) {
+                    if (result != PackageManager.PERMISSION_GRANTED) {
+                        all = false;
+                    }
+                }
+                if (all) {
+                    waiting.grant(waiting.getResources());
+                } else {
+                    waiting.deny();
+                }
+            }
+            return;
+        }
         if (requestCode != MIC_PERMISSION) {
             return;
         }
