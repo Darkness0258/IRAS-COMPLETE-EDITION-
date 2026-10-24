@@ -1,1 +1,1 @@
-"""IRAS identity layer: who is talking to her. Face ID first; Voice ID is next."""
+"""IRAS identity layer: who is talking to her. Face ID and Voice ID."""

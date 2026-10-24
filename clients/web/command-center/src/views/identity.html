@@ -2,7 +2,7 @@
         <header class="view-head">
           <div>
             <h1 class="title" id="identityTitle">Identity</h1>
-            <p>Teach IRAS your face so she knows who is there. She keeps 512 numbers for each picture, never the picture itself.</p>
+            <p>Teach IRAS your face and your voice so she knows who is there. She keeps numbers for each picture and each recording, never the picture or the sound itself.</p>
           </div>
         </header>
 
@@ -23,17 +23,31 @@
               <button class="btn primary" id="faceEnroll" type="button">{{i:scan-face sm}}<span>Teach her my face</span></button>
               <button class="btn" id="faceCheck" type="button">{{i:users sm}}<span>Who is this?</span></button>
             </div>
-            <ul id="faceList" style="list-style:none;margin:12px 0 0;padding:0"></ul>
+            <ul class="id-list" id="faceList"></ul>
             <p class="hint" id="faceHint"></p>
           </article>
 
           <article class="id-card surface" id="voiceCard" aria-labelledby="voiceTitle">
             <header class="id-head">
               <span class="ico-tile">{{i:audio-lines}}</span>
-              <div class="grow"><h2 class="h3" id="voiceTitle">Voice ID</h2><p class="muted">Knows who is speaking, not just what was said.</p></div>
-              <span class="badge">Next</span>
+              <div class="grow"><h2 class="h3" id="voiceTitle">Voice ID</h2><p class="muted">She knows who is speaking, not just what was said.</p></div>
+              <span class="badge" id="voiceBadge">Not set up</span>
             </header>
-            <p class="id-prompt">Not built yet. It comes after Face ID.</p>
+            <ul class="phrases" id="voiceLines" aria-label="Lines to read out loud"></ul>
+            <p class="hint">Read the lines out loud, or just talk. Any language works. Each one takes 8 seconds.</p>
+            <div class="meter" aria-hidden="true">
+              <span class="meter-label">Sound</span>
+              <div class="bar"><i id="voiceLevel"></i></div>
+              <span class="muted" id="voiceTime">&nbsp;</span>
+            </div>
+            <p class="id-prompt" id="voicePrompt" role="status" aria-live="polite">Write your name, then press Teach her my voice.</p>
+            <div class="id-actions" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+              <input class="field" id="voiceName" placeholder="Your name" maxlength="60" aria-label="Your name" style="max-width:170px">
+              <button class="btn primary" id="voiceEnroll" type="button">{{i:mic sm}}<span>Teach her my voice</span></button>
+              <button class="btn" id="voiceCheck" type="button">{{i:users sm}}<span>Who is speaking?</span></button>
+            </div>
+            <ul class="id-list" id="voiceList"></ul>
+            <p class="hint" id="voiceHint"></p>
           </article>
         </div>
 
@@ -41,8 +55,8 @@
           <h2 class="h3" id="unlockTitle">What she does with it</h2>
           <ul>
             <li>{{i:users}}<div><strong>Knows who is there</strong><span>Teach her more than one person. Each one is greeted by name.</span></div></li>
-            <li>{{i:lock-keyhole}}<div><strong>Never skips an approval</strong><span>Knowing your face is not permission. Big actions still ask you first.</span></div></li>
-            <li>{{i:trash-2}}<div><strong>You can forget anyone</strong><span>Delete a person and every faceprint of them is gone from your server.</span></div></li>
+            <li>{{i:lock-keyhole}}<div><strong>Never skips an approval</strong><span>Knowing your face or your voice is not permission. A voice can be recorded, so big actions still ask you first.</span></div></li>
+            <li>{{i:trash-2}}<div><strong>You can forget anyone</strong><span>Forget a face or a voice and its numbers are gone from your server.</span></div></li>
           </ul>
         </section>
       </section>

@@ -35,6 +35,11 @@
 .meter { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; font-size: var(--fs-14); }
 .meter-label { color: var(--muted); }
 
+.id-list:empty { display: none; }
+.id-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.id-row .grow { flex: 1; min-width: 0; }
+.meter .bar > i { transition-duration: 90ms; }  /* the sound bar follows your voice closely */
+
 .id-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-3) var(--s-5); }
 .switch-row { display: inline-flex; align-items: center; gap: 12px; font-size: var(--fs-14); font-weight: 500; cursor: pointer; }
 

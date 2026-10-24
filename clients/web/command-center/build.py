@@ -22,6 +22,9 @@ SRC = ROOT / "src"
 
 CSS_ORDER = ["tokens", "base", "shell", "components", "home", "chat", "agents", "activity", "memory", "identity", "settings"]
 VIEW_ORDER = ["home", "chat", "agents", "activity", "memory", "identity", "settings"]
+# The demo was removed from the page. These old files may still sit in an upgraded folder
+# (an update zip cannot delete files), so the build skips them instead of bringing the demo back.
+REMOVED_JS = {"25-data.js", "30-sim.js"}
 
 FONTS = [
     ("Sora", "sora-latin-wght-normal.woff2", "100 800"),
@@ -79,7 +82,7 @@ def render():
     missing = set()
 
     css = "\n".join(read(SRC / "css" / f"{n}.css") for n in CSS_ORDER if (SRC / "css" / f"{n}.css").exists())
-    js_files = sorted((SRC / "js").glob("*.js"))
+    js_files = sorted(f for f in (SRC / "js").glob("*.js") if f.name not in REMOVED_JS)
     js = "\n".join(f"/* ---- {f.name} ---- */\n" + read(f) for f in js_files)
     views = "\n".join(read(SRC / "views" / f"{n}.html") for n in VIEW_ORDER if (SRC / "views" / f"{n}.html").exists())
 
