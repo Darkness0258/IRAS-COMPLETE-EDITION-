@@ -1,0 +1,122 @@
+      <section class="view pc" data-view="pc" id="view-pc" hidden aria-labelledby="pcTitle">
+        <header class="view-head">
+          <div>
+            <h1 class="title" id="pcTitle">Your PC</h1>
+            <p>See your Windows screen and send it actions. Everything goes through a session that you start here and can end at any time. The PC's own rules and your server's limit still have the last word.</p>
+          </div>
+        </header>
+
+        <div class="pc-grid">
+          <article class="pc-card surface pc-wide" id="remote" aria-labelledby="remoteTitle">
+            <header class="pc-head">
+              <span class="ico-tile">{{i:laptop}}</span>
+              <div class="grow">
+                <h2 class="h3" id="remoteTitle">Session</h2>
+                <p class="muted" id="pcDevice">Looking for your PC…</p>
+              </div>
+              <button class="btn-icon sm" id="pcRescan" type="button" aria-label="Look for my PC again" title="Look for my PC again">{{i:refresh-cw sm}}</button>
+              <span class="badge" id="pcBadge">No session</span>
+            </header>
+
+            <fieldset class="pc-modes" id="pcModes">
+              <legend class="label">What may this session do?</legend>
+              <label class="pc-mode" data-mode="read_only">
+                <input type="radio" name="pcMode" value="read_only" checked>
+                <span class="pc-mode-body">{{i:eye}}<span><strong>Look only</strong><small>See the screen, read files and settings. Changes nothing.</small></span></span>
+              </label>
+              <label class="pc-mode" data-mode="control">
+                <input type="radio" name="pcMode" value="control">
+                <span class="pc-mode-body">{{i:mouse-pointer-2}}<span><strong>Control</strong><small>Also open apps, type, click, and write files.</small></span></span>
+              </label>
+              <label class="pc-mode" data-mode="full">
+                <input type="radio" name="pcMode" value="full">
+                <span class="pc-mode-body">{{i:shield-alert}}<span><strong>Full</strong><small>Also run commands, delete files, install programs, and power off.</small></span></span>
+              </label>
+            </fieldset>
+
+            <div class="pc-row">
+              <div>
+                <label class="label" for="pcTtl">For how long</label>
+                <select class="field" id="pcTtl">
+                  <option value="900">15 minutes</option>
+                  <option value="1800" selected>30 minutes</option>
+                  <option value="3600">1 hour</option>
+                  <option value="14400">4 hours</option>
+                </select>
+              </div>
+              <div class="pc-btns">
+                <button class="btn primary" id="pcStart" type="button">{{i:play sm}}<span>Start session</span></button>
+                <button class="btn" id="pcEnd" type="button" hidden>{{i:square sm}}<span>End session</span></button>
+              </div>
+            </div>
+            <p class="hint" id="pcHint" role="status" aria-live="polite"></p>
+          </article>
+
+          <article class="pc-card surface" id="screen" aria-labelledby="screenTitle">
+            <header class="pc-head">
+              <span class="ico-tile">{{i:monitor}}</span>
+              <div class="grow"><h2 class="h3" id="screenTitle">Screen</h2><p class="muted">A picture of your PC screen. Look only is enough.</p></div>
+            </header>
+            <figure class="pc-shot" id="screenFrame">
+              <img id="screenImg" alt="A picture of your PC screen" hidden>
+              <figcaption class="pc-shot-empty" id="screenEmpty">{{i:monitor lg}}<span>No picture yet.</span></figcaption>
+            </figure>
+            <p class="hint" id="screenInfo" role="status" aria-live="polite"></p>
+            <div class="pc-btns">
+              <button class="btn primary" id="screenButton" type="button">{{i:refresh-cw sm}}<span>Show my screen</span></button>
+              <label class="pc-switch"><span>Keep refreshing</span><span class="switch"><input type="checkbox" role="switch" id="screenAuto"><span class="track"></span></span></label>
+            </div>
+          </article>
+
+          <article class="pc-card surface" id="direct" aria-labelledby="directTitle">
+            <header class="pc-head">
+              <span class="ico-tile">{{i:terminal}}</span>
+              <div class="grow"><h2 class="h3" id="directTitle">Direct action</h2><p class="muted">Send one action to the PC. No AI model is involved.</p></div>
+              <span class="badge" id="directLevel">Type an action</span>
+            </header>
+            <div>
+              <label class="label" for="directAction">Action</label>
+              <input class="field mono" id="directAction" list="directActions" value="system_info" autocomplete="off" spellcheck="false" maxlength="128">
+              <datalist id="directActions"></datalist>
+            </div>
+            <div>
+              <label class="label" for="directArgs">Arguments, as JSON</label>
+              <textarea class="field mono" id="directArgs" rows="4" spellcheck="false" placeholder='{"path": "C:\\Users"}'>{}</textarea>
+            </div>
+            <div class="pc-btns">
+              <button class="btn primary" id="runDirect" type="button">{{i:play sm}}<span>Run</span></button>
+            </div>
+            <pre class="pc-out" id="directOut" tabindex="0" aria-live="polite">Ready.</pre>
+          </article>
+
+          <article class="pc-card surface pc-wide" id="master" aria-labelledby="masterTitle">
+            <header class="pc-head">
+              <span class="ico-tile">{{i:shield-alert}}</span>
+              <div class="grow"><h2 class="h3" id="masterTitle">Master Control</h2><p class="muted">Owner elevation. For a short time IRAS may use Full authority on your PC.</p></div>
+              <span class="badge" id="masterBadge">Not checked</span>
+            </header>
+            <dl class="pc-facts">
+              <div><dt>PC master state</dt><dd id="masterLocalState">—</dd></div>
+              <div><dt>Web master session</dt><dd id="masterCloudState">OFF</dd></div>
+              <div><dt>Autonomy</dt><dd id="masterAutonomyState">—</dd></div>
+            </dl>
+            <p class="pc-note" id="masterOut" role="status" aria-live="polite">Press Check the PC to see if Master Control is on.</p>
+            <div class="pc-btns">
+              <button class="btn" id="masterRefresh" type="button">{{i:refresh-cw sm}}<span>Check the PC</span></button>
+              <button class="btn primary" id="masterEnable" type="button">{{i:key-round sm}}<span>Attach Master Session</span></button>
+              <button class="btn" id="masterDisable" type="button" hidden>{{i:x sm}}<span>End web Master session</span></button>
+              <button class="btn ghost" id="masterCopy" type="button">{{i:copy sm}}<span>Copy the PC command</span></button>
+            </div>
+            <p class="hint">Master Control can only be turned on at the PC: run <code>iras --master-enable 30</code>. Ending the web session does not change the PC.</p>
+          </article>
+        </div>
+
+        <section class="unlocks surface" aria-labelledby="pcSafeTitle">
+          <h2 class="h3" id="pcSafeTitle">How this stays safe</h2>
+          <ul>
+            <li>{{i:lock-keyhole}}<div><strong>You start it, you see it</strong><span>Nothing reaches your PC without a session you started. A badge in the top bar shows it, and End session stops it at once.</span></div></li>
+            <li>{{i:shield-check}}<div><strong>Three limits, not one</strong><span>The session level, your server's limit and the PC's own rules all apply. The lowest one wins.</span></div></li>
+            <li>{{i:eye-off}}<div><strong>Nothing stays on screen</strong><span>Pictures and results from your PC are cleared when you leave this screen or end the session.</span></div></li>
+          </ul>
+        </section>
+      </section>

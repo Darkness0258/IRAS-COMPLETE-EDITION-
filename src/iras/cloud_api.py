@@ -45,7 +45,7 @@ from iras.master_control import (
     master_execution_limits_for_context,
 )
 from iras.remote_protocol import IRAS_CLOUD_SERVICE_ID, REMOTE_PROTOCOL_VERSION
-from iras.remote_access import action_permission, level_for_mode
+from iras.remote_access import action_permission, level_for_mode, remote_policy_summary
 from iras.device_bridge.remote_context import remote_command_context
 from iras.cloud_state import CloudStateStore
 from iras.cloud_bootstrap import (
@@ -4534,6 +4534,13 @@ def device_complete_command(
         "ok": True,
         "command": result,
     }
+
+
+@app.get("/v1/remote/policy")
+def remote_policy(authorization: str | None = Header(default=None)):
+    """The highest session this server allows, and the permission every remote action needs."""
+    _authorized(authorization)
+    return remote_policy_summary(_remote_session_cap())
 
 
 @app.post("/v1/remote/sessions")

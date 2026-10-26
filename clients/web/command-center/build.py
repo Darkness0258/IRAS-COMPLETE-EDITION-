@@ -20,8 +20,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src"
 
-CSS_ORDER = ["tokens", "base", "shell", "components", "home", "chat", "agents", "activity", "memory", "identity", "settings"]
-VIEW_ORDER = ["home", "chat", "agents", "activity", "memory", "identity", "settings"]
+CSS_ORDER = ["tokens", "base", "shell", "components", "home", "chat", "agents", "activity", "memory", "identity", "pc", "settings"]
+VIEW_ORDER = ["home", "chat", "agents", "activity", "memory", "identity", "pc", "settings"]
 # The demo was removed from the page. These old files may still sit in an upgraded folder
 # (an update zip cannot delete files), so the build skips them instead of bringing the demo back.
 REMOVED_JS = {"25-data.js", "30-sim.js"}

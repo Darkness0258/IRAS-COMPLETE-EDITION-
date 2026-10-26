@@ -30,6 +30,16 @@
 - My test: real voices of 5 people. The same person scored 0.73 to 0.77, different people 0.35 at most. That is a small test, with clean sound. Your own microphone may score lower. If she often says "not sure" when it is you, tell me the percent she shows.
 - Render's free plan has 512 MB of memory. The voice model needs about 70 to 130 MB while it runs. If the server restarts when you use Voice ID, tell me.
 
+## Your PC (new)
+- New menu item **PC** (also in Ctrl+K). It holds the old page's tools: remote screen, direct action and Master Control. The old page at `/app/classic/` is untouched and still works. A session started on one page is seen by the other, in the same window.
+- **Session**: choose what it may do and for how long, then Start. She always asks you first. Look only: see the screen, read files. Control: also open apps, type, click, write files. Full: also run commands, delete, install, power off. While a session is open a badge shows in the top bar, and End session stops it at once.
+- **Your server decides the highest level.** By default it allows up to Control. Full sessions and Master need `IRAS_REMOTE_SESSION_MAX_PERMISSION_LEVEL=3` in Render, Environment. Until then Full is greyed out and says why. The old page asked for Full by default, so if its Remote button worked for you, your server already allows it.
+- **Screen**: "Show my screen" takes one small picture. "Keep refreshing" takes a new one every 5 seconds while you stay on this screen. It stops when you leave, hide the tab, or after 3 errors.
+- **Direct action**: pick an action (the list comes from your server and shows the level each one needs), write its arguments as JSON, press Run. If the session is too weak she says so before sending anything. Critical actions, the ones that can change or delete things, ask once more.
+- **Master Control**: "Check the PC" reads the PC's own Master file through a short Look-only session (5 minutes, ended right after). "Attach Master Session" gives this window Full authority while Master Control is ON at the PC. It can only be turned on at the PC: `iras --master-enable 30`. Nothing here can turn it on.
+- Safety: pictures and results are cleared when you leave the screen or end the session. The session key stays in this window only, under the same name the old page uses. Every question is asked inside the page, with no browser pop-ups.
+- Server: one new read-only address, `GET /v1/remote/policy` (needs your token). It tells the screen your server's highest level and the permission each action needs. Nothing else changed on the server. The Windows app and the PC side are unchanged.
+
 ## Old demo files
 - `clients/web/command-center/src/js/25-data.js` and `30-sim.js` are the old demo. The page does not use them. `build.py` now skips them, so a rebuild cannot bring the demo back. You can delete them later (one old test, `test_command_center_ui.py`, still reads `30-sim.js`).
 - `clients/web/index.html` is the page the server shows. It is already rebuilt. To rebuild it after you change the sources: `python clients/web/command-center/build.py --check`.
@@ -47,5 +57,6 @@
 - Agents, Routines, "Remind me": "in 10 minutes", "at 5pm", "tomorrow at 9". She shows a notice and says it out loud (page open, checks every 20 seconds).
 
 ## Tests
-`python -m pytest tests/test_gemini_tts.py tests/test_reminders.py tests/test_identity.py tests/test_voice.py tests/test_agenda.py`
+`python -m pytest tests/test_gemini_tts.py tests/test_reminders.py tests/test_identity.py tests/test_voice.py tests/test_agenda.py tests/test_remote_policy_catalog.py tests/test_remote_web_direct_v400.py tests/test_remote_web_security_v400.py tests/test_master_control_rc3.py`
+(The last three were failing before, because they read the web page for the remote tools. They pass again. `test_master_control_rc3.py` now reads the Android file `ClassicActivity.java`, where the native screen lives since the Android app became a web view.)
 (`test_voice.py` runs the real voice model only if the model file is already on your computer. It never downloads anything.)

@@ -55,6 +55,7 @@
       <li><a class="nav-item" href="#/activity" data-nav="activity">{{i:activity}}<span>Activity</span><b class="nav-badge" id="navBadgeActivity" hidden></b></a></li>
       <li><a class="nav-item" href="#/memory" data-nav="memory">{{i:share-2}}<span>Memory</span></a></li>
       <li><a class="nav-item" href="#/identity" data-nav="identity">{{i:scan-face}}<span>Identity</span></a></li>
+      <li><a class="nav-item" href="#/pc" data-nav="pc">{{i:monitor}}<span>PC</span></a></li>
     </ul>
     <ul class="rail-list rail-foot">
       <li><a class="nav-item" href="#/settings" data-nav="settings">{{i:settings}}<span>Settings</span></a></li>
@@ -80,6 +81,9 @@
         </button>
         <button class="chip" id="chipCam" type="button" aria-pressed="false">
           {{i:camera-off sm}}<span class="chip-text" id="chipCamText">Camera off</span>
+        </button>
+        <button class="chip" id="chipPc" type="button" hidden>
+          {{i:laptop sm}}<span class="chip-text" id="chipPcText">PC</span>
         </button>
         <button class="chip" id="chipSync" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="popSync">
           {{i:cloud sm}}<span class="chip-text" id="chipSyncText">Synced</span>
@@ -133,6 +137,24 @@
   <div class="ap-actions">
     <button class="btn" id="apDeny" type="button">{{i:x sm}}<span>Deny</span></button>
     <button class="btn authority" id="apApprove" type="button">{{i:check sm}}<span id="apApproveText">Approve</span></button>
+  </div>
+</dialog>
+
+<!-- PC: asks before a session starts, and before a critical action runs -->
+<dialog class="approval glass modal-glass pc-ask" id="pcAskDlg" aria-labelledby="pcAskTitle" aria-describedby="pcAskDetail" data-level="system">
+  <div class="ap-ring" aria-hidden="true">
+    <svg viewBox="0 0 120 120" width="120" height="120"><circle class="ap-track" cx="60" cy="60" r="52"/></svg>
+    <span class="ap-icon" id="pcAskIcon">{{i:shield lg}}</span>
+  </div>
+  <div class="ap-body">
+    <p class="ap-level" id="pcAskLevel">Needs your OK</p>
+    <h2 class="ap-title" id="pcAskTitle">Start a session?</h2>
+    <p class="ap-detail" id="pcAskDetail"></p>
+    <ul class="ap-effects" id="pcAskEffects"></ul>
+  </div>
+  <div class="ap-actions">
+    <button class="btn" id="pcAskNo" type="button">{{i:x sm}}<span>Cancel</span></button>
+    <button class="btn authority" id="pcAskOk" type="button">{{i:check sm}}<span>Allow</span></button>
   </div>
 </dialog>
 

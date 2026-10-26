@@ -35,6 +35,7 @@ The classic client (`clients/web/index.html`) is not touched, so nothing that wo
 | **Activity** | The audit log as a timeline. Pick a row to see safety checks and the raw details. Export as JSON. |
 | **Memory** | A map you can drag and search, a list version, and facts IRAS learned that wait for you to keep or forget. |
 | **Identity** | Face ID and Voice ID enrollment (preview). |
+| **PC** | Your Windows PC: start and end a remote session, see its screen, send a direct action, and Master Control. Needs your server and a paired PC. |
 | **Settings** | Theme, skin, Performance mode, reduce motion, voice, connection, the authority levels, keyboard keys. |
 
 ## Connect it to your server

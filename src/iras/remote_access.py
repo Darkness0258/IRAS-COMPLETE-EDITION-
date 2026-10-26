@@ -177,6 +177,38 @@ def level_for_mode(mode: str) -> PermissionLevel | None:
     return None
 
 
+# These three change level with their arguments (see action_permission): power_action "lock" is safe,
+# "shutdown" is critical, and so on.
+VARIES_WITH_ARGUMENTS = {"computer_action", "app_control", "power_action"}
+
+
+def action_catalog() -> list[dict[str, Any]]:
+    """Every remote action the PC knows, with the permission it usually needs. The web screen shows this list.
+
+    The server still decides each real call with action_permission(). `varies` marks the few
+    whose level depends on their arguments.
+    """
+    levels = (
+        (READ_ACTIONS, PermissionLevel.READ),
+        (SAFE_ACTIONS, PermissionLevel.SAFE_ACTION),
+        (SYSTEM_ACTIONS, PermissionLevel.SYSTEM_ACTION),
+        (CRITICAL_ACTIONS, PermissionLevel.CRITICAL),
+    )
+    rows = {name: level for names, level in levels for name in names}
+    rows.setdefault("computer_action", PermissionLevel.SYSTEM_ACTION)
+    return [{"name": name, "level": rows[name].name, "varies": name in VARIES_WITH_ARGUMENTS} for name in sorted(rows)]
+
+
+def remote_policy_summary(cap: int) -> dict[str, Any]:
+    """What this server lets a web session do: its highest permission, and which modes fit under it."""
+    cap = max(0, min(int(cap), int(PermissionLevel.CRITICAL)))
+    return {
+        "cap": PermissionLevel(cap).name,
+        "modes": {mode: int(level) <= cap for mode, level in MODE_LEVELS.items() if mode != "off"},
+        "actions": action_catalog(),
+    }
+
+
 @dataclass(slots=True)
 class RemotePolicyState:
     enabled: bool

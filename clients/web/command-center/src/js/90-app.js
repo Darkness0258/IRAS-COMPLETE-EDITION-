@@ -15,7 +15,7 @@
     const perfOn = IRAS.env.perf === "lite";
     items = [
       goto("home", "Home", "house"), goto("chat", "Conversation", "message-square"), goto("agents", "Agents and routines", "workflow"),
-      goto("activity", "Activity and audit log", "activity"), goto("memory", "Memory", "share-2"), goto("identity", "Face ID and Voice ID", "scan-face"), goto("settings", "Settings", "settings"),
+      goto("activity", "Activity and audit log", "activity"), goto("memory", "Memory", "share-2"), goto("identity", "Face ID and Voice ID", "scan-face"), goto("pc", "Your PC: screen and actions", "monitor"), goto("settings", "Settings", "settings"),
 
 
       { group: "Look and feel", label: "Dark theme", icon: "moon", kw: "appearance", run: () => setSetting("theme", "dark") },
@@ -106,7 +106,7 @@
     document.documentElement.dataset.hidden = document.hidden ? "1" : "0";
     applyAppearance(true);
     IRAS.initHome();
-    ["initChat", "initAgents", "initActivity", "initMemory", "initIdentity", "initSettings", "initLive"].forEach((fn) => { try { if (IRAS[fn]) IRAS[fn](); } catch (e) { console.error("[IRAS] " + fn + " failed", e); } });
+    ["initChat", "initAgents", "initActivity", "initMemory", "initIdentity", "initPc", "initSettings", "initLive"].forEach((fn) => { try { if (IRAS[fn]) IRAS[fn](); } catch (e) { console.error("[IRAS] " + fn + " failed", e); } });
     routeFromHash(true);
     IRAS.initOrb();
     document.body.dataset.ready = "1";

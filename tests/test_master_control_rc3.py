@@ -131,7 +131,8 @@ def test_master_surfaces_are_present_in_pc_web_android_and_cloud_client():
     desktop = (root / "src/iras/desktop.py").read_text(encoding="utf-8")
     cloud_client = (root / "src/iras/cloud_client.py").read_text(encoding="utf-8")
     web = (root / "clients/web/index.html").read_text(encoding="utf-8")
-    android = (root / "clients/android/app/src/main/java/com/darkness/iras/MainActivity.java").read_text(encoding="utf-8")
+    # The native screen (now called "Classic") lives in ClassicActivity. MainActivity is the web view of the new screen.
+    android = (root / "clients/android/app/src/main/java/com/darkness/iras/ClassicActivity.java").read_text(encoding="utf-8")
 
     assert "--master-enable" in cli and "ENABLE MASTER CONTROL" in cli
     assert "Master Control · OFF" in desktop and "_toggle_master" in desktop
@@ -144,7 +145,8 @@ def test_master_surfaces_are_present_in_pc_web_android_and_cloud_client():
 def test_web_and_android_cannot_remotely_enable_local_master():
     root = Path(__file__).resolve().parents[1]
     web = (root / "clients/web/index.html").read_text(encoding="utf-8")
-    android = (root / "clients/android/app/src/main/java/com/darkness/iras/MainActivity.java").read_text(encoding="utf-8")
+    # The native screen (now called "Classic") lives in ClassicActivity. MainActivity is the web view of the new screen.
+    android = (root / "clients/android/app/src/main/java/com/darkness/iras/ClassicActivity.java").read_text(encoding="utf-8")
     assert "web/mobile cannot turn it on remotely" in web
     assert "Master Control is OFF on the PC" in android
     assert "/v1/master/enable" not in web

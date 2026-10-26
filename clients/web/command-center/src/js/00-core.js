@@ -337,8 +337,8 @@ bus.on("provider", (e) => {
 });
 
 /* ---------- router ---------- */
-const VIEWS = ["home", "chat", "agents", "activity", "memory", "identity", "settings"];
-const VIEW_TITLES = { home: "Home", chat: "Conversation", agents: "Agents", activity: "Activity", memory: "Memory", identity: "Identity", settings: "Settings" };
+const VIEWS = ["home", "chat", "agents", "activity", "memory", "identity", "pc", "settings"];
+const VIEW_TITLES = { home: "Home", chat: "Conversation", agents: "Agents", activity: "Activity", memory: "Memory", identity: "Identity", pc: "Your PC", settings: "Settings" };
 let currentView = null;
 
 function showView(name, { first } = {}) {

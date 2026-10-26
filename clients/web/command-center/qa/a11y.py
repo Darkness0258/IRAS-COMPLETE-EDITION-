@@ -5,7 +5,7 @@ _axe = [p for p in [pathlib.Path(__file__).resolve().parent / 'node_modules/axe-
 if not _axe:
     raise SystemExit('axe-core not found. Run:  npm i axe-core   (in the qa folder)')
 AXE = _axe[0].read_text()
-views=['home','chat','agents','activity','memory','identity','settings']
+views=['home','chat','agents','activity','memory','identity','pc','settings']
 total=0
 with sync_playwright() as p:
     b=p.chromium.launch()
