@@ -57,11 +57,6 @@
 .chip.pc-live[data-rank="0"] { border-color: var(--accent-line); background: var(--accent-soft); }
 .chip.pc-live[data-rank="0"] .i { color: var(--accent); }
 
-/* On a phone the top bar is already full. While a session is open, its badge matters more than the word "IRAS". */
-@media (max-width: 520px) {
-  .topbar:has(#chipPc:not([hidden])) .brand-text { display: none; }
-}
-
 @media (max-width: 1100px) {
   .pc-grid { grid-template-columns: minmax(0, 1fr); }
   .pc-wide { grid-column: auto; }

@@ -114,6 +114,9 @@ class IRASAgent:
         # workspace. The cloud server serializes agent execution, so this can
         # safely be swapped for one request and restored afterwards.
         self.context_messages_override = None
+        # Optional hint about who is talking (a known person, or a guest). The cloud server sets it for
+        # one request and puts it back afterwards, like context_messages_override. See iras.identity.context.
+        self.speaker_context = None
         self.last_metrics = {}
         self._last_device_action = None
         self._last_quick_code = None
@@ -187,11 +190,15 @@ class IRASAgent:
             },
         ]
 
+        speaker = getattr(self, "speaker_context", None)
+        if speaker and speaker.get("message"):
+            msgs.append({"role": "system", "content": str(speaker["message"])})
+
         facts = (
             self.memory.all_facts(
                 self.context_fact_limit
             )
-            if self.context_fact_limit
+            if self.context_fact_limit and not (speaker and speaker.get("hide_memory"))
             else []
         )
 

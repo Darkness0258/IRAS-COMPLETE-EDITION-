@@ -106,8 +106,19 @@
                   <button class="btn ghost" id="connImport" type="button" hidden>{{i:download sm}}<span>Import from classic web app</span></button>
                 </div>
               </div>
-              <p class="hint live-note">This page streams chat replies and shows provider status, approvals, activity and memory from your server. Voice, agents and the remote screen are in the classic controls for now.</p>
+              <p class="hint live-note">This page streams chat replies and shows provider status, approvals, activity, memory, Face ID, Voice ID and your PC from your server. The old page with the remaining controls is still at <a href="/app/classic/">/app/classic/</a>.</p>
             </div>
+          </section>
+
+          <section class="set-card surface" aria-labelledby="setCheck" id="checkCard">
+            <h2 class="h3" id="setCheck">Check everything</h2>
+            <p class="muted">One press tests the server, your access token, the AI, the database, her voice, Face ID, Voice ID, your calendar, your PC and this browser. Each line says what is wrong and what to do. It changes nothing. It makes one tiny speech request and plays no sound.</p>
+            <div class="check-actions">
+              <button class="btn primary" id="checkRun" type="button">{{i:shield-check sm}}<span>Run checks</span></button>
+              <button class="btn" id="checkCopy" type="button" hidden>{{i:copy sm}}<span>Copy report</span></button>
+            </div>
+            <p class="check-summary" id="checkSummary" role="status" aria-live="polite"></p>
+            <ul class="check-list" id="checkList"></ul>
           </section>
 
           <section class="set-card surface" aria-labelledby="setAuth">

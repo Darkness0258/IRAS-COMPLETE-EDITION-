@@ -212,6 +212,16 @@ button.chip:hover { background: var(--row-hover); }
   .chip-demo { display: none; }
 }
 
+/* The top bar must never be wider than a phone. Below 520px the word "IRAS" gives way (the orb stays).
+   While a PC session is open its badge matters more than the storage chip. On very narrow phones the storage chip goes. */
+@media (max-width: 520px) {
+  .brand-text { display: none; }
+  .topbar:has(#chipPc:not([hidden])) #chipStore { display: none; }
+}
+@media (max-width: 360px) {
+  #chipStore { display: none; }
+}
+
 @media (max-width: 760px) {
   :root { --topbar-h: 60px; }
   .app-shell { grid-template-columns: minmax(0, 1fr); }

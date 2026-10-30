@@ -40,6 +40,27 @@
 - Safety: pictures and results are cleared when you leave the screen or end the session. The session key stays in this window only, under the same name the old page uses. Every question is asked inside the page, with no browser pop-ups.
 - Server: one new read-only address, `GET /v1/remote/policy` (needs your token). It tells the screen your server's highest level and the permission each action needs. Nothing else changed on the server. The Windows app and the PC side are unchanged.
 
+## Who is here (new): the first step of multi-user recognition
+- A small pill on Home and Chat says who is talking. Tap it: pick a person she knows ("I am Alice"), "A guest is here", "Nobody in particular", or go to check your face or voice. Face ID and Voice ID set it by themselves when they recognise someone. Ctrl+K has "Who is here?" and "A guest is here" too.
+- A recognised or picked person is kept for 30 minutes, in this window only. A guest stays until you clear it. She never forgets a guest on her own, because that would quietly give a visitor your private things.
+- Chat sends only the person's id and how she knew (face, voice or picked), never the name. The server accepts only a person it already knows and looks up the name itself, so the page cannot write her instructions. A made-up id is ignored.
+- What she does with it: she uses the name now and then. She is told it is a hint, not proof, and that it never unlocks an approval. In guest mode her remembered facts are left out of her prompt, and she is told to keep your private things (facts, calendar, reminders, messages, files, accounts) private, and that a guest cannot approve anything.
+- Be clear about the limit: guest mode is a strong request to her plus no remembered facts in her prompt. It is not a lock. She can still use her tools.
+- Not done yet, so the next steps: each person's own memory, calendar and reminders, and checking the speaker's voice by itself during voice chat.
+- Server: an optional `speaker` field on `/v1/chat` and `/v1/chat/stream`. New file `src/iras/identity/context.py`. The assistant takes the hint for one request and puts it back after. If a chat has no hint, nothing changes. The audit log keeps the person id and how she knew, not the name.
+
+## Check everything (new): for test day
+- Settings, new card **Check everything** (also in Ctrl+K). One press asks your server and your browser twelve questions: the server, your access token, the AI, the database, her voice, Face ID, Voice ID, your calendar, your PC, the microphone, the camera, and listening. Each line is OK, "look at this" or a problem, and says in plain words what to do.
+- It changes nothing. It makes one tiny speech request (the word "Checking my voice.") and plays no sound. Press "Test her voice" to listen.
+- The database line is the important one for Render: it tells you if the server is really connected to Supabase, or quietly using temporary storage that is lost on every restart. It uses the server's own `/ready` answer and its help text.
+- The calendar line reads the next 7 days from your private link, so it also tests your Google link.
+- If the server cannot be reached, or the token is refused, the lines that depend on it are skipped, so you see the first real problem and not a pile of errors.
+- **Copy report** puts a plain-text report on the clipboard: the time, your server's name, your browser, and every line. It never holds your token or your full address. Paste it to me.
+- Nothing runs by itself. It only runs when you press the button.
+
+## Phone top bar (a fix)
+- Your original page had a top bar that was 18 px too wide at 390 px and 48 px too wide at 360 px, as soon as the database was healthy (the "Cloud database" chip shows). It now fits phones from 360 px up, also with a PC session or a guest shown. Under 520 px the word "IRAS" is hidden (the orb stays). With a PC session open the storage chip is hidden, and under 360 px it is hidden too.
+
 ## Old demo files
 - `clients/web/command-center/src/js/25-data.js` and `30-sim.js` are the old demo. The page does not use them. `build.py` now skips them, so a rebuild cannot bring the demo back. You can delete them later (one old test, `test_command_center_ui.py`, still reads `30-sim.js`).
 - `clients/web/index.html` is the page the server shows. It is already rebuilt. To rebuild it after you change the sources: `python clients/web/command-center/build.py --check`.
@@ -57,6 +78,6 @@
 - Agents, Routines, "Remind me": "in 10 minutes", "at 5pm", "tomorrow at 9". She shows a notice and says it out loud (page open, checks every 20 seconds).
 
 ## Tests
-`python -m pytest tests/test_gemini_tts.py tests/test_reminders.py tests/test_identity.py tests/test_voice.py tests/test_agenda.py tests/test_remote_policy_catalog.py tests/test_remote_web_direct_v400.py tests/test_remote_web_security_v400.py tests/test_master_control_rc3.py`
-(The last three were failing before, because they read the web page for the remote tools. They pass again. `test_master_control_rc3.py` now reads the Android file `ClassicActivity.java`, where the native screen lives since the Android app became a web view.)
+`python -m pytest tests/test_gemini_tts.py tests/test_reminders.py tests/test_identity.py tests/test_voice.py tests/test_agenda.py tests/test_speaker_context.py tests/test_command_center_ui.py tests/test_remote_policy_catalog.py tests/test_remote_web_direct_v400.py tests/test_remote_web_security_v400.py tests/test_master_control_rc3.py`
+(The last three were failing before, because they read the web page for the remote tools. They pass again. `test_master_control_rc3.py` now reads the Android file `ClassicActivity.java`, where the native screen lives since the Android app became a web view. `test_command_center_ui.py` now checks the real page, `clients/web/index.html`, instead of an old copy in the `command-center` folder. It also catches a stale page.)
 (`test_voice.py` runs the real voice model only if the model file is already on your computer. It never downloads anything.)

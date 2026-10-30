@@ -1,0 +1,25 @@
+/* ==========================================================================
+   Check everything (Settings)
+   ========================================================================== */
+
+.check-actions { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.check-summary { margin: 0; font-size: var(--fs-15); font-weight: 600; min-height: 1.4em; }
+.check-summary[data-state="ok"] { color: var(--accent); }
+.check-summary[data-state="warn"] { color: var(--warn); }
+.check-summary[data-state="fail"] { color: var(--crit); }
+.check-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.check-list:empty { display: none; }
+.check-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-radius: 14px; background: var(--row); border: 1px solid var(--line); }
+.check-ico { flex: none; margin-top: 2px; color: var(--muted); }
+.check-body { min-width: 0; font-size: var(--fs-14); line-height: 1.45; }
+.check-body strong { font-size: var(--fs-15); }
+.check-say { color: var(--text); overflow-wrap: anywhere; }
+.check-fix { display: block; margin-top: 4px; color: var(--muted); overflow-wrap: anywhere; }
+.check-state { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }  /* said to screen readers, not shown */
+.check-row[data-state="ok"] .check-ico { color: var(--accent); }
+.check-row[data-state="warn"] { border-color: var(--warn-fill); background: var(--warn-soft); }
+.check-row[data-state="warn"] .check-ico { color: var(--warn); }
+.check-row[data-state="fail"] { border-color: var(--crit-fill); background: var(--crit-soft); }
+.check-row[data-state="fail"] .check-ico { color: var(--crit); }
+.check-row[data-state="wait"] .check-ico .i, .check-row[data-state="wait"] .check-ico svg { animation: spin 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .check-row[data-state="wait"] .check-ico svg { animation: none; } }

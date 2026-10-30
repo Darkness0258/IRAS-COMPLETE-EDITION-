@@ -158,6 +158,25 @@
   </div>
 </dialog>
 
+<!-- Who is here -->
+<dialog class="who-dlg glass modal-glass" id="whoDlg" aria-labelledby="whoTitle" aria-describedby="whoText">
+  <header class="who-head">
+    <span class="ico-tile">{{i:users}}</span>
+    <div class="grow">
+      <h2 class="h3" id="whoTitle">Who is here?</h2>
+      <p class="muted" id="whoText">Tell her who is talking, so she can use their name. It is only a hint. It never unlocks anything, and a guest cannot approve.</p>
+    </div>
+    <button class="btn-icon sm" id="whoClose" type="button" aria-label="Close">{{i:x sm}}</button>
+  </header>
+  <ul class="who-list" id="whoPeople"></ul>
+  <ul class="who-list">
+    <li><button class="btn who-opt" id="whoGuest" type="button" data-guest aria-pressed="false">{{i:shield sm}}<span>A guest is here</span><small>Private things stay private</small></button></li>
+    <li><button class="btn who-opt" type="button" data-clear>{{i:x sm}}<span>Nobody in particular</span></button></li>
+    <li><button class="btn who-opt" type="button" data-recognise>{{i:scan-face sm}}<span>Check my face or voice</span></button></li>
+  </ul>
+  <p class="hint" id="whoNote" role="status" aria-live="polite"></p>
+</dialog>
+
 <!-- command palette -->
 <dialog class="palette glass modal-glass" id="paletteDlg" aria-label="Command palette">
   <div class="pal-search">

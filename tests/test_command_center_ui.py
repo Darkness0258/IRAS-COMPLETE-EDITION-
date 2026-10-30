@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CC = ROOT / "clients" / "web" / "command-center"
+PAGE = ROOT / "clients" / "web" / "index.html"  # the built page the server shows. build.py writes it here.
 
 
 def read(*parts):
@@ -26,7 +27,7 @@ def all_css():
 
 
 def test_command_center_is_one_offline_file():
-    text = read("index.html")
+    text = PAGE.read_text(encoding="utf-8")
     assert "cdn." not in text.lower()
     assert "<script src" not in text
     assert 'rel="stylesheet"' not in text
@@ -43,7 +44,7 @@ def test_built_file_matches_the_sources():
     spec.loader.exec_module(mod)
     page, problems, _ = mod.render()
     assert problems == []
-    assert page == read("index.html"), "index.html is stale. Run: python build.py"
+    assert page == PAGE.read_text(encoding="utf-8"), "index.html is stale. Run: python build.py"
 
 
 def test_design_tokens_cover_both_skins_and_both_themes():
@@ -124,7 +125,7 @@ def test_live_source_uses_the_endpoints_that_exist():
 
 
 def test_accessibility_markers():
-    html = read("index.html")
+    html = PAGE.read_text(encoding="utf-8")
     for marker in ('class="skip-link"', 'aria-live="polite"', "<dialog", 'aria-labelledby="apTitle"', 'role="log"', ":focus-visible", "aria-current"):
         assert marker in html, marker
     assert "ap-voice" in html and "ap-timer" in html

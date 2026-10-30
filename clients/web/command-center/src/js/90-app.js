@@ -16,6 +16,9 @@
     items = [
       goto("home", "Home", "house"), goto("chat", "Conversation", "message-square"), goto("agents", "Agents and routines", "workflow"),
       goto("activity", "Activity and audit log", "activity"), goto("memory", "Memory", "share-2"), goto("identity", "Face ID and Voice ID", "scan-face"), goto("pc", "Your PC: screen and actions", "monitor"), goto("settings", "Settings", "settings"),
+      { group: "Safety", label: "Check everything (server, voice, database, PC)", icon: "shield-check", kw: "test health status diagnose problems", run: () => { IRAS.go("settings"); setTimeout(() => IRAS.check && IRAS.check.run(), 250); } },
+      { group: "People", label: "Who is here?", icon: "users", kw: "speaker name person guest visitor", run: () => IRAS.who && IRAS.who.open() },
+      { group: "People", label: "A guest is here (keep my private things private)", icon: "shield", kw: "privacy visitor guest", run: () => IRAS.who && IRAS.who.guest() },
 
 
       { group: "Look and feel", label: "Dark theme", icon: "moon", kw: "appearance", run: () => setSetting("theme", "dark") },
@@ -106,7 +109,7 @@
     document.documentElement.dataset.hidden = document.hidden ? "1" : "0";
     applyAppearance(true);
     IRAS.initHome();
-    ["initChat", "initAgents", "initActivity", "initMemory", "initIdentity", "initPc", "initSettings", "initLive"].forEach((fn) => { try { if (IRAS[fn]) IRAS[fn](); } catch (e) { console.error("[IRAS] " + fn + " failed", e); } });
+    ["initChat", "initAgents", "initActivity", "initMemory", "initIdentity", "initWho", "initPc", "initSettings", "initCheck", "initLive"].forEach((fn) => { try { if (IRAS[fn]) IRAS[fn](); } catch (e) { console.error("[IRAS] " + fn + " failed", e); } });
     routeFromHash(true);
     IRAS.initOrb();
     document.body.dataset.ready = "1";

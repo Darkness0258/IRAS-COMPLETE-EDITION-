@@ -105,7 +105,9 @@ from iras.software_installer import (
 from iras.config import Settings
 from iras.v5 import build_v5_runtime
 from iras.agenda.routes import register_agenda_routes
+from iras.identity.context import hint as build_speaker_hint, resolve as resolve_speaker
 from iras.identity.routes import register_identity_routes
+from iras.identity.store import IdentityStore
 from iras.voice.gemini_tts import (
     synthesize as gemini_synthesize,
     voice_for as gemini_voice_for,
@@ -200,6 +202,9 @@ class ChatIn(BaseModel):
     client_id: str = Field(default="", max_length=128)
     thread_id: str = Field(default="", max_length=128)
     turn_id: str = Field(default="", max_length=128)
+    # Optional hint from the web screen about who is talking: {"person_id", "via", "score"} or {"guest": true}.
+    # It is checked by iras.identity.context. It is a hint, never a login.
+    speaker: dict | None = Field(default=None)
 
 
 class ChatOut(BaseModel):
@@ -1010,19 +1015,46 @@ def _finish_cloud_turn(
     return str(row.get("message_id") or "")
 
 
+_identity_store_cache: IdentityStore | None = None
+
+
+def _speaker_hint(body: ChatIn) -> dict | None:
+    """The "who is talking" hint for this request, or None. It never raises: chat must work without it."""
+    global _identity_store_cache
+    raw = getattr(body, "speaker", None)
+    if not raw:
+        return None
+    try:
+        if _identity_store_cache is None:
+            _identity_store_cache = IdentityStore(v5_runtime.db)
+        return build_speaker_hint(resolve_speaker(raw, _identity_store_cache))
+    except Exception:
+        return None
+
+
+def _speaker_audit(hint: dict | None) -> dict | None:
+    """What the audit log keeps about the hint: no name, only who it was and how."""
+    if not hint:
+        return None
+    return {"kind": hint.get("kind"), "person_id": hint.get("person_id"), "via": hint.get("via")}
+
+
 @contextmanager
-def _cloud_thread_scope(thread_id: str):
+def _cloud_thread_scope(thread_id: str, speaker: dict | None = None):
     previous = getattr(runtime.agent, "context_messages_override", None)
+    previous_speaker = getattr(runtime.agent, "speaker_context", None)
     rows = cloud_state.messages(thread_id, limit=max(2, int(getattr(runtime.agent, "context_message_limit", 12))))
     runtime.agent.context_messages_override = [
         {"role": str(row.get("role") or "assistant"), "content": str(row.get("content") or "")}
         for row in rows
         if str(row.get("role") or "") in {"user", "assistant"} and str(row.get("content") or "")
     ]
+    runtime.agent.speaker_context = speaker
     try:
         yield
     finally:
         runtime.agent.context_messages_override = previous
+        runtime.agent.speaker_context = previous_speaker
 
 
 def _multitask_context(
@@ -2829,6 +2861,7 @@ def chat(
     cloud_client_id, cloud_thread_id, cloud_user_message_id = _begin_cloud_turn(
         body, device_id=device_id, request_id=request_id
     )
+    speaker_hint = _speaker_hint(body)
 
     runtime.audit.record(
         "cloud_chat_request",
@@ -2841,6 +2874,7 @@ def chat(
             "thread_id": cloud_thread_id,
             "stream": False,
             "remote_session_id": (remote_session or {}).get("session_id"),
+            "speaker": _speaker_audit(speaker_hint),
         },
     )
 
@@ -3116,7 +3150,7 @@ def chat(
                 metrics = direct["metrics"]
             else:
                 with agent_lock:
-                    with _cloud_thread_scope(cloud_thread_id):
+                    with _cloud_thread_scope(cloud_thread_id, speaker_hint):
                         with _remote_permission_scope(remote_session):
                             with _master_agent_execution_scope(remote_session, runtime.agent):
                                 with _cloud_agent_provider_scope(remote_session, device_id, runtime.agent):
@@ -3238,6 +3272,7 @@ def chat_stream(
     cloud_client_id, cloud_thread_id, cloud_user_message_id = _begin_cloud_turn(
         body, device_id=device_id, request_id=request_id
     )
+    speaker_hint = _speaker_hint(body)
 
     raw_message = str(body.message or "").strip()
     code_command = parse_coding_agent_command(raw_message)
@@ -3275,6 +3310,7 @@ def chat_stream(
                 direct_stream
             ),
             "remote_session_id": (remote_session or {}).get("session_id"),
+            "speaker": _speaker_audit(speaker_hint),
         },
     )
 
@@ -3872,7 +3908,7 @@ def chat_stream(
                 # lock, copy metrics, then release the lock BEFORE yielding SSE
                 # data so a slow/aborted client cannot pin the agent.
                 try:
-                    with _cloud_thread_scope(cloud_thread_id):
+                    with _cloud_thread_scope(cloud_thread_id, speaker_hint):
                         with _remote_permission_scope(remote_session):
                             with _master_agent_execution_scope(remote_session, runtime.agent):
                                 with _cloud_agent_provider_scope(remote_session, device_id, runtime.agent):
@@ -3897,7 +3933,7 @@ def chat_stream(
             else:
                 # Ordinary no-tool conversation keeps true token streaming.
                 try:
-                    with _cloud_thread_scope(cloud_thread_id):
+                    with _cloud_thread_scope(cloud_thread_id, speaker_hint):
                         with _remote_permission_scope(remote_session):
                             with _master_agent_execution_scope(remote_session, runtime.agent):
                                 with _cloud_agent_provider_scope(remote_session, device_id, runtime.agent):

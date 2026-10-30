@@ -1,0 +1,26 @@
+/* ==========================================================================
+   Who is here: the small pill on Home and Chat, and the question that opens from it
+   ========================================================================== */
+
+.who-slot { display: flex; justify-content: center; min-height: 36px; }
+.who-slot:empty { display: none; }
+.chat .who-slot { justify-content: flex-start; margin-top: var(--s-3); }
+
+.who-pill { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--row); color: var(--muted); font-size: var(--fs-14); cursor: pointer; transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease); }
+.who-pill:hover { color: var(--text); border-color: var(--accent-line); }
+.who-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.who-pill small { color: var(--muted); font-size: var(--fs-13); }
+.who-pill.is-person { color: var(--text); border-color: var(--accent-line); background: var(--accent-soft); }
+.who-pill.is-person .i { color: var(--accent); }
+.who-pill.is-guest { color: var(--text); border-color: var(--warn-fill); background: var(--warn-soft); }
+.who-pill.is-guest .i { color: var(--warn); }
+
+.who-dlg { position: fixed; width: min(460px, calc(100vw - 24px)); margin-top: 12vh; margin-bottom: auto; padding: var(--s-5); border-radius: var(--r-xl); overflow: hidden; background: color-mix(in srgb, var(--surface-solid) 84%, transparent); box-shadow: inset 0 1px 0 var(--highlight), var(--shadow-2); }
+.who-head { display: flex; align-items: flex-start; gap: 14px; margin-bottom: var(--s-4); }
+.who-head .grow { flex: 1; min-width: 0; }
+.who-head p { font-size: var(--fs-14); }
+.who-list { display: grid; gap: 8px; margin: 0 0 var(--s-3); padding: 0; list-style: none; }
+.who-opt { width: 100%; justify-content: flex-start; gap: 10px; min-height: 44px; text-align: left; }
+.who-opt small { margin-left: auto; color: var(--muted); font-size: var(--fs-13); }
+.who-opt.is-on { border-color: var(--accent); background: var(--accent-soft); }
+@media (max-width: 640px) { .who-dlg { margin-top: 8vh; } }

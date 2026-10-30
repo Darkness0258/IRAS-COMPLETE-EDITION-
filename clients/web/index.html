@@ -682,6 +682,16 @@ button.chip:hover { background: var(--row-hover); }
   .chip-demo { display: none; }
 }
 
+/* The top bar must never be wider than a phone. Below 520px the word "IRAS" gives way (the orb stays).
+   While a PC session is open its badge matters more than the storage chip. On very narrow phones the storage chip goes. */
+@media (max-width: 520px) {
+  .brand-text { display: none; }
+  .topbar:has(#chipPc:not([hidden])) #chipStore { display: none; }
+}
+@media (max-width: 360px) {
+  #chipStore { display: none; }
+}
+
 @media (max-width: 760px) {
   :root { --topbar-h: 60px; }
   .app-shell { grid-template-columns: minmax(0, 1fr); }
@@ -1712,11 +1722,6 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
 .chip.pc-live[data-rank="0"] { border-color: var(--accent-line); background: var(--accent-soft); }
 .chip.pc-live[data-rank="0"] .i { color: var(--accent); }
 
-/* On a phone the top bar is already full. While a session is open, its badge matters more than the word "IRAS". */
-@media (max-width: 520px) {
-  .topbar:has(#chipPc:not([hidden])) .brand-text { display: none; }
-}
-
 @media (max-width: 1100px) {
   .pc-grid { grid-template-columns: minmax(0, 1fr); }
   .pc-wide { grid-column: auto; }
@@ -1725,6 +1730,59 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
   .pc-facts { grid-template-columns: minmax(0, 1fr); }
   .pc-row .field { min-width: 0; width: 100%; }
 }
+
+/* ==========================================================================
+   Who is here: the small pill on Home and Chat, and the question that opens from it
+   ========================================================================== */
+
+.who-slot { display: flex; justify-content: center; min-height: 36px; }
+.who-slot:empty { display: none; }
+.chat .who-slot { justify-content: flex-start; margin-top: var(--s-3); }
+
+.who-pill { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--row); color: var(--muted); font-size: var(--fs-14); cursor: pointer; transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease); }
+.who-pill:hover { color: var(--text); border-color: var(--accent-line); }
+.who-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.who-pill small { color: var(--muted); font-size: var(--fs-13); }
+.who-pill.is-person { color: var(--text); border-color: var(--accent-line); background: var(--accent-soft); }
+.who-pill.is-person .i { color: var(--accent); }
+.who-pill.is-guest { color: var(--text); border-color: var(--warn-fill); background: var(--warn-soft); }
+.who-pill.is-guest .i { color: var(--warn); }
+
+.who-dlg { position: fixed; width: min(460px, calc(100vw - 24px)); margin-top: 12vh; margin-bottom: auto; padding: var(--s-5); border-radius: var(--r-xl); overflow: hidden; background: color-mix(in srgb, var(--surface-solid) 84%, transparent); box-shadow: inset 0 1px 0 var(--highlight), var(--shadow-2); }
+.who-head { display: flex; align-items: flex-start; gap: 14px; margin-bottom: var(--s-4); }
+.who-head .grow { flex: 1; min-width: 0; }
+.who-head p { font-size: var(--fs-14); }
+.who-list { display: grid; gap: 8px; margin: 0 0 var(--s-3); padding: 0; list-style: none; }
+.who-opt { width: 100%; justify-content: flex-start; gap: 10px; min-height: 44px; text-align: left; }
+.who-opt small { margin-left: auto; color: var(--muted); font-size: var(--fs-13); }
+.who-opt.is-on { border-color: var(--accent); background: var(--accent-soft); }
+@media (max-width: 640px) { .who-dlg { margin-top: 8vh; } }
+
+/* ==========================================================================
+   Check everything (Settings)
+   ========================================================================== */
+
+.check-actions { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.check-summary { margin: 0; font-size: var(--fs-15); font-weight: 600; min-height: 1.4em; }
+.check-summary[data-state="ok"] { color: var(--accent); }
+.check-summary[data-state="warn"] { color: var(--warn); }
+.check-summary[data-state="fail"] { color: var(--crit); }
+.check-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.check-list:empty { display: none; }
+.check-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-radius: 14px; background: var(--row); border: 1px solid var(--line); }
+.check-ico { flex: none; margin-top: 2px; color: var(--muted); }
+.check-body { min-width: 0; font-size: var(--fs-14); line-height: 1.45; }
+.check-body strong { font-size: var(--fs-15); }
+.check-say { color: var(--text); overflow-wrap: anywhere; }
+.check-fix { display: block; margin-top: 4px; color: var(--muted); overflow-wrap: anywhere; }
+.check-state { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }  /* said to screen readers, not shown */
+.check-row[data-state="ok"] .check-ico { color: var(--accent); }
+.check-row[data-state="warn"] { border-color: var(--warn-fill); background: var(--warn-soft); }
+.check-row[data-state="warn"] .check-ico { color: var(--warn); }
+.check-row[data-state="fail"] { border-color: var(--crit-fill); background: var(--crit-soft); }
+.check-row[data-state="fail"] .check-ico { color: var(--crit); }
+.check-row[data-state="wait"] .check-ico .i, .check-row[data-state="wait"] .check-ico svg { animation: spin 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .check-row[data-state="wait"] .check-ico svg { animation: none; } }
 
 /* ==========================================================================
    Settings
@@ -1995,6 +2053,7 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
                 <h2 class="state-label display" id="voiceStateLabel">Ready</h2>
               </div>
               <p class="state-caption" id="stateCaption">Say “IRAS” or press Space to talk.</p>
+              <div class="who-slot" data-who></div>
             </div>
 
             <ol class="pipeline" id="pipeline" aria-label="How IRAS handles a request">
@@ -2057,6 +2116,7 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
             <div>
               <h1 class="title" id="chatTitle">Conversation</h1>
               <p>Type or talk. Replies stream in as IRAS thinks, with every tool it used.</p>
+              <div class="who-slot" data-who></div>
             </div>
             <button class="btn" id="newThread" type="button"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg><span>New chat</span></button>
           </header>
@@ -2466,8 +2526,19 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
                   <button class="btn ghost" id="connImport" type="button" hidden><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-download"/></svg><span>Import from classic web app</span></button>
                 </div>
               </div>
-              <p class="hint live-note">This page streams chat replies and shows provider status, approvals, activity and memory from your server. Voice, agents and the remote screen are in the classic controls for now.</p>
+              <p class="hint live-note">This page streams chat replies and shows provider status, approvals, activity, memory, Face ID, Voice ID and your PC from your server. The old page with the remaining controls is still at <a href="/app/classic/">/app/classic/</a>.</p>
             </div>
+          </section>
+
+          <section class="set-card surface" aria-labelledby="setCheck" id="checkCard">
+            <h2 class="h3" id="setCheck">Check everything</h2>
+            <p class="muted">One press tests the server, your access token, the AI, the database, her voice, Face ID, Voice ID, your calendar, your PC and this browser. Each line says what is wrong and what to do. It changes nothing. It makes one tiny speech request and plays no sound.</p>
+            <div class="check-actions">
+              <button class="btn primary" id="checkRun" type="button"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-shield-check"/></svg><span>Run checks</span></button>
+              <button class="btn" id="checkCopy" type="button" hidden><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-copy"/></svg><span>Copy report</span></button>
+            </div>
+            <p class="check-summary" id="checkSummary" role="status" aria-live="polite"></p>
+            <ul class="check-list" id="checkList"></ul>
           </section>
 
           <section class="set-card surface" aria-labelledby="setAuth">
@@ -2550,6 +2621,25 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
     <button class="btn" id="pcAskNo" type="button"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-x"/></svg><span>Cancel</span></button>
     <button class="btn authority" id="pcAskOk" type="button"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-check"/></svg><span>Allow</span></button>
   </div>
+</dialog>
+
+<!-- Who is here -->
+<dialog class="who-dlg glass modal-glass" id="whoDlg" aria-labelledby="whoTitle" aria-describedby="whoText">
+  <header class="who-head">
+    <span class="ico-tile"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-users"/></svg></span>
+    <div class="grow">
+      <h2 class="h3" id="whoTitle">Who is here?</h2>
+      <p class="muted" id="whoText">Tell her who is talking, so she can use their name. It is only a hint. It never unlocks anything, and a guest cannot approve.</p>
+    </div>
+    <button class="btn-icon sm" id="whoClose" type="button" aria-label="Close"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button>
+  </header>
+  <ul class="who-list" id="whoPeople"></ul>
+  <ul class="who-list">
+    <li><button class="btn who-opt" id="whoGuest" type="button" data-guest aria-pressed="false"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-shield"/></svg><span>A guest is here</span><small>Private things stay private</small></button></li>
+    <li><button class="btn who-opt" type="button" data-clear><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-x"/></svg><span>Nobody in particular</span></button></li>
+    <li><button class="btn who-opt" type="button" data-recognise><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-scan-face"/></svg><span>Check my face or voice</span></button></li>
+  </ul>
+  <p class="hint" id="whoNote" role="status" aria-live="polite"></p>
 </dialog>
 
 <!-- command palette -->
@@ -3473,7 +3563,7 @@ IRAS.closeDialog = closeDialog;
       const res = await fetch(b + "/v1/chat/stream", {
         method: "POST",
         headers: headers({ "Content-Type": "application/json", Accept: "text/event-stream" }),
-        body: JSON.stringify({ message: text, device_id: "web", client_id: clientId(), thread_id: threadId(), turn_id: uid("turn") }),
+        body: JSON.stringify({ message: text, device_id: "web", client_id: clientId(), thread_id: threadId(), turn_id: uid("turn"), speaker: IRAS.who ? IRAS.who.forChat() : undefined }),
         signal: ctrl.signal,
       });
       if (!res.ok || !res.body) throw new Error(res.status === 401 || res.status === 403 ? "The server refused the access token." : `The server answered ${res.status}.`);
@@ -5536,7 +5626,8 @@ IRAS.closeDialog = closeDialog;
       const live = r.liveness && r.liveness.checked ? (r.liveness.passed ? " I saw you turn your head." : " I did not see you turn your head, so I cannot rule out a photo.") : "";
       if (!r.faces) say("I cannot see a face.");
       else if (r.match) {
-        say("It is " + r.match.name + " (" + Math.round(r.match.score * 100) + "% sure)." + live);
+        if (IRAS.who) IRAS.who.set(r.match, "face", r.match.score);
+        say("It is " + r.match.name + " (" + Math.round(r.match.score * 100) + "% sure)." + live + " I will use your name in chat.");
         if (IRAS.voice) IRAS.voice.speak("Hey " + r.match.name + ". It is you.");
       } else say((r.message || "I do not know you.") + live);
     } catch (e) { say(e.message || "That did not work."); }
@@ -5744,7 +5835,8 @@ IRAS.closeDialog = closeDialog;
       }
       if (!r.heard) hear(r.message);
       else if (r.match) {
-        hear("It is " + r.match.name + " (" + Math.round(r.match.score * 100) + "% sure).");
+        if (IRAS.who) IRAS.who.set(r.match, "voice", r.match.score);
+        hear("It is " + r.match.name + " (" + Math.round(r.match.score * 100) + "% sure). I will use your name in chat.");
         if (IRAS.voice) IRAS.voice.speak("Hey " + r.match.name + ". I know your voice.");
       } else {
         hear((r.message || "I do not know you.") + (r.closest ? " The closest voice I know is " + r.closest.name + " (" + Math.round(r.closest.score * 100) + "%)." : ""));
@@ -5814,6 +5906,163 @@ IRAS.closeDialog = closeDialog;
       if (stream) stopCam();
       if (stopRecording) stopRecording();
     });
+  };
+})();
+
+/* ---- 76-who.js ---- */
+/* ==========================================================================
+   Who is here: which person is talking to her right now.
+
+   It is a hint for how she talks: a name, or extra care when a guest is here.
+   It is not a login. It never unlocks an approval, and a guest cannot approve anything.
+
+     - Face ID or Voice ID recognises someone: she keeps that for 30 minutes.
+     - You can also pick a person by hand, or say that a guest is here.
+     - A guest stays until you clear it. She never forgets a guest on her own,
+       because that would quietly hand a visitor your private things.
+
+   The chat sends only a person id (or "guest"). The server looks the name up itself,
+   and only for a person it already knows.
+
+     IRAS.who.set(person, via, score)   person = { person_id, name }, via = "face" | "voice" | "chosen"
+     IRAS.who.guest() / clear() / open() / current() / forChat()
+   Emits bus event "who".
+   ========================================================================== */
+"use strict";
+
+(function () {
+  const KEY = "iras-who";               // sessionStorage: this window only
+  const HOLD = 30 * 60 * 1000;          // a recognised person is kept this long
+  const ICON = { face: "scan-face", voice: "audio-lines", chosen: "user" };
+  const HOW = { face: "face", voice: "voice", chosen: "picked" };
+  let state = read();
+  let people = [];
+
+  function read() {
+    try {
+      const v = JSON.parse(sessionStorage.getItem(KEY) || "null");
+      if (!v) return null;
+      if (v.kind === "guest") return { kind: "guest", at: Number(v.at) || Date.now() };
+      if (v.kind === "person" && v.person_id && Date.now() - Number(v.at || 0) < HOLD) return v;
+    } catch (e) { /* a private window may refuse storage */ }
+    return null;
+  }
+
+  function save() {
+    try {
+      if (state) sessionStorage.setItem(KEY, JSON.stringify(state));
+      else sessionStorage.removeItem(KEY);
+    } catch (e) { /* fine: it is only a hint */ }
+  }
+
+  function current() {
+    if (state && state.kind === "person" && Date.now() - state.at >= HOLD) { state = null; save(); render(); }
+    return state;
+  }
+
+  function changed() {
+    save();
+    render();
+    bus.emit("who", { kind: state ? state.kind : "none", name: state && state.name ? state.name : "", via: state && state.via ? state.via : "" });
+  }
+
+  /* ---------- the pill ---------- */
+  function pill() {
+    const s = current();
+    if (!s) return `<button class="who-pill" type="button" data-who-open aria-haspopup="dialog">${icon("users", "i-sm")}<span>Who is here?</span></button>`;
+    if (s.kind === "guest") {
+      return `<button class="who-pill is-guest" type="button" data-who-open aria-haspopup="dialog" title="Guest mode. Your private things stay private until you clear it.">${icon("shield", "i-sm")}<span>A guest is here</span></button>`;
+    }
+    const mins = Math.max(1, Math.ceil((HOLD - (Date.now() - s.at)) / 60000));
+    return `<button class="who-pill is-person" type="button" data-who-open aria-haspopup="dialog" title="She remembers this for about ${mins} more minutes." aria-label="Talking as ${esc(s.name)}, ${HOW[s.via] || "picked"}. Change who is here.">${icon(ICON[s.via] || "user", "i-sm")}<span>${esc(s.name)}</span><small>${HOW[s.via] || "picked"}</small></button>`;
+  }
+
+  /* Rebuilt only when what it says changes, so a click or the keyboard focus is never lost to a timer.
+     The "minutes left" hint is updated in place. */
+  let drawn = "";
+  function render() {
+    const s = current();
+    const key = s ? [s.kind, s.person_id || "", s.name || "", s.via || ""].join("|") : "";
+    if (key === drawn && $("[data-who] .who-pill")) {
+      if (s && s.kind === "person") {
+        const mins = Math.max(1, Math.ceil((HOLD - (Date.now() - s.at)) / 60000));
+        $$("[data-who] .who-pill").forEach((b) => b.setAttribute("title", "She remembers this for about " + mins + " more minutes."));
+      }
+      return;
+    }
+    drawn = key;
+    const html = pill();
+    $$("[data-who]").forEach((slot) => { slot.innerHTML = html; });
+  }
+
+  /* ---------- the question ---------- */
+  /* Only the list of people is rebuilt (it arrives a moment after the pop-up opens).
+     The three fixed buttons are never replaced, so a quick click is never lost. */
+  function drawList(note) {
+    const s = current();
+    $("#whoPeople").innerHTML = people.map((p) => {
+      const on = s && s.kind === "person" && s.person_id === p.person_id;
+      return `<li><button class="btn who-opt${on ? " is-on" : ""}" type="button" data-pick="${esc(p.person_id)}" aria-pressed="${!!on}">${icon(on ? "badge-check" : "user", "i-sm")}<span>I am ${esc(p.name)}</span></button></li>`;
+    }).join("");
+    const guestOn = !!(s && s.kind === "guest");
+    $("#whoGuest").classList.toggle("is-on", guestOn);
+    $("#whoGuest").setAttribute("aria-pressed", String(guestOn));
+    $("#whoNote").textContent = note || "";
+  }
+
+  async function open() {
+    drawList("Looking for the people she knows…");
+    IRAS.openDialog($("#whoDlg"));
+    try {
+      const r = await IRAS.api("/v1/identity/people");
+      people = (r && r.people) || [];
+      drawList(people.length ? "" : "She does not know anyone yet. Teach her a face or a voice on the Identity screen.");
+    } catch (e) {
+      people = [];
+      drawList("I could not load the people she knows. " + (e.message || ""));
+    }
+  }
+
+  function close() { IRAS.closeDialog($("#whoDlg")); }
+
+  /* ---------- changing it ---------- */
+  function set(person, via, score) {
+    if (!person || !person.person_id) return;
+    state = { kind: "person", person_id: String(person.person_id), name: String(person.name || "").slice(0, 60), via: ICON[via] ? via : "chosen", score: clamp(Number(score) || 0, 0, 1), at: Date.now() };
+    changed();
+  }
+
+  function guest() { state = { kind: "guest", at: Date.now() }; changed(); }
+  function clear() { state = null; changed(); }
+
+  /* what the chat sends: an id and how she knew, never the name */
+  function forChat() {
+    const s = current();
+    if (!s) return undefined;
+    if (s.kind === "guest") return { guest: true };
+    return s.via === "chosen" ? { person_id: s.person_id, via: "chosen" } : { person_id: s.person_id, via: s.via, score: s.score };
+  }
+
+  IRAS.who = { current, set, guest, clear, open, forChat };
+
+  IRAS.initWho = function () {
+    render();
+    document.addEventListener("click", (e) => { if (e.target.closest("[data-who-open]")) open(); });
+    $("#whoDlg").addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (!b) return;
+      if (b.dataset.pick !== undefined) {
+        const p = people.find((x) => x.person_id === b.dataset.pick);
+        if (p) { set(p, "chosen", 0); close(); toast("Okay. Talking as " + p.name + ".", { icon: "user" }); }
+      } else if (b.dataset.guest !== undefined) {
+        guest(); close(); toast("Guest mode is on. Your private things stay private. Clear it when they leave.", { icon: "shield", timeout: 6000 });
+      } else if (b.dataset.clear !== undefined) {
+        clear(); close(); toast("Okay. No one in particular.", { icon: "x" });
+      } else if (b.dataset.recognise !== undefined) {
+        close(); IRAS.go("identity");
+      } else if (b.id === "whoClose") close();
+    });
+    setInterval(() => { current(); render(); }, 30000);  // a recognised person fades out by itself
   };
 })();
 
@@ -6438,6 +6687,250 @@ IRAS.closeDialog = closeDialog;
   };
 })();
 
+/* ---- 81-check.js ---- */
+/* ==========================================================================
+   Check everything: one button that tests what a test day needs.
+
+   Each line is a real question to your server or your browser, and each answer says in plain
+   words what is wrong and what to do. Nothing is changed. It makes one tiny speech request
+   (it plays no sound) and never shows or copies your access token.
+
+     GET  /health                 is the server awake
+     GET  /ready                  is the database really connected (no token needed)
+     GET  /v1/providers/status    does the server accept your token, and is an AI ready
+     POST /v1/tts                 can she really speak (one short word, not played)
+     GET  /v1/identity/status     Face ID and Voice ID
+     GET  /v1/calendar/status     and /v1/calendar/events   your calendar link
+     GET  /v1/devices             is your PC online     GET /v1/remote/policy   how far a session may go
+
+   IRAS.check.run() / IRAS.check.report()
+   ========================================================================== */
+"use strict";
+
+(function () {
+  const server = () => String(settings.server || "").trim().replace(/\/+$/, "");
+  const hostOf = (u) => { try { return new URL(u).host; } catch (e) { return u; } };
+  const upText = (s) => { const m = Math.round(Number(s) / 60); return m < 1 ? "under a minute" : m < 90 ? m + " min" : Math.round(m / 60) + " hours"; };
+  const timed = (promise, ms) => new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("It took too long to answer.")), ms);
+    promise.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+  const ok = (say, fix) => ({ state: "ok", say, fix: fix || "" });
+  const warn = (say, fix) => ({ state: "warn", say, fix: fix || "" });
+  const fail = (say, fix) => ({ state: "fail", say, fix: fix || "" });
+  const skip = (say) => ({ state: "skip", say, fix: "" });
+  const ICON = { wait: "loader-circle", ok: "circle-check", warn: "triangle-alert", fail: "circle-alert", skip: "circle-dot" };
+  const WORD = { wait: "Checking", ok: "OK", warn: "Look at this", fail: "Problem", skip: "Skipped" };
+  const TAG = { ok: "OK", warn: "WARN", fail: "FAIL", skip: "SKIP" };
+
+  /* what a failed call usually means, in words you can act on */
+  function tokenFix(message) {
+    if (/refused|invalid iras access/i.test(message)) return "Copy the value of IRAS_API_TOKEN from Render (Environment) into Access token above, then press Test connection.";
+    if (/not configured/i.test(message)) return "Add IRAS_API_TOKEN in Render, under Environment, and let it redeploy.";
+    return "Look at the Render logs for the error.";
+  }
+
+  /* ---------- the checks ---------- */
+  const CHECKS = [
+    { id: "server", name: "Server", run: async (ctx) => {
+      const base = server();
+      if (!base) { ctx.down = true; return fail("No server address is set.", "Type your server address in Connection above, for example https://iras-cloud.onrender.com."); }
+      let r;
+      try { r = await timed(fetch(base + "/health"), 70000); }
+      catch (e) { ctx.down = true; return fail("Could not reach " + hostOf(base) + ".", "On Render, open the dashboard and check the service is running. A sleeping service takes about a minute to wake, so try again. Also check the address above."); }
+      if (!r.ok) { ctx.down = true; return fail("The server answered " + r.status + ".", "Open the Render logs and look for the error."); }
+      const j = await r.json().catch(() => ({}));
+      return ok((j.service || "IRAS Cloud") + " " + (j.version || "") + " is running" + (j.uptime_seconds != null ? ", up " + upText(j.uptime_seconds) : "") + ".");
+    } },
+
+    { id: "token", name: "Access token", needsServer: true, run: async (ctx) => {
+      try { await providers(ctx); return ok("The server accepted your token."); }
+      catch (e) { ctx.tokenBad = true; return fail(e.message, tokenFix(e.message)); }
+    } },
+
+    { id: "ai", name: "AI", needsToken: true, run: async (ctx) => {
+      const p = await providers(ctx);
+      const rows = p.providers || [];
+      const ready = rows.filter((x) => x.ready).map((x) => x.name);
+      if (!p.configured_count && !rows.length) return fail("No AI provider has a key.", "Add an AI key in Render, under Environment (for example GEMINI_API_KEY), and redeploy.");
+      if (p.available_count > 0) return ok(ready.join(", ") + " is ready" + (p.active_model ? " (" + p.active_model + ")" : "") + ".");
+      return warn("A provider is set up but none has answered yet.", "Send one message in Chat. If it still fails, check the key in Render.");
+    } },
+
+    { id: "database", name: "Database", needsServer: true, run: async () => {
+      const r = await timed(fetch(server() + "/ready"), 25000);
+      if (!r.ok) return warn("The server did not give its database status (it answered " + r.status + ").", "Deploy the latest version, then check again.");
+      const j = await r.json();
+      const help = String(j.database_help || "");
+      if (j.database === "sqlite-fallback") return fail("The server could not reach your database, so it is using temporary storage.", (help ? help + " " : "") + "Anything saved now is lost when Render restarts. Check DATABASE_URL in Render.");
+      if (j.database === "postgres" && j.database_ok) return ok("Your database (Postgres, for example Supabase) is connected.");
+      if (j.database === "postgres") return fail("The database is set up but not answering.", help || "Check DATABASE_URL in Render.");
+      return warn("No database is set, so the server uses temporary local storage.", "On Render, memory, people and calendars are lost on every restart. Add your Supabase connection as DATABASE_URL.");
+    } },
+
+    { id: "voice", name: "Her voice", needsToken: true, run: async () => {
+      const profile = settings.voiceProfile || "iras_human";
+      const headers = { "Content-Type": "application/json", "X-Device-ID": "web" };
+      const t = store.sget("iras-api-token", "");
+      if (t) headers.Authorization = "Bearer " + t;
+      const r = await timed(fetch(server() + "/v1/tts", { method: "POST", headers, body: JSON.stringify({ text: "Checking my voice.", mood: settings.voiceMood || "warm", voice_gender: "female", voice_profile: profile }) }), 45000);
+      if (!r.ok) {
+        let d = ""; try { d = (await r.json()).detail; } catch (e) { /* no body */ }
+        return fail(typeof d === "string" && d ? d : "The server answered " + r.status + ".", "Look at the Render logs. Check GEMINI_API_KEY if you chose a Gemini voice.");
+      }
+      const used = r.headers.get("X-IRAS-Voice") || "", note = r.headers.get("X-IRAS-Voice-Note") || "";
+      const size = (await r.blob()).size;
+      if (size < 500) return fail("The server sent no sound.", "Look at the Render logs.");
+      if (/^gemini_/.test(profile) && !/^gemini:/.test(used)) return warn("Gemini did not answer, so she used the older voice (" + (used || "unknown") + ").", (note ? "Reason: " + note + ". " : "") + "Check GEMINI_API_KEY in Render.");
+      return ok((used || "A voice") + " answered (" + Math.max(1, Math.round(size / 1024)) + " KB). Press \"Test her voice\" above to listen.");
+    } },
+
+    { id: "face", name: "Face ID", needsToken: true, run: async (ctx) => {
+      const s = await identity(ctx);
+      if (!s.available) return fail("Not available. " + (s.reason || ""), "These need numpy, onnxruntime and OpenCV on the server. Look at the Render build log for the install step.");
+      return s.models_ready ? ok("Ready. " + (s.people || 0) + " " + ((s.people || 0) === 1 ? "person is" : "people are") + " known.") : warn("Ready, but the face models are not downloaded yet.", "The first picture downloads about 15 MB. After each Render restart it downloads again.");
+    } },
+
+    { id: "voiceid", name: "Voice ID", needsToken: true, run: async (ctx) => {
+      const s = await identity(ctx);
+      if (!s.voice) return warn("The server does not know Voice ID yet.", "Deploy the latest update.");
+      if (!s.voice.available) return fail("Not available. " + (s.voice.reason || ""), "It needs numpy and onnxruntime on the server. Look at the Render build log.");
+      return s.voice.models_ready ? ok("Ready.") : warn("Ready, but the voice model is not downloaded yet.", "The first recording downloads about 26 MB. After each Render restart it downloads again.");
+    } },
+
+    { id: "calendar", name: "Calendar", needsToken: true, run: async () => {
+      const s = await IRAS.api("/v1/calendar/status");
+      if (!s.available) return fail("Not available. " + (s.reason || ""), "Look at the Render build log and the server logs.");
+      const feeds = s.feeds || [];
+      if (!feeds.length) return warn("No calendar is linked yet.", "Open Agents, then Calendar, and paste your private iCal link.");
+      const bad = feeds.find((f) => f.last_error);
+      const e = await IRAS.api("/v1/calendar/events?days=7");
+      const problems = e.problems || [];
+      if (problems.length) return warn("Could not read your calendar: " + String(problems[0].message || problems[0]).slice(0, 160), "Use the private iCal address from your calendar's settings, not the page link. Then add it again.");
+      if (bad) return warn("The last sync of " + (bad.name || "a calendar") + " failed: " + String(bad.last_error).slice(0, 140), "Press sync in Agents, Calendar. If it keeps failing, add the link again.");
+      return ok("Read " + (e.events || []).length + " " + ((e.events || []).length === 1 ? "event" : "events") + " in the next 7 days from " + feeds.length + " " + (feeds.length === 1 ? "calendar" : "calendars") + ".");
+    } },
+
+    { id: "pc", name: "Your PC", needsToken: true, run: async () => {
+      const r = await IRAS.api("/v1/devices");
+      const online = ((r && r.devices) || []).filter((d) => d.online);
+      let limit = "";
+      try { const p = await IRAS.api("/v1/remote/policy"); limit = " Your server allows sessions up to " + ({ READ: "Look only", SAFE_ACTION: "Control", SYSTEM_ACTION: "Control", CRITICAL: "Full" }[p.cap] || p.cap) + "."; } catch (e) { /* an older server: fine */ }
+      if (!online.length) return warn("No paired PC is online." + limit, "Turn the PC on and open the IRAS Windows app. Then check again.");
+      return ok(online.map((d) => d.display_name).join(", ") + (online.length === 1 ? " is" : " are") + " online." + limit);
+    } },
+
+    { id: "mic", name: "Microphone", browser: true, run: () => media("microphone", "the microphone") },
+    { id: "cam", name: "Camera", browser: true, run: () => media("camera", "the camera") },
+    { id: "listen", name: "Listening", browser: true, run: async () => {
+      if (window.SpeechRecognition || window.webkitSpeechRecognition || window.IRASNative) return ok("This browser or app can turn your speech into text.");
+      return warn("This browser cannot turn speech into text.", "Use Chrome or Edge, or the Android app. You can still type.");
+    } },
+  ];
+
+  /* one call, shared by the lines that need it */
+  const providers = (ctx) => ctx.providers || (ctx.providers = timed(IRAS.api("/v1/providers/status"), 25000));
+  const identity = (ctx) => ctx.identity || (ctx.identity = timed(IRAS.api("/v1/identity/status"), 25000));
+
+  async function media(name, words) {
+    if (!window.isSecureContext) return fail("This page is not on https, so the browser blocks " + words + ".", "Open the site with https:// (a Render address already is).");
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return fail("This browser cannot use " + words + ".", "Use a current Chrome, Edge or Safari.");
+    let state = "unknown";
+    try { state = (await navigator.permissions.query({ name })).state; } catch (e) { /* some browsers do not say */ }
+    if (state === "denied") return fail("The browser has blocked " + words + " for this site.", "Click the lock icon next to the address, allow it, and reload the page.");
+    return ok(state === "granted" ? "It is allowed." : "The browser will ask you the first time you use it.");
+  }
+
+  /* ---------- drawing ---------- */
+  let results = {}, running = false;
+
+  function row(c, res) {
+    const r = res || { state: "wait", say: "Checking…", fix: "" };
+    return `<li class="check-row" data-state="${r.state}" data-check="${c.id}">` +
+      `<span class="check-ico" aria-hidden="true">${icon(ICON[r.state], "i-sm")}</span>` +
+      `<div class="check-body"><strong>${esc(c.name)}</strong><span class="check-state"> ${WORD[r.state]}.</span> <span class="check-say">${esc(r.say)}</span>` +
+      (r.fix ? `<span class="check-fix">What to do: ${esc(r.fix)}</span>` : "") + `</div></li>`;
+  }
+
+  function draw() {
+    $("#checkList").innerHTML = CHECKS.map((c) => row(c, results[c.id])).join("");
+  }
+
+  function summary() {
+    const all = CHECKS.map((c) => results[c.id]).filter(Boolean);
+    const n = (s) => all.filter((r) => r.state === s).length;
+    const problems = n("fail"), warns = n("warn");
+    const first = CHECKS.find((c) => results[c.id] && results[c.id].state === "fail") || CHECKS.find((c) => results[c.id] && results[c.id].state === "warn");
+    const el = $("#checkSummary");
+    el.dataset.state = problems ? "fail" : warns ? "warn" : "ok";
+    el.textContent = problems || warns
+      ? [problems ? problems + (problems === 1 ? " problem" : " problems") : "", warns ? warns + (warns === 1 ? " thing to look at" : " things to look at") : ""].filter(Boolean).join(" and ") + ". Start with: " + first.name + "."
+      : "Everything checked is working.";
+  }
+
+  function report() {
+    const lines = ["IRAS check, " + new Date().toLocaleString(), "Server: " + (hostOf(server()) || "(none)"), "Browser: " + String(navigator.userAgent || "").slice(0, 120), ""];
+    CHECKS.forEach((c) => {
+      const r = results[c.id];
+      if (!r) return;
+      lines.push("[" + (TAG[r.state] || "?") + "] " + c.name + ": " + r.say + (r.fix ? "  -> " + r.fix : ""));
+    });
+    const all = CHECKS.map((c) => results[c.id]).filter(Boolean);
+    lines.push("", "Summary: " + all.filter((r) => r.state === "ok").length + " ok, " + all.filter((r) => r.state === "warn").length + " to look at, " + all.filter((r) => r.state === "fail").length + " problems.");
+    return lines.join("\n");
+  }
+
+  /* ---------- running ---------- */
+  async function settle(c, ctx) {
+    let res;
+    if (c.needsServer && ctx.down) res = skip("Skipped: the server could not be reached.");
+    else if (c.needsToken && (ctx.down || ctx.tokenBad)) res = skip(ctx.down ? "Skipped: the server could not be reached." : "Skipped: fix the access token first.");
+    else {
+      try { res = await c.run(ctx); }
+      catch (e) { res = fail(String((e && e.message) || "It did not answer."), /token|refused/i.test(String(e && e.message)) ? tokenFix(String(e.message)) : "Look at the Render logs, then check again."); }
+    }
+    results[c.id] = res;
+    const li = $(`#checkList [data-check="${c.id}"]`);
+    if (li) li.outerHTML = row(c, res);
+    const done = Object.keys(results).length;
+    if (done < CHECKS.length) $("#checkSummary").textContent = "Checking… " + done + " of " + CHECKS.length + " done.";
+  }
+
+  async function run() {
+    if (running) return;
+    running = true; results = {};
+    $("#checkRun").disabled = true;
+    $("#checkRun").querySelector("span").textContent = "Checking…";
+    $("#checkCopy").hidden = true;
+    $("#checkSummary").dataset.state = "";
+    $("#checkSummary").textContent = "Checking… 0 of " + CHECKS.length + " done.";
+    draw();
+    const ctx = { down: false, tokenBad: false };
+    try {
+      await settle(CHECKS[0], ctx);            // the server first: it may be waking up
+      await settle(CHECKS[1], ctx);            // then the token
+      await Promise.all(CHECKS.slice(2).map((c) => settle(c, ctx)));
+      summary();
+      $("#checkCopy").hidden = false;
+      announce($("#checkSummary").textContent);
+    } finally {
+      running = false;
+      $("#checkRun").disabled = false;
+      $("#checkRun").querySelector("span").textContent = "Run checks again";
+    }
+  }
+
+  IRAS.check = { run, report };
+
+  IRAS.initCheck = function () {
+    $("#checkRun").addEventListener("click", run);
+    $("#checkCopy").addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(report()); toast("Copied. Paste it to me.", { icon: "check" }); }
+      catch (e) { toast("Could not copy. Select the lines and copy them.", { icon: "triangle-alert", timeout: 6000 }); }
+    });
+  };
+})();
+
 /* ---- 90-app.js ---- */
 /* ==========================================================================
    App boot, command palette, keyboard
@@ -6457,6 +6950,9 @@ IRAS.closeDialog = closeDialog;
     items = [
       goto("home", "Home", "house"), goto("chat", "Conversation", "message-square"), goto("agents", "Agents and routines", "workflow"),
       goto("activity", "Activity and audit log", "activity"), goto("memory", "Memory", "share-2"), goto("identity", "Face ID and Voice ID", "scan-face"), goto("pc", "Your PC: screen and actions", "monitor"), goto("settings", "Settings", "settings"),
+      { group: "Safety", label: "Check everything (server, voice, database, PC)", icon: "shield-check", kw: "test health status diagnose problems", run: () => { IRAS.go("settings"); setTimeout(() => IRAS.check && IRAS.check.run(), 250); } },
+      { group: "People", label: "Who is here?", icon: "users", kw: "speaker name person guest visitor", run: () => IRAS.who && IRAS.who.open() },
+      { group: "People", label: "A guest is here (keep my private things private)", icon: "shield", kw: "privacy visitor guest", run: () => IRAS.who && IRAS.who.guest() },
 
 
       { group: "Look and feel", label: "Dark theme", icon: "moon", kw: "appearance", run: () => setSetting("theme", "dark") },
@@ -6547,7 +7043,7 @@ IRAS.closeDialog = closeDialog;
     document.documentElement.dataset.hidden = document.hidden ? "1" : "0";
     applyAppearance(true);
     IRAS.initHome();
-    ["initChat", "initAgents", "initActivity", "initMemory", "initIdentity", "initPc", "initSettings", "initLive"].forEach((fn) => { try { if (IRAS[fn]) IRAS[fn](); } catch (e) { console.error("[IRAS] " + fn + " failed", e); } });
+    ["initChat", "initAgents", "initActivity", "initMemory", "initIdentity", "initWho", "initPc", "initSettings", "initCheck", "initLive"].forEach((fn) => { try { if (IRAS[fn]) IRAS[fn](); } catch (e) { console.error("[IRAS] " + fn + " failed", e); } });
     routeFromHash(true);
     IRAS.initOrb();
     document.body.dataset.ready = "1";

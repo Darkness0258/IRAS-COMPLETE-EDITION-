@@ -101,7 +101,7 @@
       const res = await fetch(b + "/v1/chat/stream", {
         method: "POST",
         headers: headers({ "Content-Type": "application/json", Accept: "text/event-stream" }),
-        body: JSON.stringify({ message: text, device_id: "web", client_id: clientId(), thread_id: threadId(), turn_id: uid("turn") }),
+        body: JSON.stringify({ message: text, device_id: "web", client_id: clientId(), thread_id: threadId(), turn_id: uid("turn"), speaker: IRAS.who ? IRAS.who.forChat() : undefined }),
         signal: ctrl.signal,
       });
       if (!res.ok || !res.body) throw new Error(res.status === 401 || res.status === 403 ? "The server refused the access token." : `The server answered ${res.status}.`);

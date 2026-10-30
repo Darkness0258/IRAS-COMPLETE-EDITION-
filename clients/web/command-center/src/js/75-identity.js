@@ -109,7 +109,8 @@
       const live = r.liveness && r.liveness.checked ? (r.liveness.passed ? " I saw you turn your head." : " I did not see you turn your head, so I cannot rule out a photo.") : "";
       if (!r.faces) say("I cannot see a face.");
       else if (r.match) {
-        say("It is " + r.match.name + " (" + Math.round(r.match.score * 100) + "% sure)." + live);
+        if (IRAS.who) IRAS.who.set(r.match, "face", r.match.score);
+        say("It is " + r.match.name + " (" + Math.round(r.match.score * 100) + "% sure)." + live + " I will use your name in chat.");
         if (IRAS.voice) IRAS.voice.speak("Hey " + r.match.name + ". It is you.");
       } else say((r.message || "I do not know you.") + live);
     } catch (e) { say(e.message || "That did not work."); }
@@ -317,7 +318,8 @@
       }
       if (!r.heard) hear(r.message);
       else if (r.match) {
-        hear("It is " + r.match.name + " (" + Math.round(r.match.score * 100) + "% sure).");
+        if (IRAS.who) IRAS.who.set(r.match, "voice", r.match.score);
+        hear("It is " + r.match.name + " (" + Math.round(r.match.score * 100) + "% sure). I will use your name in chat.");
         if (IRAS.voice) IRAS.voice.speak("Hey " + r.match.name + ". I know your voice.");
       } else {
         hear((r.message || "I do not know you.") + (r.closest ? " The closest voice I know is " + r.closest.name + " (" + Math.round(r.closest.score * 100) + "%)." : ""));
