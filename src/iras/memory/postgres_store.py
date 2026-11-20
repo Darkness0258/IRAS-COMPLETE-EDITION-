@@ -188,6 +188,12 @@ class PostgresMemoryStore:
             ),
         )
 
+    def forget_fact(self, key):
+        self._run(
+            "DELETE FROM facts WHERE key=%s",
+            (key,),
+        )
+
     def get_fact(
         self,
         key,

@@ -61,6 +61,16 @@
 ## Phone top bar (a fix)
 - Your original page had a top bar that was 18 px too wide at 390 px and 48 px too wide at 360 px, as soon as the database was healthy (the "Cloud database" chip shows). It now fits phones from 360 px up, also with a PC session or a guest shown. Under 520 px the word "IRAS" is hidden (the orb stays). With a PC session open the storage chip is hidden, and under 360 px it is hidden too.
 
+## Checkpoint: each person's own things (server side only, no screens yet)
+This is a safe, half-finished step. A single-user setup behaves exactly as before. The screens for it come next.
+- **Memory:** with a known person talking (see "Who is here"), she saves and uses that person's own facts and memories, plus the shared ones. Never anyone else's. A guest gets nothing remembered, and cannot save anything. With nobody named, only shared things. Nothing in the database changes shape: a person's facts are stored as `p:<person_id>:<key>`, and their memories in the namespace `person:<person_id>`. New file: `src/iras/identity/scope.py`. The model's tools `remember_fact`, `search_memory` and the `v5_memory_*` tools follow it, and so does her prompt.
+- **Old things stay shared** until you claim them: `POST /v1/identity/people/{id}/claim-memory` makes the shared facts and memories belong to that person. `POST /v1/identity/people/{id}/share-memory` makes ALL of a person's memories shared again, including ones saved only for them. Her own settings (`iras.*`) are never claimed.
+- **Memory list fix:** `/v1/v5/memory/search` with an empty search used to return nothing, so the Memory screen showed no memories until you searched. It now lists the newest.
+- **Reminders for one person:** the marker can carry a person id, `[reminder:per_abc] text`. The notice is titled "Reminder for Alice". A reminder for everyone is exactly as before, also on the phone.
+- **Calendars for one person:** each calendar can have an owner (a new `owner` column, added to your existing table by itself; your calendars stay shared). Its reminders are for that owner. `POST /v1/calendar/feeds` takes `owner`. `POST /v1/calendar/feeds/{id}/owner` changes it. `GET /v1/calendar/events?owner=` limits the list (left out: all, empty: shared, an id: that person's).
+- **Not done yet (the next step):** the Memory screen choice of whose memory, the Identity screen buttons to claim and share, the reminder and calendar choice of whose, and the screen hiding a private reminder from other people. Until then you can try the addresses above, or just use chat with "Who is here" set.
+- Tests: `tests/test_memory_scope.py` (49) and `tests/test_owned_reminders.py` (40).
+
 ## Old demo files
 - `clients/web/command-center/src/js/25-data.js` and `30-sim.js` are the old demo. The page does not use them. `build.py` now skips them, so a rebuild cannot bring the demo back. You can delete them later (one old test, `test_command_center_ui.py`, still reads `30-sim.js`).
 - `clients/web/index.html` is the page the server shows. It is already rebuilt. To rebuild it after you change the sources: `python clients/web/command-center/build.py --check`.
@@ -78,6 +88,6 @@
 - Agents, Routines, "Remind me": "in 10 minutes", "at 5pm", "tomorrow at 9". She shows a notice and says it out loud (page open, checks every 20 seconds).
 
 ## Tests
-`python -m pytest tests/test_gemini_tts.py tests/test_reminders.py tests/test_identity.py tests/test_voice.py tests/test_agenda.py tests/test_speaker_context.py tests/test_command_center_ui.py tests/test_remote_policy_catalog.py tests/test_remote_web_direct_v400.py tests/test_remote_web_security_v400.py tests/test_master_control_rc3.py`
+`python -m pytest tests/test_gemini_tts.py tests/test_reminders.py tests/test_identity.py tests/test_voice.py tests/test_agenda.py tests/test_speaker_context.py tests/test_memory_scope.py tests/test_owned_reminders.py tests/test_command_center_ui.py tests/test_remote_policy_catalog.py tests/test_remote_web_direct_v400.py tests/test_remote_web_security_v400.py tests/test_master_control_rc3.py`
 (The last three were failing before, because they read the web page for the remote tools. They pass again. `test_master_control_rc3.py` now reads the Android file `ClassicActivity.java`, where the native screen lives since the Android app became a web view. `test_command_center_ui.py` now checks the real page, `clients/web/index.html`, instead of an old copy in the `command-center` folder. It also catches a stale page.)
 (`test_voice.py` runs the real voice model only if the model file is already on your computer. It never downloads anything.)

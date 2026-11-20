@@ -53,6 +53,13 @@ class SemanticMemory:
             count+=1
         return count
 
+    def recent(self,*,namespace:str|None=None,limit:int=20)->list[dict[str,Any]]:
+        """The newest memories, for listing. search() needs words to match, so an empty search finds nothing."""
+        self.purge_expired(); limit=max(1,min(int(limit),100))
+        rows=(self.db.execute("SELECT * FROM v5_semantic_memory WHERE namespace=? ORDER BY created_at DESC LIMIT ?",(namespace,limit),fetch="all") if namespace else self.db.execute("SELECT * FROM v5_semantic_memory ORDER BY created_at DESC LIMIT ?",(limit,),fetch="all")) or []
+        for row in rows: row["metadata"]=json.loads(row.pop("metadata_json")); row["score"]=0.0
+        return rows
+
     def search(self,query:str,*,namespace:str|None=None,limit:int=10)->list[dict[str,Any]]:
         self.purge_expired()
         rows=self.db.execute("SELECT * FROM v5_semantic_memory WHERE namespace=?",(namespace,),fetch="all") if namespace else self.db.execute("SELECT * FROM v5_semantic_memory",fetch="all")

@@ -22,6 +22,8 @@ class MemoryStore:
     def remember(self,key,value):
         with self._lock,self._conn() as c:
             c.execute('INSERT INTO facts(ts,key,value) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET ts=excluded.ts,value=excluded.value',(self._now(),key,value))
+    def forget_fact(self,key):
+        with self._lock,self._conn() as c: c.execute('DELETE FROM facts WHERE key=?',(key,))
     def get_fact(self,key,default=None):
         with self._lock,self._conn() as c:
             row=c.execute('SELECT value FROM facts WHERE key=?',(key,)).fetchone()

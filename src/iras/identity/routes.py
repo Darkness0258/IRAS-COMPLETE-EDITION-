@@ -10,6 +10,8 @@
   POST   /v1/identity/face/verify            { image, frames?: [image, ...], require_liveness? }
   POST   /v1/identity/voice/enroll           { person_id | name, audio }
   POST   /v1/identity/voice/verify           { audio }
+  POST   /v1/identity/people/{person_id}/claim-memory   old shared memories become this person's
+  POST   /v1/identity/people/{person_id}/share-memory   this person's memories become shared again
 
 `image` is a JPEG or PNG as base64 or a data URL. `audio` is a short WAV (16 bit)
 as base64 or a data URL. Pictures and recordings are looked at and thrown away.
@@ -49,7 +51,7 @@ def _audio(value: Any) -> bytes:
         raise VoiceError("I could not read that recording.") from exc
 
 
-def register_identity_routes(app, authorize: Callable[[str | None], Any], get_db: Callable[[], Any]) -> None:
+def register_identity_routes(app, authorize: Callable[[str | None], Any], get_db: Callable[[], Any], memory_ops: Any = None) -> None:
     holder: dict[str, Any] = {}
 
     def store() -> ids.IdentityStore:
@@ -193,3 +195,20 @@ def register_identity_routes(app, authorize: Callable[[str | None], Any], get_db
         if result["match"] is None:
             message = "I do not know your voice yet." if result["closest"] is None else "I am not sure who that is."
         return {"heard": True, "match": result["match"], "closest": result["closest"], **heard, "message": message}
+
+    def move_memory(person_id: str, action: str):
+        if memory_ops is None:
+            raise HTTPException(status_code=503, detail="This server cannot move memories.")
+        if store().person(person_id) is None:
+            raise HTTPException(status_code=404, detail="I do not know that person.")
+        return getattr(memory_ops, action)(person_id)
+
+    @app.post("/v1/identity/people/{person_id}/claim-memory")
+    def identity_claim_memory(person_id: str, authorization: str | None = Header(default=None)):
+        authorize(authorization)
+        return move_memory(person_id, "claim")
+
+    @app.post("/v1/identity/people/{person_id}/share-memory")
+    def identity_share_memory(person_id: str, authorization: str | None = Header(default=None)):
+        authorize(authorization)
+        return move_memory(person_id, "share")

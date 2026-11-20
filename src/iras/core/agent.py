@@ -4,6 +4,7 @@ import json
 import time
 
 from iras import __version__
+from iras.identity import scope as people_scope
 from iras.autonomy import (
     AutonomySupervisor,
     local_identity_reply,
@@ -196,7 +197,7 @@ class IRASAgent:
 
         facts = (
             self.memory.all_facts(
-                self.context_fact_limit
+                min(self.context_fact_limit * people_scope.SEARCH_SPREAD, 500)
             )
             if self.context_fact_limit and not (speaker and speaker.get("hide_memory"))
             else []
@@ -211,6 +212,8 @@ class IRASAgent:
                 "adaptive.v1"
             )
         ]
+        # A known person sees shared facts and their own. A guest sees none. See iras.identity.scope.
+        facts = people_scope.visible_facts(facts)[: self.context_fact_limit]
 
         if facts:
             msgs.append(
@@ -1304,10 +1307,15 @@ class IRASAgent:
         )
 
         if title:
-            self.memory.remember(
-                "user.preferred_title",
-                title,
-            )
+            try:
+                people_scope.remember_fact(
+                    self.memory,
+                    "user.preferred_title",
+                    title,
+                )
+            except PermissionError:
+                pass  # a guest's title is not saved
+
 
             self.audit.record(
                 "preferred_title_updated",
@@ -2531,10 +2539,15 @@ class IRASAgent:
         )
 
         if title:
-            self.memory.remember(
-                "user.preferred_title",
-                title,
-            )
+            try:
+                people_scope.remember_fact(
+                    self.memory,
+                    "user.preferred_title",
+                    title,
+                )
+            except PermissionError:
+                pass  # a guest's title is not saved
+
 
             self.audit.record(
                 "preferred_title_updated",

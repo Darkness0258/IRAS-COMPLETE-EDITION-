@@ -261,8 +261,14 @@ class V5Runtime:
         except Exception:
             pass
 
+    def _person_name(self, person_id: str) -> str:
+        """The name of a person she knows, for the title of a reminder that is theirs. May fail: the caller copes."""
+        from iras.identity.store import IdentityStore
+
+        return str((IdentityStore(self.db).person(person_id) or {}).get("name") or "")
+
     def submit_scheduled_prompt(self, prompt: str, row: dict[str, Any]) -> Any:
-        delivered = deliver_reminder(prompt, row, self.notifications, getattr(self, "mobile", None))
+        delivered = deliver_reminder(prompt, row, self.notifications, getattr(self, "mobile", None), owner_name=self._person_name)
         if delivered is not None:
             return delivered
         from iras.agenda.service import handle_scheduled as handle_calendar_job

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from iras.identity import scope as people_scope
 
 from dataclasses import asdict
 from pathlib import Path
@@ -162,9 +163,9 @@ def make_tools(v5):
     add(Tool("v5_monitor_resume", "Resume a proactive monitor.", _schema({"monitor_id": _str(100)}, ["monitor_id"]), lambda monitor_id: v5.monitoring.resume(monitor_id), PermissionLevel.SAFE_ACTION))
 
     # Memory + knowledge graph ---------------------------------------------------------------
-    add(Tool("v5_memory_search", "Search durable semantic project/task memory.", _schema({"query": {"type": "string", "minLength": 1, "maxLength": 2000}, "namespace": _str(160), "limit": {"type": "integer", "minimum": 1, "maximum": 50}}, ["query"]), lambda query, namespace="", limit=10: v5.semantic_memory.search(query, namespace=namespace or None, limit=limit), PermissionLevel.READ))
-    add(Tool("v5_memory_remember", "Store durable semantic memory with provenance.", _schema({"text": {"type": "string", "minLength": 1, "maxLength": 50000}, "namespace": _str(160), "kind": _str(80), "source": _str(240)}, ["text"]), lambda text, namespace="default", kind="note", source="agent": {"memory_id": v5.semantic_memory.remember(text, namespace=namespace, kind=kind, source=source)}, PermissionLevel.SAFE_ACTION))
-    add(Tool("v5_memory_forget", "Delete one durable memory item.", _schema({"memory_id": _str(100)}, ["memory_id"]), lambda memory_id: (v5.semantic_memory.forget(memory_id) or {"forgotten": memory_id}), PermissionLevel.CRITICAL))
+    add(Tool("v5_memory_search", "Search durable semantic project/task memory.", _schema({"query": {"type": "string", "minLength": 1, "maxLength": 2000}, "namespace": _str(160), "limit": {"type": "integer", "minimum": 1, "maximum": 50}}, ["query"]), lambda query, namespace="", limit=10: people_scope.search_memories(v5.semantic_memory, query, namespace, limit), PermissionLevel.READ))
+    add(Tool("v5_memory_remember", "Store durable semantic memory with provenance. When a known person is talking, it is saved as theirs, unless the namespace is \"shared\" (for things the whole household may know).", _schema({"text": {"type": "string", "minLength": 1, "maxLength": 50000}, "namespace": _str(160), "kind": _str(80), "source": _str(240)}, ["text"]), lambda text, namespace="default", kind="note", source="agent": {"memory_id": people_scope.remember_memory(v5.semantic_memory, text, namespace, kind, source)}, PermissionLevel.SAFE_ACTION))
+    add(Tool("v5_memory_forget", "Delete one durable memory item.", _schema({"memory_id": _str(100)}, ["memory_id"]), lambda memory_id: people_scope.forget_memory(v5.semantic_memory, memory_id), PermissionLevel.CRITICAL))
     add(Tool("v5_project_graph_build", "Build a static project knowledge graph from an authorized local repository path.", _schema({"root": {"type": "string", "minLength": 1, "maxLength": 1000}}, ["root"]), lambda root: _build_graph(v5, root), PermissionLevel.READ))
 
     # Coding workspaces ----------------------------------------------------------------------

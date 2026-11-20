@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import re
 import threading
 import time
 import urllib.parse
@@ -20,6 +21,20 @@ from typing import Any, Callable
 from .ical import AgendaError, Event, clean_url, fetch_feed, parse_events, zone
 
 REMINDER_PREFIX = "[reminder] "  # the same marker as iras.v5.reminders
+
+
+def clean_owner(owner: Any) -> str:
+    """A person id, or "" for a calendar that is for everyone. The id goes into a reminder's marker, so it must be plain."""
+    owner = str(owner or "").strip()
+    if owner and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", owner):
+        raise AgendaError("That is not a person id.")
+    return owner
+
+
+def _marker(owner: Any) -> str:
+    """The start of a reminder's prompt: for everyone, or for one person (see iras.v5.reminders)."""
+    owner = str(owner or "").strip()
+    return f"[reminder:{owner}] " if owner else REMINDER_PREFIX
 SYNC_PROMPT = "[calendar-sync] keep reminders in step with the calendar"
 SYNC_SECONDS = 900
 WINDOW_HOURS = 36
@@ -79,6 +94,10 @@ class AgendaService:
             "CREATE TABLE IF NOT EXISTS agenda_reminders (key TEXT PRIMARY KEY, feed_id TEXT NOT NULL, uid TEXT NOT NULL, "
             "start_iso TEXT NOT NULL, job_id TEXT NOT NULL, created_at TEXT NOT NULL)"
         )
+        try:  # "owner" is a person id, or "" for a calendar that is for everyone. Added to a table that may already hold calendars.
+            db.execute("ALTER TABLE agenda_feeds ADD COLUMN owner TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass  # the column is already there
 
     # ---------- feeds ----------
     def _rows(self) -> list[dict]:
@@ -93,6 +112,7 @@ class AgendaService:
         return {
             "feed_id": row["feed_id"], "name": row["name"], "host": host, "lead_minutes": int(row["lead_minutes"]),
             "timezone": row["timezone"], "last_sync": row.get("last_sync"), "last_error": row.get("last_error"),
+            "owner": row.get("owner") or "",
         }
 
     def feeds(self) -> list[dict]:
@@ -106,7 +126,8 @@ class AgendaService:
         self._cache[row["feed_id"]] = (time.monotonic(), data)
         return data
 
-    def add_feed(self, url: str, name: str = "", lead_minutes: int = 10, timezone_name: str = "") -> dict:
+    def add_feed(self, url: str, name: str = "", lead_minutes: int = 10, timezone_name: str = "", owner: str = "") -> dict:
+        owner = clean_owner(owner)
         url = clean_url(url)
         for row in self._rows():
             if _open(row["url"]) == url:
@@ -119,14 +140,30 @@ class AgendaService:
         lead = min(120, max(1, int(lead_minutes or 10)))
         with self._lock:
             self.db.execute(
-                "INSERT INTO agenda_feeds (feed_id, name, url, lead_minutes, timezone, created_at) VALUES (?,?,?,?,?,?)",
-                (feed_id, label, _seal(url), lead, timezone_name or "", _iso(now)),
+                "INSERT INTO agenda_feeds (feed_id, name, url, lead_minutes, timezone, created_at, owner) VALUES (?,?,?,?,?,?,?)",
+                (feed_id, label, _seal(url), lead, timezone_name or "", _iso(now), owner),
             )
             self._cache[feed_id] = (time.monotonic(), data)
             self._ensure_sync_job(now)
             row = next(r for r in self._rows() if r["feed_id"] == feed_id)
             made = self._sync_feed(row)
         return {"feed": self._safe(row), "upcoming": len([e for e in events]), "reminders_set": made}
+
+    def set_owner(self, feed_id: str, owner: str = "") -> dict:
+        """Say whose calendar this is ("" for everyone). Its reminders are made again, so they reach the right person."""
+        owner = clean_owner(owner)
+        with self._lock:
+            if next((r for r in self._rows() if r["feed_id"] == feed_id), None) is None:
+                raise AgendaError("That calendar is not here.")
+            self.db.execute("UPDATE agenda_feeds SET owner=? WHERE feed_id=?", (owner, feed_id))
+            for old in self.db.execute("SELECT * FROM agenda_reminders WHERE feed_id=?", (feed_id,), fetch="all") or []:
+                self._drop(dict(old))
+            row = next(r for r in self._rows() if r["feed_id"] == feed_id)
+            try:
+                made = self._sync_feed(row)
+            except Exception:
+                made = 0  # the next sync makes them
+        return {"feed": self._safe(row), "reminders_set": made}
 
     def remove_feed(self, feed_id: str) -> None:
         with self._lock:
@@ -140,20 +177,23 @@ class AgendaService:
                         self.scheduler.cancel(job["job_id"])
 
     # ---------- what is coming up ----------
-    def events(self, days: int = 7) -> tuple[list[dict], list[str]]:
+    def events(self, days: int = 7, owner: str | None = None) -> tuple[list[dict], list[str]]:
+        """Upcoming events. `owner` None: every calendar. "": the shared ones. A person id: that person's."""
         now = self._now()
-        out: list[tuple[Event, str]] = []
+        out: list[tuple[Event, str, str]] = []
         problems: list[str] = []
         for row in self._rows():
+            if owner is not None and (row.get("owner") or "") != owner:
+                continue
             try:
                 found, _, _ = parse_events(self._bytes(row), now, now + timedelta(days=days), row["timezone"])
-                out += [(e, row["name"]) for e in found]
+                out += [(e, row["name"], row.get("owner") or "") for e in found]
                 self.db.execute("UPDATE agenda_feeds SET last_sync=?, last_error=NULL WHERE feed_id=?", (_iso(now), row["feed_id"]))
             except AgendaError as exc:
                 problems.append(f"{row['name']}: {exc}")
                 self.db.execute("UPDATE agenda_feeds SET last_error=? WHERE feed_id=?", (str(exc)[:200], row["feed_id"]))
         out.sort(key=lambda pair: pair[0].sort_key())
-        return [e.as_dict(name) for e, name in out], problems
+        return [{**e.as_dict(name), "owner": who} for e, name, who in out], problems
 
     # ---------- reminders ----------
     def _ensure_sync_job(self, now: datetime) -> None:
@@ -195,7 +235,7 @@ class AgendaService:
             minutes = max(1, round((event.start - remind_at).total_seconds() / 60))
             job = self.scheduler.add(
                 name=("Calendar: " + event.title)[:160],
-                prompt=REMINDER_PREFIX + _sentence(event, minutes, tz_name),
+                prompt=_marker(feed.get("owner")) + _sentence(event, minutes, tz_name),
                 next_run=_iso(remind_at),
             )
             self.db.execute(

@@ -105,6 +105,7 @@ from iras.software_installer import (
 from iras.config import Settings
 from iras.v5 import build_v5_runtime
 from iras.agenda.routes import register_agenda_routes
+from iras.identity import scope as people_scope
 from iras.identity.context import hint as build_speaker_hint, resolve as resolve_speaker
 from iras.identity.routes import register_identity_routes
 from iras.identity.store import IdentityStore
@@ -1050,9 +1051,11 @@ def _cloud_thread_scope(thread_id: str, speaker: dict | None = None):
         if str(row.get("role") or "") in {"user", "assistant"} and str(row.get("content") or "")
     ]
     runtime.agent.speaker_context = speaker
+    previous_scope = people_scope.set_current(people_scope.from_hint(speaker))  # whose memories she may use
     try:
         yield
     finally:
+        people_scope.set_current(previous_scope)
         runtime.agent.context_messages_override = previous
         runtime.agent.speaker_context = previous_speaker
 
@@ -4935,7 +4938,10 @@ def v5_delete_monitor(monitor_id: str, authorization: str | None = Header(defaul
 @app.get("/v1/v5/memory/search")
 def v5_memory_search(q: str, namespace: str = "", limit: int = 20, authorization: str | None = Header(default=None)):
     _authorized(authorization)
-    return {"memories": v5_runtime.semantic_memory.search(q, namespace=namespace or None, limit=max(1, min(int(limit), 100)))}
+    limit = max(1, min(int(limit), 100))
+    if not q.strip():  # no words: list the newest, so the Memory screen shows something before you search
+        return {"memories": v5_runtime.semantic_memory.recent(namespace=namespace or None, limit=limit)}
+    return {"memories": v5_runtime.semantic_memory.search(q, namespace=namespace or None, limit=limit)}
 
 
 @app.post("/v1/v5/memory")
@@ -5183,7 +5189,17 @@ web_dir = next(
     None,
 )
 
-register_identity_routes(app, _authorized, lambda: v5_runtime.db)
+class _MemoryOps:
+    """Moves old shared memories to a person, or back. Used by the Identity screen."""
+
+    def claim(self, person_id: str) -> dict:
+        return people_scope.claim(runtime.memory, v5_runtime.semantic_memory, person_id)
+
+    def share(self, person_id: str) -> dict:
+        return people_scope.share(runtime.memory, v5_runtime.semantic_memory, person_id)
+
+
+register_identity_routes(app, _authorized, lambda: v5_runtime.db, memory_ops=_MemoryOps())
 register_agenda_routes(app, _authorized, lambda: v5_runtime)
 
 if web_dir:

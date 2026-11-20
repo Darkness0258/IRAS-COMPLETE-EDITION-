@@ -1,8 +1,9 @@
 """Calendar endpoints. Every one needs the normal IRAS access token.
 
   GET    /v1/calendar/status
-  GET    /v1/calendar/events?days=7
-  POST   /v1/calendar/feeds           { url, name?, lead_minutes?, timezone? }
+  GET    /v1/calendar/events?days=7   &owner=  (left out: every calendar. Empty: the shared ones. A person id: that person's)
+  POST   /v1/calendar/feeds           { url, name?, lead_minutes?, timezone?, owner? }   owner is a person id, or left out for everyone
+  POST   /v1/calendar/feeds/{feed_id}/owner   { owner }   say whose calendar it is ("" for everyone)
   DELETE /v1/calendar/feeds/{feed_id}
   POST   /v1/calendar/sync
 
@@ -30,6 +31,16 @@ def register_agenda_routes(app, authorize: Callable[[str | None], Any], get_runt
     def service():
         return get_service(get_runtime())
 
+    def known(owner: str) -> str:
+        """A person she knows, or "" for everyone. Anything else is refused."""
+        owner = str(owner or "").strip()
+        if owner:
+            from iras.identity.store import IdentityStore
+
+            if IdentityStore(service().db).person(owner) is None:
+                raise HTTPException(status_code=422, detail="I do not know that person.")
+        return owner
+
     def fail(exc: Exception):
         raise HTTPException(status_code=503 if isinstance(exc, AgendaUnavailable) else 422, detail=str(exc))
 
@@ -40,10 +51,10 @@ def register_agenda_routes(app, authorize: Callable[[str | None], Any], get_runt
         return {"available": not problem, "reason": problem, "feeds": [] if problem else service().feeds()}
 
     @app.get("/v1/calendar/events")
-    def calendar_events(days: int = 7, authorization: str | None = Header(default=None)):
+    def calendar_events(days: int = 7, owner: str | None = None, authorization: str | None = Header(default=None)):
         authorize(authorization)
         try:
-            events, problems = service().events(max(1, min(31, int(days))))
+            events, problems = service().events(max(1, min(31, int(days))), owner=None if owner is None else str(owner).strip())
             return {"events": events, "problems": problems}
         except (AgendaError, AgendaUnavailable) as exc:
             fail(exc)
@@ -52,7 +63,15 @@ def register_agenda_routes(app, authorize: Callable[[str | None], Any], get_runt
     def calendar_add(body: dict, authorization: str | None = Header(default=None)):
         authorize(authorization)
         try:
-            return service().add_feed(body.get("url"), str(body.get("name") or ""), body.get("lead_minutes") or 10, str(body.get("timezone") or ""))
+            return service().add_feed(body.get("url"), str(body.get("name") or ""), body.get("lead_minutes") or 10, str(body.get("timezone") or ""), owner=known(body.get("owner")))
+        except (AgendaError, AgendaUnavailable) as exc:
+            fail(exc)
+
+    @app.post("/v1/calendar/feeds/{feed_id}/owner")
+    def calendar_owner(feed_id: str, body: dict, authorization: str | None = Header(default=None)):
+        authorize(authorization)
+        try:
+            return service().set_owner(feed_id, known(body.get("owner")))
         except (AgendaError, AgendaUnavailable) as exc:
             fail(exc)
 
