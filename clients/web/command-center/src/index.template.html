@@ -177,6 +177,67 @@
   <p class="hint" id="whoNote" role="status" aria-live="polite"></p>
 </dialog>
 
+<!-- Agents: set a reminder, and add a calendar. Both ask whose it is. -->
+<dialog class="who-dlg ask-dlg glass modal-glass" id="remindDlg" aria-labelledby="remindTitle" aria-describedby="remindText">
+  <header class="who-head">
+    <span class="ico-tile">{{i:clock}}</span>
+    <div class="grow">
+      <h2 class="h3" id="remindTitle">Remind me</h2>
+      <p class="muted" id="remindText">She shows a notice and says it out loud, while this page is open.</p>
+    </div>
+    <button class="btn-icon sm" id="remindClose" type="button" aria-label="Close">{{i:x sm}}</button>
+  </header>
+  <form class="ask-form" id="remindForm" novalidate>
+    <div>
+      <label class="label" for="remindWhat">What should she remind you about?</label>
+      <input class="field" id="remindWhat" maxlength="300" autocomplete="off">
+    </div>
+    <div>
+      <label class="label" for="remindWhen">When?</label>
+      <input class="field" id="remindWhen" value="in 10 minutes" autocomplete="off" aria-describedby="remindWhenHint">
+      <p class="hint" id="remindWhenHint">For example: in 10 minutes, at 5pm, tomorrow at 9.</p>
+    </div>
+    <div>
+      <label class="label" for="remindFor">For</label>
+      <select class="field" id="remindFor" aria-describedby="remindForHint"><option value="">Everyone</option></select>
+      <p class="hint" id="remindForHint">Everyone sees and hears it.</p>
+    </div>
+    <p class="ask-error" id="remindError" role="alert"></p>
+    <div class="ask-actions">
+      <button class="btn" id="remindCancel" type="button">Cancel</button>
+      <button class="btn primary" type="submit">{{i:check sm}}<span>Set reminder</span></button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="who-dlg ask-dlg glass modal-glass" id="calDlg" aria-labelledby="calTitle" aria-describedby="calText">
+  <header class="who-head">
+    <span class="ico-tile">{{i:calendar}}</span>
+    <div class="grow">
+      <h2 class="h3" id="calTitle">Add a calendar</h2>
+      <p class="muted" id="calText">She reminds you before each event, out loud, while this page is open.</p>
+    </div>
+    <button class="btn-icon sm" id="calClose" type="button" aria-label="Close">{{i:x sm}}</button>
+  </header>
+  <form class="ask-form" id="calForm" novalidate>
+    <div>
+      <label class="label" for="calUrl">Secret iCal link</label>
+      <input class="field" id="calUrl" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="calUrlHint">
+      <p class="hint" id="calUrlHint">Google Calendar: Settings, your calendar, Integrate calendar, "Secret address in iCal format". Anyone with this link can read your calendar.</p>
+    </div>
+    <div>
+      <label class="label" for="calWhose">Whose calendar?</label>
+      <select class="field" id="calWhose" aria-describedby="calWhoseHint"><option value="">Everyone's (shared)</option></select>
+      <p class="hint" id="calWhoseHint">Shared: everyone sees these events and hears the reminders.</p>
+    </div>
+    <p class="ask-error" id="calError" role="alert"></p>
+    <div class="ask-actions">
+      <button class="btn" id="calCancel" type="button">Cancel</button>
+      <button class="btn primary" type="submit">{{i:check sm}}<span>Add calendar</span></button>
+    </div>
+  </form>
+</dialog>
+
 <!-- command palette -->
 <dialog class="palette glass modal-glass" id="paletteDlg" aria-label="Command palette">
   <div class="pal-search">

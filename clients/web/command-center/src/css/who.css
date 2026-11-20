@@ -24,3 +24,12 @@
 .who-opt small { margin-left: auto; color: var(--muted); font-size: var(--fs-13); }
 .who-opt.is-on { border-color: var(--accent); background: var(--accent-soft); }
 @media (max-width: 640px) { .who-dlg { margin-top: 8vh; } }
+
+/* Small forms in a dialog: a reminder, a calendar */
+.ask-form { display: grid; gap: var(--s-4); }
+.ask-form .label { margin-bottom: 4px; }
+.ask-form .field { width: 100%; }
+.ask-form .hint { margin-top: 6px; }
+.ask-error { margin: 0; padding-left: 10px; border-left: 3px solid var(--crit); color: var(--text); font-size: var(--fs-14); }
+.ask-error:empty { display: none; }
+.ask-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }

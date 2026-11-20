@@ -4,6 +4,11 @@
 
 .memory-grid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--s-6); align-items: start; }
 .mem-search { max-width: none; width: 100%; flex: none; margin-bottom: var(--s-2); }
+.mem-tools { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--s-2) var(--s-3); margin-bottom: var(--s-2); }
+.mem-tools .mem-search { flex: 1 1 240px; width: auto; min-width: 0; margin-bottom: 0; }
+.mem-filter { flex: 0 1 220px; min-width: 150px; }
+.mem-filter .label { margin-bottom: 4px; }
+.mem-filter select { width: 100%; }
 .mem-status { min-height: 1.5em; margin-bottom: var(--s-2); font-size: var(--fs-14); }
 
 .graph-wrap { position: relative; height: clamp(380px, 56vh, 600px); overflow: hidden; border-radius: var(--r-xl); background:
@@ -17,12 +22,14 @@
 .graph-reset { position: absolute; right: 12px; bottom: 12px; }
 
 .mem-list { padding: var(--s-4) var(--s-5); display: grid; gap: var(--s-4); }
-.mem-group h3 { font-size: var(--fs-14); margin-bottom: 6px; color: var(--muted); font-weight: 600; }
+.mem-group h2 { font-size: var(--fs-14); margin-bottom: 6px; color: var(--muted); font-weight: 600; }
 .mem-item { display: flex; align-items: flex-start; gap: 12px; width: 100%; text-align: left; padding: 10px 12px; border-radius: 12px; transition: background-color var(--dur-micro) var(--ease); }
 .mem-item:hover { background: var(--row-hover); }
 .mem-item[aria-pressed="true"] { background: var(--accent-soft); }
 .mem-item .i { color: var(--accent); margin-top: 2px; }
 .mem-item strong { font-size: var(--fs-15); font-weight: 600; }
+.mem-item .badge, .node-card-owner .badge { margin-left: 8px; vertical-align: middle; max-width: 100%; }
+.node-card-owner .badge { margin-left: 0; }
 .mem-item span { display: block; color: var(--muted); font-size: var(--fs-13); }
 
 .mem-side { display: grid; gap: var(--s-4); }
@@ -47,4 +54,7 @@
 }
 @media (max-width: 760px) {
   .graph-wrap { height: 420px; }
+}
+@media (max-width: 520px) {
+  .mem-filter { flex: 1 1 100%; }
 }

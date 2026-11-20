@@ -43,6 +43,12 @@
 .id-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-3) var(--s-5); }
 .switch-row { display: inline-flex; align-items: center; gap: 12px; font-size: var(--fs-14); font-weight: 500; cursor: pointer; }
 
+.own-card { padding: var(--s-5); border-radius: var(--r-xl); display: grid; gap: var(--s-3); margin-bottom: var(--s-5); }
+.own-list:empty { display: none; }
+.own-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.own-row .grow { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
+.own-card .hint { margin-top: 0; min-height: 1.2em; }
+
 .unlocks { padding: var(--s-5); border-radius: var(--r-xl); display: grid; gap: var(--s-4); }
 .unlocks ul { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-4); }
 .unlocks li { display: flex; gap: 14px; align-items: flex-start; }

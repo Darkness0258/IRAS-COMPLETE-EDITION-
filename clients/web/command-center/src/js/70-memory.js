@@ -23,7 +23,7 @@
   }
 
   /* ---------- data: the real memory on your server ---------- */
-  const YOU = { id: "you", label: "You", type: "you", detail: "Everything on this map was saved for you." };
+  const YOU = { id: "you", label: "You", type: "you", detail: "Everything on this map is saved on your server." };
   const TYPE_BY_KIND = { project: "project", device: "device", service: "service", app: "service", tool: "service", model: "model" };
   let searched = false, newest = 0;
   const mk = (n, i, count) => { const a = (i / count) * Math.PI * 2; return Object.assign({}, n, { x: Math.cos(a) * 160 + rand(-20, 20), y: Math.sin(a) * 120 + rand(-20, 20), vx: 0, vy: 0, r: R_BY[n.type] || 12, pinned: false }); };
@@ -33,12 +33,36 @@
     return fetch(b + path, Object.assign({}, opts, { headers: Object.assign({ "X-Device-ID": "web" }, tk ? { Authorization: "Bearer " + tk } : {}, opts.headers || {}) }))
       .then((r) => { if (!r.ok) throw new Error(r.status === 401 || r.status === 403 ? "The server refused the access token." : "The server answered " + r.status + "."); return r.json(); });
   };
+  /* ---------- whose memory it is ---------- */
+  const PERSON = "person:";
+  const ownerId = (ns) => (String(ns || "").startsWith(PERSON) ? String(ns).slice(PERSON.length) : "");
+  const isShared = (ns) => !ns || ns === "default" || ns === "shared";
+  function ownerName(ns) {
+    const id = ownerId(ns);
+    if (id) return IRAS.people.name(id) || "Someone she no longer knows";
+    return isShared(ns) ? "Shared" : String(ns);
+  }
+  const ownerBadge = (ns) => `<small class="badge owner ${isShared(ns) ? "plain" : "accent"}">${icon(ownerId(ns) ? "user" : "users", "i-sm")}${esc(ownerName(ns))}</small>`;
+
+  /* "Shared" also takes in what she saved for the household under the name "shared". */
+  async function fetchList(q, filter) {
+    const path = "/v1/v5/memory/search?limit=60&q=" + encodeURIComponent(q || "");
+    const one = async (ns) => (await api(path + (ns ? "&namespace=" + encodeURIComponent(ns) : ""))).memories || [];
+    if (filter !== "default") return one(filter);
+    const [a, b] = await Promise.all([one("default"), one("shared")]);
+    const both = a.concat(b);
+    return (q ? both : both.sort((x, y) => (Date.parse(y.created_at) || 0) - (Date.parse(x.created_at) || 0))).slice(0, 60);
+  }
+
+  let seq = 0;   // only the newest answer is used, so a slow old answer never replaces a new one
   async function loadReal(q) {
     searched = !!q;
+    const mine = ++seq;
     try {
-      const list = (await api("/v1/v5/memory/search?limit=60&q=" + encodeURIComponent(q || ""))).memories || [];
+      const list = await fetchList(q, $("#memFilter").value);
+      if (mine !== seq) return;
       const you = mk(YOU, 0, list.length + 1);
-      const mems = list.map((m, i) => { const t = String(m.text || ""); return mk({ id: m.memory_id, label: t.length > 34 ? t.slice(0, 33) + "…" : t, type: TYPE_BY_KIND[String(m.kind || "").toLowerCase()] || "preference", detail: t + (m.source ? " (from " + m.source + ")" : "") }, i + 1, list.length + 1); });
+      const mems = list.map((m, i) => { const t = String(m.text || ""); return mk({ id: m.memory_id, label: t.length > 34 ? t.slice(0, 33) + "…" : t, type: TYPE_BY_KIND[String(m.kind || "").toLowerCase()] || "preference", detail: t + (m.source ? " (from " + m.source + ")" : ""), ns: String(m.namespace || "default") }, i + 1, list.length + 1); });
       nodes = [you].concat(mems);
       edges = mems.map((n) => ({ a: you, b: n }));
       if (!q) newest = list.reduce((t, m) => Math.max(t, Date.parse(m.created_at) || 0), 0);
@@ -62,10 +86,12 @@
   async function addReal() {
     const box = $("#memNew"), text = box.value.trim();
     if (!text) { toast("Write what IRAS should remember first.", { icon: "info" }); box.focus(); return; }
+    const ns = $("#memWhose").value || "default";
     try {
-      await api("/v1/v5/memory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, namespace: "default", kind: "note", source: "web" }) });
+      await api("/v1/v5/memory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, namespace: ns, kind: "note", source: "web" }) });
       box.value = "";
-      toast("Saved to memory.", { icon: "check" });
+      toast(ownerId(ns) ? "Saved for " + ownerName(ns) + "." : "Saved as a shared memory.", { icon: "check" });
+      whoseTouched = false; pickWhose();
       loadReal("");
     } catch (err) { toast("Could not save it. " + err.message, { icon: "cloud-off", timeout: 7000 }); }
   }
@@ -240,6 +266,7 @@
     const links = edges.filter((e) => e.a === n || e.b === n).map((e) => (e.a === n ? e.b : e.a));
     card.innerHTML = `<div class="node-head"><span class="ico-tile">${icon(KIND_ICON[n.type])}</span><div><h2 id="nodeTitle">${esc(n.label)}</h2><div class="node-kind">${KIND[n.type]}</div></div></div>
       <p>${esc(n.detail || "")}</p>
+      ${n.type === "you" ? "" : `<div class="node-card-owner"><p class="label">Whose memory</p>${ownerBadge(n.ns)}</div>`}
       ${links.length ? `<div><p class="label">Connected to</p><div class="links">${links.map((l) => `<button type="button" class="link-chip" data-go="${esc(l.id)}">${esc(l.label)}</button>`).join("")}</div></div>` : ""}
       ${n.type === "you" ? "" : `<div><button type="button" class="btn sm" data-forget="${esc(n.id)}">${icon("trash-2", "i-sm")}<span>Forget this</span></button></div>`}`;
   }
@@ -248,8 +275,8 @@
     const groups = {};
     nodes.filter(matches).forEach((n) => (groups[n.type] = groups[n.type] || []).push(n));
     const order = ["you", "device", "service", "project", "model", "preference"];
-    host.innerHTML = order.filter((t) => groups[t]).map((t) => `<div class="mem-group"><h3>${KIND[t]}${groups[t].length > 1 && t !== "you" ? "s" : ""}</h3>` +
-      groups[t].map((n) => `<button type="button" class="mem-item" data-go="${esc(n.id)}" aria-pressed="${selected === n}">${icon(KIND_ICON[t], "i-sm")}<div><strong>${esc(n.label)}</strong><span>${esc(n.detail || "")}</span></div></button>`).join("") + `</div>`).join("") || `<p class="muted">Nothing matches.</p>`;
+    host.innerHTML = order.filter((t) => groups[t]).map((t) => `<div class="mem-group"><h2>${KIND[t]}${groups[t].length > 1 && t !== "you" ? "s" : ""}</h2>` +
+      groups[t].map((n) => `<button type="button" class="mem-item" data-go="${esc(n.id)}" aria-pressed="${selected === n}">${icon(KIND_ICON[t], "i-sm")}<div><strong>${esc(n.label)}</strong>${t === "you" ? "" : ownerBadge(n.ns)}<span>${esc(n.detail || "")}</span></div></button>`).join("") + `</div>`).join("") || `<p class="muted">Nothing matches.</p>`;
   }
 
   function renderStats() {
@@ -268,6 +295,28 @@
     el.textContent = m.length ? `${m.length} ${m.length === 1 ? "memory matches" : "memories match"}: ${m.slice(0, 4).map((n) => n.label).join(", ")}${m.length > 4 ? "…" : ""}` : "Nothing in memory matches that.";
   }
 
+  /* ---------- the two choices: whose memory to save, and whose to show ---------- */
+  let whoseTouched = false;   // true once you pick it yourself, so a change of "Who is here" does not undo your pick
+  const optionExists = (sel, v) => Array.from(sel.options).some((o) => o.value === v);
+
+  function whoseHint() {
+    const v = $("#memWhose").value;
+    $("#memWhoseHint").textContent = ownerId(v) ? "Private: she uses it only when " + ownerName(v) + " is talking." : "Shared: she can use it for anyone.";
+  }
+  function pickWhose() {
+    const w = $("#memWhose"), id = IRAS.people.here();
+    w.value = id && IRAS.people.known(id) ? PERSON + id : "default";
+    whoseHint();
+  }
+  /* Rebuilds both lists of choices. Returns true when the "Show" choice had to fall back to All. */
+  function buildSelects() {
+    const f = $("#memFilter"), w = $("#memWhose"), fv = f.value, wv = w.value;
+    f.innerHTML = IRAS.people.options({ first: [["", "All memories"], ["default", "Shared memories"]], prefix: PERSON, label: (p) => p.name + "\u2019s memories", selected: fv });
+    w.innerHTML = IRAS.people.options({ first: [["default", "Shared (everyone)"]], prefix: PERSON, selected: wv });
+    if (whoseTouched && optionExists(w, wv)) { w.value = wv; whoseHint(); } else pickWhose();
+    return f.value !== fv;
+  }
+
   /* ---------- events ---------- */
   document.addEventListener("click", (e) => {
     if (IRAS.view() !== "memory") return;
@@ -281,6 +330,10 @@
     query = e.target.value.trim().toLowerCase(); setStatus(); renderList(); draw();
     clearTimeout(timer); timer = setTimeout(() => loadReal(e.target.value.trim()), 350);
   });
+  $("#memFilter").addEventListener("change", () => loadReal(query));
+  $("#memWhose").addEventListener("change", () => { whoseTouched = true; whoseHint(); });
+  bus.on("people", () => { const fellBack = buildSelects(); renderCard(); renderList(); if (fellBack) loadReal(query); });
+  bus.on("who", () => { if (!whoseTouched) pickWhose(); });
   $$("input[name='memView']").forEach((r) => r.addEventListener("change", () => {
     const list = r.value === "list";
     $("#graphWrap").hidden = list; $("#memList").hidden = !list;
@@ -291,6 +344,7 @@
   IRAS.initMemory = function () {
     readColors();
     nodes = [mk(YOU, 0, 1)]; edges = [];
+    buildSelects();
     renderStats(); renderCard(); renderList();
     $("#memAdd").addEventListener("click", addReal);
     $("#graphLegend").innerHTML = [["circle", "You, apps"], ["square", "Devices"], ["hex", "Projects"], ["diamond", "Preferences"]].map(([s, t]) => {
@@ -298,7 +352,7 @@
       return `<li><svg viewBox="0 0 16 16">${shapeSvg}</svg>${t}</li>`;
     }).join("");
     new ResizeObserver(() => { if (IRAS.view() === "memory") resize(); }).observe(wrap);
-    bus.on("view", (e) => { if (e.view === "memory") { readColors(); resize(); renderStats(); loadReal(query); if (!IRAS.env.reduceMotion) { alpha = .15; } loop(); } });
+    bus.on("view", (e) => { if (e.view === "memory") { readColors(); resize(); renderStats(); IRAS.people.load(); buildSelects(); loadReal(query); if (!IRAS.env.reduceMotion) { alpha = .15; } loop(); } });
     bus.on("appearance", () => { readColors(); draw(); });
   };
 })();

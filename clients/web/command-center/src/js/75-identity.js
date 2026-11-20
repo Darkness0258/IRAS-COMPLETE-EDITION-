@@ -9,6 +9,8 @@
      POST   /v1/identity/voice/verify   { audio }         who is speaking
      DELETE /v1/identity/people/{id}/face               forget a face
      DELETE /v1/identity/people/{id}/voice              forget a voice
+     POST   /v1/identity/people/{id}/claim-memory       the old shared memories and facts become this person's
+     POST   /v1/identity/people/{id}/share-memory       ALL of this person's memories and facts become shared
 
    The camera and the microphone are only on while you teach or check, and only
    while you are on this screen. Pictures and recordings go to your server for one
@@ -339,6 +341,45 @@
       `<button type="button" class="btn-icon sm" ${attr}="${esc(x.person_id)}" aria-label="Forget ${esc(x.name)}" title="Forget">${icon("trash-2", "i-sm")}</button></li>`;
   }
 
+  /* ---------- each person's own memories ---------- */
+  let known = [], moving = false, ownMsg = "";   // ownMsg: what the last move did, until you leave the screen
+  const count = (n, one, many) => n + " " + (n === 1 ? one : many);
+
+  function drawOwn() {
+    $("#ownList").innerHTML = known.map((x) =>
+      `<li class="own-row"><strong class="grow">${esc(x.name)}</strong>` +
+      `<button type="button" class="btn sm" data-claim="${esc(x.person_id)}" aria-label="Make the old memories mine, for ${esc(x.name)}"${moving ? " disabled" : ""}>${icon("user", "i-sm")}<span>Make the old memories mine</span></button>` +
+      `<button type="button" class="btn sm" data-share="${esc(x.person_id)}" aria-label="Share all of their memories, for ${esc(x.name)}"${moving ? " disabled" : ""}>${icon("users", "i-sm")}<span>Share all of their memories</span></button></li>`).join("");
+  }
+
+  /* Both buttons move many memories at once, so each one asks first and says exactly what moves. */
+  async function moveMemories(id, action) {
+    const who = known.find((x) => x.person_id === id);
+    if (!who || moving) return;
+    const claim = action === "claim";
+    const ask = claim
+      ? "Give the old shared memories and facts to " + who.name + "?\n\nEvery shared memory and fact she has now will become " + who.name + "'s own. Other people, and guests, will no longer be able to use them. Her own settings stay as they are."
+      : "Share ALL of " + who.name + "'s memories with everyone?\n\nThis moves EVERY memory and fact of " + who.name + ": the old ones, and every one that was saved only for " + who.name + ". Everyone she knows, and guests, will be able to use them.";
+    if (!window.confirm(ask)) return;
+    moving = true; ownMsg = ""; drawOwn();
+    $("#ownHint").textContent = "Moving…";
+    try {
+      const r = await IRAS.api("/v1/identity/people/" + encodeURIComponent(id) + "/" + (claim ? "claim-memory" : "share-memory"), { method: "POST" });
+      const m = Number(r && r.memories) || 0, f = Number(r && r.facts) || 0;
+      const done = !m && !f
+        ? (claim ? "There was nothing shared to give to " + who.name + "." : who.name + " had no memories of their own to share.")
+        : claim ? who.name + " now has " + count(m, "memory", "memories") + " and " + count(f, "fact", "facts") + " of their own."
+          : count(m, "memory", "memories") + " and " + count(f, "fact", "facts") + " of " + who.name + " are shared again.";
+      ownMsg = done;
+      $("#ownHint").textContent = done;
+      toast(done, { icon: "check", timeout: 7000 });
+    } catch (e) {
+      ownMsg = "Could not move the memories. " + (e.message || "");
+      $("#ownHint").textContent = ownMsg;
+      toast("Could not move the memories. " + (e.message || ""), { icon: "cloud-off", timeout: 7000 });
+    } finally { moving = false; drawOwn(); }
+  }
+
   async function refresh() {
     try {
       const [s, p] = await Promise.all([IRAS.api("/v1/identity/status"), IRAS.api("/v1/identity/people")]);
@@ -348,12 +389,19 @@
       badge("#voiceBadge", withVoice.length);
       $("#faceHint").textContent = !s.available ? s.reason : s.models_ready ? "" : "The first picture downloads the face models (15 MB). It can take a minute.";
       $("#voiceHint").textContent = v.available === false ? v.reason : v.models_ready === false ? "The first recording downloads the voice model (26 MB). It can take a minute." : "";
+      known = people;
+      if (!moving) {
+        drawOwn();
+        $("#ownHint").textContent = people.length ? ownMsg : "She does not know anyone yet. Teach her a face or a voice above.";
+      }
       $("#faceList").innerHTML = withFace.map((x) => row(x, x.faces, "picture", "data-forget")).join("");
       $("#voiceList").innerHTML = withVoice.map((x) => row(x, x.voices, "recording", "data-forget-voice")).join("");
     } catch (e) {
       const m = e.message || "Cannot reach your server.";
       $("#faceHint").textContent = m;
       $("#voiceHint").textContent = m;
+      known = []; drawOwn();
+      $("#ownHint").textContent = m;
     }
   }
 
@@ -371,6 +419,11 @@
     $("#faceCheck").addEventListener("click", check);
     $("#voiceEnroll").addEventListener("click", teachVoice);
     $("#voiceCheck").addEventListener("click", checkVoice);
+    $("#ownList").addEventListener("click", (e) => {
+      const c = e.target.closest("[data-claim]"), s = e.target.closest("[data-share]");
+      if (c) moveMemories(c.dataset.claim, "claim");
+      else if (s) moveMemories(s.dataset.share, "share");
+    });
     $("#faceList").addEventListener("click", (e) => {
       const b = e.target.closest("[data-forget]");
       if (b) forget(b.dataset.forget, "face", "Forget this face? Every faceprint of them is deleted.");
@@ -380,7 +433,7 @@
       if (b) forget(b.dataset.forgetVoice, "voice", "Forget this voice? Every voiceprint of them is deleted.");
     });
     bus.on("view", (e) => {
-      if (e.view === "identity") { refresh(); return; }
+      if (e.view === "identity") { ownMsg = ""; refresh(); return; }
       if (stream) stopCam();
       if (stopRecording) stopRecording();
     });

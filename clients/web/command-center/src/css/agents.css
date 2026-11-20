@@ -61,3 +61,7 @@
   .agent-tiles { grid-template-columns: minmax(0, 1fr); }
   .view-head { flex-wrap: wrap; }
 }
+
+/* Who a reminder or a calendar belongs to */
+.rt-owner { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; font-size: var(--fs-13); color: var(--muted); }
+.rt-owner select { min-height: 36px; max-width: 100%; padding: 0 30px 0 10px; font-size: var(--fs-13); border-radius: 10px; }

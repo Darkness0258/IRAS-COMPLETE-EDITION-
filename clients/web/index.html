@@ -1475,6 +1475,10 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
   .view-head { flex-wrap: wrap; }
 }
 
+/* Who a reminder or a calendar belongs to */
+.rt-owner { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; font-size: var(--fs-13); color: var(--muted); }
+.rt-owner select { min-height: 36px; max-width: 100%; padding: 0 30px 0 10px; font-size: var(--fs-13); border-radius: 10px; }
+
 /* ==========================================================================
    Activity and audit
    ========================================================================== */
@@ -1558,6 +1562,11 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
 
 .memory-grid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--s-6); align-items: start; }
 .mem-search { max-width: none; width: 100%; flex: none; margin-bottom: var(--s-2); }
+.mem-tools { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--s-2) var(--s-3); margin-bottom: var(--s-2); }
+.mem-tools .mem-search { flex: 1 1 240px; width: auto; min-width: 0; margin-bottom: 0; }
+.mem-filter { flex: 0 1 220px; min-width: 150px; }
+.mem-filter .label { margin-bottom: 4px; }
+.mem-filter select { width: 100%; }
 .mem-status { min-height: 1.5em; margin-bottom: var(--s-2); font-size: var(--fs-14); }
 
 .graph-wrap { position: relative; height: clamp(380px, 56vh, 600px); overflow: hidden; border-radius: var(--r-xl); background:
@@ -1571,12 +1580,14 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
 .graph-reset { position: absolute; right: 12px; bottom: 12px; }
 
 .mem-list { padding: var(--s-4) var(--s-5); display: grid; gap: var(--s-4); }
-.mem-group h3 { font-size: var(--fs-14); margin-bottom: 6px; color: var(--muted); font-weight: 600; }
+.mem-group h2 { font-size: var(--fs-14); margin-bottom: 6px; color: var(--muted); font-weight: 600; }
 .mem-item { display: flex; align-items: flex-start; gap: 12px; width: 100%; text-align: left; padding: 10px 12px; border-radius: 12px; transition: background-color var(--dur-micro) var(--ease); }
 .mem-item:hover { background: var(--row-hover); }
 .mem-item[aria-pressed="true"] { background: var(--accent-soft); }
 .mem-item .i { color: var(--accent); margin-top: 2px; }
 .mem-item strong { font-size: var(--fs-15); font-weight: 600; }
+.mem-item .badge, .node-card-owner .badge { margin-left: 8px; vertical-align: middle; max-width: 100%; }
+.node-card-owner .badge { margin-left: 0; }
 .mem-item span { display: block; color: var(--muted); font-size: var(--fs-13); }
 
 .mem-side { display: grid; gap: var(--s-4); }
@@ -1601,6 +1612,9 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
 }
 @media (max-width: 760px) {
   .graph-wrap { height: 420px; }
+}
+@media (max-width: 520px) {
+  .mem-filter { flex: 1 1 100%; }
 }
 
 /* ==========================================================================
@@ -1647,6 +1661,12 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
 
 .id-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-3) var(--s-5); }
 .switch-row { display: inline-flex; align-items: center; gap: 12px; font-size: var(--fs-14); font-weight: 500; cursor: pointer; }
+
+.own-card { padding: var(--s-5); border-radius: var(--r-xl); display: grid; gap: var(--s-3); margin-bottom: var(--s-5); }
+.own-list:empty { display: none; }
+.own-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.own-row .grow { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
+.own-card .hint { margin-top: 0; min-height: 1.2em; }
 
 .unlocks { padding: var(--s-5); border-radius: var(--r-xl); display: grid; gap: var(--s-4); }
 .unlocks ul { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-4); }
@@ -1757,6 +1777,15 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
 .who-opt small { margin-left: auto; color: var(--muted); font-size: var(--fs-13); }
 .who-opt.is-on { border-color: var(--accent); background: var(--accent-soft); }
 @media (max-width: 640px) { .who-dlg { margin-top: 8vh; } }
+
+/* Small forms in a dialog: a reminder, a calendar */
+.ask-form { display: grid; gap: var(--s-4); }
+.ask-form .label { margin-bottom: 4px; }
+.ask-form .field { width: 100%; }
+.ask-form .hint { margin-top: 6px; }
+.ask-error { margin: 0; padding-left: 10px; border-left: 3px solid var(--crit); color: var(--text); font-size: var(--fs-14); }
+.ask-error:empty { display: none; }
+.ask-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 
 /* ==========================================================================
    Check everything (Settings)
@@ -2196,7 +2225,7 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
         <header class="view-head">
           <div>
             <h1 class="title" id="memoryTitle">Memory</h1>
-            <p>What IRAS remembers about you, saved on your server. You can add or remove anything.</p>
+            <p>What IRAS remembers, saved on your server. Each memory is shared, or it belongs to one person. You can add or remove anything.</p>
           </div>
           <div class="seg" role="radiogroup" aria-label="How to look at memory">
             <label><input type="radio" name="memView" value="graph" checked><span><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-share-2"/></svg>Map</span></label>
@@ -2208,7 +2237,13 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
 
         <div class="memory-grid">
           <div class="mem-main">
-            <label class="search-field mem-search"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-search"/></svg><input id="memSearch" type="search" placeholder="Ask your memory, for example: music" aria-label="Search memory" autocomplete="off"></label>
+            <div class="mem-tools">
+              <label class="search-field mem-search"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-search"/></svg><input id="memSearch" type="search" placeholder="Ask your memory, for example: music" aria-label="Search memory" autocomplete="off"></label>
+              <div class="mem-filter">
+                <label class="label" for="memFilter">Show</label>
+                <select class="field" id="memFilter"><option value="">All memories</option><option value="default">Shared memories</option></select>
+              </div>
+            </div>
             <p class="muted mem-status" id="memStatus" role="status" aria-live="polite"></p>
 
             <div class="graph-wrap surface" id="graphWrap">
@@ -2225,6 +2260,11 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
               <p class="muted">Write a fact or a habit. IRAS keeps it and uses it in later chats.</p>
               <label class="label" for="memNew">What should IRAS remember?</label>
               <textarea class="field" id="memNew" rows="3" maxlength="2000" placeholder="For example: I prefer short answers in the evening."></textarea>
+              <div>
+                <label class="label" for="memWhose">Whose memory?</label>
+                <select class="field" id="memWhose"><option value="default">Shared (everyone)</option></select>
+                <p class="hint" id="memWhoseHint">Shared: she can use it for anyone.</p>
+              </div>
               <div class="fact-actions"><button type="button" class="btn sm primary" id="memAdd"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-check"/></svg><span>Save to memory</span></button></div>
             </section>
             <section class="surface mem-card" id="nodeCard" aria-live="polite" aria-labelledby="nodeTitle"></section>
@@ -2284,6 +2324,18 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
             <p class="hint" id="voiceHint"></p>
           </article>
         </div>
+
+        <section class="own-card surface" id="ownCard" aria-labelledby="ownTitle">
+          <header class="id-head">
+            <span class="ico-tile"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-brain"/></svg></span>
+            <div class="grow">
+              <h2 class="h3" id="ownTitle">Each person's own memories</h2>
+              <p class="muted">Memories saved before she knew anyone are shared with everyone. Give them to one person, or share a person's memories with everyone again.</p>
+            </div>
+          </header>
+          <ul class="own-list" id="ownList"></ul>
+          <p class="hint" id="ownHint" role="status" aria-live="polite"></p>
+        </section>
 
         <section class="unlocks surface" aria-labelledby="unlockTitle">
           <h2 class="h3" id="unlockTitle">What she does with it</h2>
@@ -2640,6 +2692,67 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
     <li><button class="btn who-opt" type="button" data-recognise><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-scan-face"/></svg><span>Check my face or voice</span></button></li>
   </ul>
   <p class="hint" id="whoNote" role="status" aria-live="polite"></p>
+</dialog>
+
+<!-- Agents: set a reminder, and add a calendar. Both ask whose it is. -->
+<dialog class="who-dlg ask-dlg glass modal-glass" id="remindDlg" aria-labelledby="remindTitle" aria-describedby="remindText">
+  <header class="who-head">
+    <span class="ico-tile"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg></span>
+    <div class="grow">
+      <h2 class="h3" id="remindTitle">Remind me</h2>
+      <p class="muted" id="remindText">She shows a notice and says it out loud, while this page is open.</p>
+    </div>
+    <button class="btn-icon sm" id="remindClose" type="button" aria-label="Close"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button>
+  </header>
+  <form class="ask-form" id="remindForm" novalidate>
+    <div>
+      <label class="label" for="remindWhat">What should she remind you about?</label>
+      <input class="field" id="remindWhat" maxlength="300" autocomplete="off">
+    </div>
+    <div>
+      <label class="label" for="remindWhen">When?</label>
+      <input class="field" id="remindWhen" value="in 10 minutes" autocomplete="off" aria-describedby="remindWhenHint">
+      <p class="hint" id="remindWhenHint">For example: in 10 minutes, at 5pm, tomorrow at 9.</p>
+    </div>
+    <div>
+      <label class="label" for="remindFor">For</label>
+      <select class="field" id="remindFor" aria-describedby="remindForHint"><option value="">Everyone</option></select>
+      <p class="hint" id="remindForHint">Everyone sees and hears it.</p>
+    </div>
+    <p class="ask-error" id="remindError" role="alert"></p>
+    <div class="ask-actions">
+      <button class="btn" id="remindCancel" type="button">Cancel</button>
+      <button class="btn primary" type="submit"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-check"/></svg><span>Set reminder</span></button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="who-dlg ask-dlg glass modal-glass" id="calDlg" aria-labelledby="calTitle" aria-describedby="calText">
+  <header class="who-head">
+    <span class="ico-tile"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-calendar"/></svg></span>
+    <div class="grow">
+      <h2 class="h3" id="calTitle">Add a calendar</h2>
+      <p class="muted" id="calText">She reminds you before each event, out loud, while this page is open.</p>
+    </div>
+    <button class="btn-icon sm" id="calClose" type="button" aria-label="Close"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button>
+  </header>
+  <form class="ask-form" id="calForm" novalidate>
+    <div>
+      <label class="label" for="calUrl">Secret iCal link</label>
+      <input class="field" id="calUrl" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="calUrlHint">
+      <p class="hint" id="calUrlHint">Google Calendar: Settings, your calendar, Integrate calendar, "Secret address in iCal format". Anyone with this link can read your calendar.</p>
+    </div>
+    <div>
+      <label class="label" for="calWhose">Whose calendar?</label>
+      <select class="field" id="calWhose" aria-describedby="calWhoseHint"><option value="">Everyone's (shared)</option></select>
+      <p class="hint" id="calWhoseHint">Shared: everyone sees these events and hears the reminders.</p>
+    </div>
+    <p class="ask-error" id="calError" role="alert"></p>
+    <div class="ask-actions">
+      <button class="btn" id="calCancel" type="button">Cancel</button>
+      <button class="btn primary" type="submit"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-check"/></svg><span>Add calendar</span></button>
+    </div>
+  </form>
 </dialog>
 
 <!-- command palette -->
@@ -3639,6 +3752,63 @@ IRAS.closeDialog = closeDialog;
   };
 })();
 
+/* ---- 36-people.js ---- */
+/* ==========================================================================
+   People: the people she knows, for every screen that needs a name.
+
+     GET /v1/identity/people     { people: [{ person_id, name, faces, voices }] }
+
+     IRAS.people.load(force)   Promise of the list. It asks the server at most every 30 seconds.
+     IRAS.people.all()         the list we have right now
+     IRAS.people.name(id)      the name for a person id, or ""
+     IRAS.people.known(id)     true when she knows that person
+     IRAS.people.here()        the id of the person who is here now (Who is here), or ""
+     IRAS.people.options(o)    <option> tags for a select
+                               o.first     [[value, label], ...] choices that come before the people
+                               o.prefix    put in front of each person id to make the value
+                               o.label     (person) => text   (default: the name)
+                               o.selected  the value to mark as chosen
+   Emits the bus event "people" when the list changes.
+   ========================================================================== */
+"use strict";
+
+(function () {
+  const TTL = 30000;
+  let list = [], at = 0, pending = null;
+
+  const same = (a, b) => a.length === b.length && a.every((p, i) => p.person_id === b[i].person_id && p.name === b[i].name);
+
+  function load(force) {
+    if (pending) return pending;
+    if (!force && at && Date.now() - at < TTL) return Promise.resolve(list);
+    pending = IRAS.api("/v1/identity/people")
+      .then((r) => {
+        const next = ((r && r.people) || []).map((p) => ({ person_id: String(p.person_id), name: String(p.name || "") }));
+        at = Date.now();
+        if (!same(list, next)) { list = next; bus.emit("people", { count: list.length }); }
+        return list;
+      })
+      .catch(() => list)   // an older server, or no connection: keep what we had
+      .then((l) => { pending = null; return l; });
+    return pending;
+  }
+
+  const find = (id) => list.find((p) => p.person_id === id) || null;
+
+  function here() {
+    const w = IRAS.who && IRAS.who.current();
+    return w && w.kind === "person" ? String(w.person_id || "") : "";
+  }
+
+  function options(o = {}) {
+    const label = o.label || ((p) => p.name);
+    const rows = (o.first || []).concat(list.map((p) => [(o.prefix || "") + p.person_id, label(p)]));
+    return rows.map(([v, t]) => `<option value="${esc(v)}"${v === o.selected ? " selected" : ""}>${esc(t)}</option>`).join("");
+  }
+
+  IRAS.people = { load, all: () => list, name: (id) => (find(id) || {}).name || "", known: (id) => !!find(id), here, options };
+})();
+
 /* ---- 37-server.js ---- */
 /* ==========================================================================
    Real server data: approvals and the activity log.
@@ -3980,14 +4150,40 @@ IRAS.closeDialog = closeDialog;
    Each new notice shows as a message, goes into Activity, and is spoken
    when "Speak replies" is on. The first check shows at most 3, so an old
    backlog does not flood the screen.
+
+   A private reminder is titled "Reminder for <name>". Its text is shown and
+   spoken only when Who is here is that person, or nobody. For anyone else,
+   or a guest, the screen shows only "A private reminder for <name> is due".
+   The text of that reminder is never kept here: only its id, so it is shown in
+   full the next time the right person is here.
    ========================================================================== */
 "use strict";
 
 (function () {
   const base = () => String(settings.server || "").trim().replace(/\/+$/, "");
   const token = () => store.sget("iras-api-token", "");
-  const seen = new Set();
-  let first = true;
+  const seen = new Set();     // notices that were handled
+  const masked = new Set();   // private notices we only announced (ids only, no text)
+  let first = true, timer = 0;
+
+  /* ---------- private reminders ---------- */
+  const PRIVATE = /^reminder for (.+)$/i;
+  const norm = (t) => String(t || "").trim().replace(/\s+/g, " ").toLowerCase();
+  const ownerOf = (n) => { const m = PRIVATE.exec(String(n.title || "").trim()); return m ? m[1].trim() : ""; };
+
+  function mayRead(name) {
+    const w = IRAS.who && IRAS.who.current();
+    if (!w) return true;                                      // nobody in particular
+    if (w.kind !== "person") return false;                    // a guest
+    return norm(name) !== "someone" && norm(w.name) === norm(name);   // "someone": the server could not name the owner, so only "nobody" may read it
+  }
+  const hiddenFrom = (n) => { const o = ownerOf(n); return !!o && !mayRead(o); };
+
+  function showPrivate(name) {
+    const line = "A private reminder for " + name + " is due";
+    audit.add({ kind: "system", status: "done", title: line, detail: "", tags: ["her own", "private"], payload: { private: true } });
+    toast(line, { icon: "shield", timeout: 9000 });   // not spoken, and no text
+  }
 
   function show(n) {
     const bad = /error|critical|warn/i.test(String(n.severity || ""));
@@ -4004,15 +4200,26 @@ IRAS.closeDialog = closeDialog;
       const r = await fetch(base() + "/v1/v5/notifications", { headers: Object.assign({ "X-Device-ID": "web" }, token() ? { Authorization: "Bearer " + token() } : {}) });
       if (!r.ok) return;
       const list = (await r.json()).notifications || [];
-      const fresh = list.filter((n) => n && n.notification_id && !n.read && !seen.has(n.notification_id));
-      list.forEach((n) => n && seen.add(n.notification_id));
-      (first ? fresh.slice(0, 3) : fresh.slice(0, 5)).reverse().forEach(show);
+      const fresh = [], hidden = [];
+      list.forEach((n) => {
+        if (!n || !n.notification_id || n.read) return;
+        if (hiddenFrom(n)) { if (!masked.has(n.notification_id)) hidden.push({ id: n.notification_id, name: ownerOf(n) }); return; }
+        if (!seen.has(n.notification_id)) fresh.push(n);
+      });
+      // Everything counts as seen, except a private reminder that this person may not read yet.
+      list.forEach((n) => { if (n && n.notification_id && !hiddenFrom(n)) seen.add(n.notification_id); });
+      hidden.forEach((h) => masked.add(h.id));
+      const most = first ? 3 : 5;
+      fresh.slice(0, most).reverse().forEach(show);
+      hidden.slice(0, most).reverse().forEach((h) => showPrivate(h.name));
       first = false;
     } catch (e) { /* the next check tries again */ }
   }
 
   setInterval(pull, 20000);
   bus.on("sync", (e) => { if (e.state === "synced") pull(); });
+  // When Who is here changes, a private reminder that was waiting can be shown to the right person.
+  bus.on("who", () => { clearTimeout(timer); timer = setTimeout(pull, 500); });
 })();
 
 /* ---- 40-home.js ---- */
@@ -4797,6 +5004,15 @@ IRAS.closeDialog = closeDialog;
   const err = (e, what) => toast(what + " " + (e.message || ""), { icon: "cloud-off", timeout: 8000 });
   const empty = (t, s) => `<div class="empty surface">${icon("workflow")}<strong>${t}</strong><span>${s}</span></div>`;
 
+  /* ---------- whose it is ---------- */
+  const REMINDER = /^\[reminder(?::([A-Za-z0-9_-]{1,64}))?\][ \t]*/i;   // "[reminder] text", or "[reminder:<person id>] text"
+  const reminderOf = (prompt) => { const m = REMINDER.exec(String(prompt || "")); return m ? { owner: m[1] || "", text: String(prompt).slice(m[0].length) } : null; };
+  const SOMEONE = "Someone she no longer knows";
+  const whoName = (id) => IRAS.people.name(id) || SOMEONE;
+  const tag = (id, text) => `<span>${icon(id ? "user" : "users", "i-sm")}${esc(text)}</span>`;
+  /* A list is only redrawn when it changed, so a choice you are making is not wiped out every 5 seconds. */
+  const put = (el, html) => { if (el.__html !== html) { el.__html = html; el.innerHTML = html; } };
+
   /* ---------- reminders: read a time like "in 10 minutes", "at 5pm", "tomorrow at 9" ---------- */
   function parseWhen(input) {
     const s = String(input || "").toLowerCase().trim();
@@ -4853,20 +5069,20 @@ IRAS.closeDialog = closeDialog;
   const none = (t) => `<p class="muted" style="padding:12px">${t}</p>`;
 
   function renderSide() {
-    $("#routineList").innerHTML = sched.length ? sched.map((j) => {
-      const on = j.enabled && !j.paused, s = j.interval_seconds;
+    put($("#routineList"), sched.length ? sched.map((j) => {
+      const on = j.enabled && !j.paused, s = j.interval_seconds, rem = reminderOf(j.prompt);
       const every = s ? "Every " + (s >= 3600 ? Math.round(s / 360) / 10 + " h" : Math.max(1, Math.round(s / 60)) + " min") : "Once";
-      return `<div class="routine${on ? "" : " is-off"}"><div><div class="rt-name">${esc(j.name)}</div><div class="rt-desc">${esc(String(j.prompt).replace(/^\[reminder\]\s*/i, "Reminder: "))}</div></div><div class="rt-actions">${del("data-del-job", j.job_id, j.name)}${sw("data-job", j.job_id, j.name, on)}</div><div class="rt-meta"><span>${icon("clock", "i-sm")}${every}</span><span>${icon("history", "i-sm")}Last: ${esc(j.last_run ? when(j.last_run) : "not yet")}</span></div></div>`;
-    }).join("") : none("Nothing yet. Add a routine and she does it on her own.");
-    $("#goalList").innerHTML = goals.length ? goals.map((g) => {
+      return `<div class="routine${on ? "" : " is-off"}"><div><div class="rt-name">${esc(j.name)}</div><div class="rt-desc">${esc(rem ? "Reminder: " + rem.text : j.prompt)}</div></div><div class="rt-actions">${del("data-del-job", j.job_id, j.name)}${sw("data-job", j.job_id, j.name, on)}</div><div class="rt-meta"><span>${icon("clock", "i-sm")}${every}</span><span>${icon("history", "i-sm")}Last: ${esc(j.last_run ? when(j.last_run) : "not yet")}</span>${rem ? tag(rem.owner, "For " + (rem.owner ? whoName(rem.owner) : "everyone")) : ""}</div></div>`;
+    }).join("") : none("Nothing yet. Add a routine and she does it on her own."));
+    put($("#goalList"), goals.length ? goals.map((g) => {
       const pr = Number(g.progress) || 0, pc = Math.round(pr <= 1 ? pr * 100 : pr);
       return `<div class="routine"><div><div class="rt-name">${esc(g.title)}</div><div class="rt-desc">${esc(g.level || "goal")}, ${pc}% done</div></div></div>`;
-    }).join("") : none("No goals yet. Add one and she works toward it.");
-    $("#monitorList").innerHTML = mons.length ? mons.map((m) => {
+    }).join("") : none("No goals yet. Add one and she works toward it."));
+    put($("#monitorList"), mons.length ? mons.map((m) => {
       const on = m.enabled !== false && !m.paused;
       const health = m.last_healthy == null ? "not checked yet" : m.last_healthy ? "healthy" : "problem: " + String(m.last_error || "no answer").slice(0, 60);
       return `<div class="routine${on ? "" : " is-off"}"><div><div class="rt-name">${esc(m.name)}</div><div class="rt-desc">${esc(m.kind || "website")}, ${esc(health)}</div></div><div class="rt-actions"><button type="button" class="btn-icon sm" data-check-mon="${esc(m.monitor_id)}" aria-label="Check ${esc(m.name)} now" title="Check now">${icon("play", "i-sm")}</button>${del("data-del-mon", m.monitor_id, m.name)}${sw("data-mon", m.monitor_id, m.name, on)}</div></div>`;
-    }).join("") : none("Nothing watched yet. Add a website and she tells you if it breaks.");
+    }).join("") : none("Nothing watched yet. Add a website and she tells you if it breaks."));
     const on = sched.filter((j) => j.enabled && !j.paused).length;
     const start = new Date(); start.setHours(0, 0, 0, 0);
     const today = audit.items.filter((i) => i.ts >= start.getTime()).length;
@@ -4881,7 +5097,7 @@ IRAS.closeDialog = closeDialog;
   async function pullSide() {
     try {
       const [a, b, c] = await Promise.all([IRAS.api("/v1/v5/schedules"), IRAS.api("/v1/v5/goals"), IRAS.api("/v1/v5/monitors")]);
-      sched = (a.schedules || []).filter((j) => !(/^\[reminder\]/i.test(String(j.prompt)) && !j.enabled)); goals = b.goals || []; mons = c.monitors || [];
+      sched = (a.schedules || []).filter((j) => !(reminderOf(j.prompt) && !j.enabled)); goals = b.goals || []; mons = c.monitors || [];
     } catch (e) { /* the lists keep what they had */ }
     renderSide();
   }
@@ -4895,16 +5111,22 @@ IRAS.closeDialog = closeDialog;
   };
   function renderCal() {
     const el = $("#calendarList");
-    if (cal.reason) { el.innerHTML = none(esc(cal.reason)); return; }
-    if (!cal.feeds.length) { el.innerHTML = none("No calendar yet. Add your private iCal link and she reminds you before each event, out loud."); return; }
+    if (cal.reason) { put(el, none(esc(cal.reason))); return; }
+    if (!cal.feeds.length) { put(el, none("No calendar yet. Add your private iCal link and she reminds you before each event, out loud.")); return; }
+    const owned = cal.feeds.some((f) => f.owner) || cal.events.some((e) => e.owner);   // say whose events they are once there is more than one owner
     let last = "";
     const rows = cal.events.slice(0, 12).map((e) => {
       const d = atTime(e), day = dayLabel(d), head = day !== last ? `<div class="rt-desc" style="margin-top:8px"><strong>${esc(day)}</strong></div>` : "";
       last = day;
-      return head + `<div class="routine"><div><div class="rt-name">${esc(e.title)}</div><div class="rt-desc">${e.all_day ? "All day" : esc(d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}${e.location ? ", " + esc(e.location) : ""}</div></div></div>`;
+      return head + `<div class="routine"><div><div class="rt-name">${esc(e.title)}</div><div class="rt-desc">${e.all_day ? "All day" : esc(d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}${e.location ? ", " + esc(e.location) : ""}</div></div>${owned ? `<div class="rt-meta">${tag(e.owner, e.owner ? whoName(e.owner) : "Shared")}</div>` : ""}</div>`;
     }).join("");
-    const feeds = cal.feeds.map((f) => `<div class="routine"><div><div class="rt-name">${esc(f.name)}</div><div class="rt-desc">${esc(f.host)}, reminder ${f.lead_minutes} min before${f.last_error ? ". Problem: " + esc(String(f.last_error).slice(0, 80)) : ""}</div></div><div class="rt-actions">${del("data-del-cal", f.feed_id, f.name)}</div></div>`).join("");
-    el.innerHTML = (rows || none("Nothing coming up in the next 7 days.")) + `<div style="margin-top:10px">${feeds}</div>`;
+    const feeds = cal.feeds.map((f) => {
+      const owner = f.owner || "";
+      const opts = IRAS.people.options({ first: [["", "Everyone (shared)"]], selected: owner }) + (!owner || IRAS.people.known(owner) ? "" : `<option value="${esc(owner)}" selected>${SOMEONE}</option>`);
+      return `<div class="routine"><div><div class="rt-name">${esc(f.name)}</div><div class="rt-desc">${esc(f.host)}, reminder ${f.lead_minutes} min before${f.last_error ? ". Problem: " + esc(String(f.last_error).slice(0, 80)) : ""}</div></div><div class="rt-actions">${del("data-del-cal", f.feed_id, f.name)}</div>` +
+        `<div class="rt-meta"><label class="rt-owner"><span>Whose calendar?<span class="sr-only"> ${esc(f.name)}</span></span><select class="field" data-cal-owner="${esc(f.feed_id)}">${opts}</select></label></div></div>`;
+    }).join("");
+    put(el, (rows || none("Nothing coming up in the next 7 days.")) + `<div style="margin-top:10px">${feeds}</div>`);
   }
   async function pullCal() {
     try {
@@ -4913,11 +5135,78 @@ IRAS.closeDialog = closeDialog;
       renderCal();
     } catch (x) { /* an older server has no calendar yet: keep what is shown */ }
   }
-  const refresh = () => { pullRuns(); pullSide(); pullCal(); };
+  const refresh = () => { IRAS.people.load(); pullRuns(); pullSide(); pullCal(); };
 
   /* ---------- actions ---------- */
   const post = (path, body) => IRAS.api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
   const ask = (q, d) => { const v = window.prompt(q, d || ""); return v == null ? "" : v.trim(); };
+
+  /* ---------- the two small forms: a reminder, and a calendar ---------- */
+  let remindTouched = false, calTouched = false;   // true once you pick "who" yourself, so a change of "Who is here" does not undo it
+  const hereId = () => { const id = IRAS.people.here(); return IRAS.people.known(id) ? id : ""; };
+  const waitFor = (promise, ms) => Promise.race([promise, new Promise((r) => setTimeout(r, ms))]);
+
+  function remindWho() {
+    const sel = $("#remindFor");
+    sel.innerHTML = IRAS.people.options({ first: [["", "Everyone"]], selected: remindTouched ? sel.value : hereId() });
+    $("#remindForHint").textContent = sel.value ? "Private: only " + whoName(sel.value) + " sees and hears it. Everyone else only sees that a private reminder is due." : "Everyone sees and hears it.";
+  }
+  function calWho() {
+    const sel = $("#calWhose");
+    sel.innerHTML = IRAS.people.options({ first: [["", "Everyone's (shared)"]], selected: calTouched ? sel.value : hereId() });
+    $("#calWhoseHint").textContent = sel.value ? "Private: only " + whoName(sel.value) + " sees these events and hears the reminders." : "Shared: everyone sees these events and hears the reminders.";
+  }
+
+  async function openRemind() {
+    $("#remindWhat").value = ""; $("#remindWhen").value = "in 10 minutes"; $("#remindError").textContent = "";
+    remindTouched = false;
+    await waitFor(IRAS.people.load(), 1500);   // so the names are ready, but do not wait long
+    remindWho();
+    IRAS.openDialog($("#remindDlg"));
+    $("#remindWhat").focus();
+  }
+  async function openCal() {
+    $("#calUrl").value = ""; $("#calError").textContent = "";
+    calTouched = false;
+    await waitFor(IRAS.people.load(), 1500);
+    calWho();
+    IRAS.openDialog($("#calDlg"));
+    $("#calUrl").focus();
+  }
+
+  async function submitRemind(ev) {
+    ev.preventDefault();
+    const text = $("#remindWhat").value.trim(), owner = $("#remindFor").value, msg = $("#remindError");
+    if (!text) { msg.textContent = "Write what she should remind you about."; $("#remindWhat").focus(); return; }
+    const at = parseWhen($("#remindWhen").value);
+    if (!at) { msg.textContent = "I could not understand that time. Try: in 10 minutes, at 5pm, or tomorrow at 9."; $("#remindWhen").focus(); return; }
+    msg.textContent = "";
+    const go = $("#remindForm button[type=submit]"); go.disabled = true;
+    try {
+      await post("/v1/v5/schedules", { name: "Reminder: " + text.slice(0, 60), prompt: (owner ? "[reminder:" + owner + "] " : "[reminder] ") + text, next_run: at.toISOString().replace(/\.\d{3}Z$/, "+00:00") });
+      IRAS.closeDialog($("#remindDlg"));
+      toast("Okay. I will remind " + (owner ? whoName(owner) : "you") + " at " + fmtTime(at.getTime()) + ".", { icon: "check" });
+      pullSide();
+    } catch (e) { msg.textContent = "Could not set it. " + (e.message || ""); }
+    finally { go.disabled = false; }
+  }
+
+  async function submitCal(ev) {
+    ev.preventDefault();
+    const url = $("#calUrl").value.trim(), owner = $("#calWhose").value, msg = $("#calError");
+    if (!url) { msg.textContent = "Paste your calendar's secret iCal link first."; $("#calUrl").focus(); return; }
+    msg.textContent = "";
+    const go = $("#calForm button[type=submit]"); go.disabled = true;
+    toast("Reading your calendar…", { icon: "info", timeout: 3000 });
+    try {
+      const body = { url }; if (owner) body.owner = owner;
+      const r = await post("/v1/calendar/feeds", body);
+      IRAS.closeDialog($("#calDlg"));   // closing also empties the link box: the link is a secret
+      toast("Calendar added: " + r.upcoming + " events in the next 7 days. I will remind " + (owner ? whoName(owner) : "you") + " " + r.feed.lead_minutes + " minutes before each one.", { icon: "check", timeout: 9000 });
+      pullCal();
+    } catch (e) { msg.textContent = "Could not add it. " + (e.message || ""); }
+    finally { go.disabled = false; }
+  }
 
   IRAS.initAgents = function () {
     $("#agentTiles").innerHTML = AGENTS.map((a) => `
@@ -4946,26 +5235,26 @@ IRAS.closeDialog = closeDialog;
       if (mins > 0) body.interval_seconds = Math.round(mins * 60);
       try { await post("/v1/v5/schedules", body); toast("Routine added.", { icon: "check" }); pullSide(); } catch (e) { err(e, "Could not add it."); }
     });
-    $("#addReminder").addEventListener("click", async () => {
-      const text = ask("What should she remind you about?");
-      if (!text) return;
-      const at = parseWhen(ask("When? For example: in 10 minutes, at 5pm, tomorrow at 9.", "in 10 minutes"));
-      if (!at) { toast("I could not understand that time. Try: in 10 minutes, at 5pm, or tomorrow at 9.", { icon: "info", timeout: 8000 }); return; }
+    $("#addReminder").addEventListener("click", openRemind);
+    $("#addCalendar").addEventListener("click", openCal);
+    $("#remindForm").addEventListener("submit", submitRemind);
+    $("#calForm").addEventListener("submit", submitCal);
+    $("#remindFor").addEventListener("change", () => { remindTouched = true; remindWho(); });
+    $("#calWhose").addEventListener("change", () => { calTouched = true; calWho(); });
+    $("#remindCancel").addEventListener("click", () => IRAS.closeDialog($("#remindDlg")));
+    $("#remindClose").addEventListener("click", () => IRAS.closeDialog($("#remindDlg")));
+    $("#calCancel").addEventListener("click", () => IRAS.closeDialog($("#calDlg")));
+    $("#calClose").addEventListener("click", () => IRAS.closeDialog($("#calDlg")));
+    $("#calDlg").addEventListener("close", () => { $("#calUrl").value = ""; $("#calError").textContent = ""; });   // never keep the secret link in the page
+    $("#calendarList").addEventListener("change", async (e) => {
+      const sel = e.target.closest("[data-cal-owner]");
+      if (!sel) return;
+      const id = sel.dataset.calOwner, owner = sel.value, was = (cal.feeds.find((f) => f.feed_id === id) || {}).owner || "";
       try {
-        await post("/v1/v5/schedules", { name: "Reminder: " + text.slice(0, 60), prompt: "[reminder] " + text, next_run: at.toISOString().replace(/\.\d{3}Z$/, "+00:00") });
-        toast("Okay. I will remind you at " + fmtTime(at.getTime()) + ".", { icon: "check" });
-        pullSide();
-      } catch (e) { err(e, "Could not set it."); }
-    });
-    $("#addCalendar").addEventListener("click", async () => {
-      const url = ask("Paste your calendar's secret iCal link.\nGoogle Calendar: Settings, your calendar, Integrate calendar, \"Secret address in iCal format\".");
-      if (!url) return;
-      toast("Reading your calendar…", { icon: "info", timeout: 3000 });
-      try {
-        const r = await post("/v1/calendar/feeds", { url });
-        toast("Calendar added: " + r.upcoming + " events in the next 7 days. I will remind you " + r.feed.lead_minutes + " minutes before each one.", { icon: "check", timeout: 9000 });
-        pullCal();
-      } catch (e) { err(e, "Could not add it."); }
+        await post("/v1/calendar/feeds/" + encodeURIComponent(id) + "/owner", { owner });
+        toast(owner ? "Okay. It is now " + whoName(owner) + "\u2019s calendar." : "Okay. It is now a shared calendar.", { icon: "check" });
+      } catch (x) { sel.value = was; err(x, "Could not change it."); }
+      pullCal();
     });
     $("#calendarList").addEventListener("click", async (e) => {
       const b = e.target.closest("[data-del-cal]");
@@ -5012,6 +5301,11 @@ IRAS.closeDialog = closeDialog;
 
     bus.on("view", (e) => { visible = e.view === "agents"; if (visible) { lastSig = ""; refresh(); } });
     bus.on("audit:add", () => { if (visible) renderSide(); });
+    bus.on("people", () => {
+      if ($("#remindDlg").open) remindWho();
+      if ($("#calDlg").open) calWho();
+      if (visible) { renderSide(); renderCal(); }
+    });
     setInterval(() => { if (visible && !document.hidden) refresh(); }, 5000);
   };
 })();
@@ -5234,7 +5528,7 @@ IRAS.closeDialog = closeDialog;
   }
 
   /* ---------- data: the real memory on your server ---------- */
-  const YOU = { id: "you", label: "You", type: "you", detail: "Everything on this map was saved for you." };
+  const YOU = { id: "you", label: "You", type: "you", detail: "Everything on this map is saved on your server." };
   const TYPE_BY_KIND = { project: "project", device: "device", service: "service", app: "service", tool: "service", model: "model" };
   let searched = false, newest = 0;
   const mk = (n, i, count) => { const a = (i / count) * Math.PI * 2; return Object.assign({}, n, { x: Math.cos(a) * 160 + rand(-20, 20), y: Math.sin(a) * 120 + rand(-20, 20), vx: 0, vy: 0, r: R_BY[n.type] || 12, pinned: false }); };
@@ -5244,12 +5538,36 @@ IRAS.closeDialog = closeDialog;
     return fetch(b + path, Object.assign({}, opts, { headers: Object.assign({ "X-Device-ID": "web" }, tk ? { Authorization: "Bearer " + tk } : {}, opts.headers || {}) }))
       .then((r) => { if (!r.ok) throw new Error(r.status === 401 || r.status === 403 ? "The server refused the access token." : "The server answered " + r.status + "."); return r.json(); });
   };
+  /* ---------- whose memory it is ---------- */
+  const PERSON = "person:";
+  const ownerId = (ns) => (String(ns || "").startsWith(PERSON) ? String(ns).slice(PERSON.length) : "");
+  const isShared = (ns) => !ns || ns === "default" || ns === "shared";
+  function ownerName(ns) {
+    const id = ownerId(ns);
+    if (id) return IRAS.people.name(id) || "Someone she no longer knows";
+    return isShared(ns) ? "Shared" : String(ns);
+  }
+  const ownerBadge = (ns) => `<small class="badge owner ${isShared(ns) ? "plain" : "accent"}">${icon(ownerId(ns) ? "user" : "users", "i-sm")}${esc(ownerName(ns))}</small>`;
+
+  /* "Shared" also takes in what she saved for the household under the name "shared". */
+  async function fetchList(q, filter) {
+    const path = "/v1/v5/memory/search?limit=60&q=" + encodeURIComponent(q || "");
+    const one = async (ns) => (await api(path + (ns ? "&namespace=" + encodeURIComponent(ns) : ""))).memories || [];
+    if (filter !== "default") return one(filter);
+    const [a, b] = await Promise.all([one("default"), one("shared")]);
+    const both = a.concat(b);
+    return (q ? both : both.sort((x, y) => (Date.parse(y.created_at) || 0) - (Date.parse(x.created_at) || 0))).slice(0, 60);
+  }
+
+  let seq = 0;   // only the newest answer is used, so a slow old answer never replaces a new one
   async function loadReal(q) {
     searched = !!q;
+    const mine = ++seq;
     try {
-      const list = (await api("/v1/v5/memory/search?limit=60&q=" + encodeURIComponent(q || ""))).memories || [];
+      const list = await fetchList(q, $("#memFilter").value);
+      if (mine !== seq) return;
       const you = mk(YOU, 0, list.length + 1);
-      const mems = list.map((m, i) => { const t = String(m.text || ""); return mk({ id: m.memory_id, label: t.length > 34 ? t.slice(0, 33) + "…" : t, type: TYPE_BY_KIND[String(m.kind || "").toLowerCase()] || "preference", detail: t + (m.source ? " (from " + m.source + ")" : "") }, i + 1, list.length + 1); });
+      const mems = list.map((m, i) => { const t = String(m.text || ""); return mk({ id: m.memory_id, label: t.length > 34 ? t.slice(0, 33) + "…" : t, type: TYPE_BY_KIND[String(m.kind || "").toLowerCase()] || "preference", detail: t + (m.source ? " (from " + m.source + ")" : ""), ns: String(m.namespace || "default") }, i + 1, list.length + 1); });
       nodes = [you].concat(mems);
       edges = mems.map((n) => ({ a: you, b: n }));
       if (!q) newest = list.reduce((t, m) => Math.max(t, Date.parse(m.created_at) || 0), 0);
@@ -5273,10 +5591,12 @@ IRAS.closeDialog = closeDialog;
   async function addReal() {
     const box = $("#memNew"), text = box.value.trim();
     if (!text) { toast("Write what IRAS should remember first.", { icon: "info" }); box.focus(); return; }
+    const ns = $("#memWhose").value || "default";
     try {
-      await api("/v1/v5/memory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, namespace: "default", kind: "note", source: "web" }) });
+      await api("/v1/v5/memory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, namespace: ns, kind: "note", source: "web" }) });
       box.value = "";
-      toast("Saved to memory.", { icon: "check" });
+      toast(ownerId(ns) ? "Saved for " + ownerName(ns) + "." : "Saved as a shared memory.", { icon: "check" });
+      whoseTouched = false; pickWhose();
       loadReal("");
     } catch (err) { toast("Could not save it. " + err.message, { icon: "cloud-off", timeout: 7000 }); }
   }
@@ -5451,6 +5771,7 @@ IRAS.closeDialog = closeDialog;
     const links = edges.filter((e) => e.a === n || e.b === n).map((e) => (e.a === n ? e.b : e.a));
     card.innerHTML = `<div class="node-head"><span class="ico-tile">${icon(KIND_ICON[n.type])}</span><div><h2 id="nodeTitle">${esc(n.label)}</h2><div class="node-kind">${KIND[n.type]}</div></div></div>
       <p>${esc(n.detail || "")}</p>
+      ${n.type === "you" ? "" : `<div class="node-card-owner"><p class="label">Whose memory</p>${ownerBadge(n.ns)}</div>`}
       ${links.length ? `<div><p class="label">Connected to</p><div class="links">${links.map((l) => `<button type="button" class="link-chip" data-go="${esc(l.id)}">${esc(l.label)}</button>`).join("")}</div></div>` : ""}
       ${n.type === "you" ? "" : `<div><button type="button" class="btn sm" data-forget="${esc(n.id)}">${icon("trash-2", "i-sm")}<span>Forget this</span></button></div>`}`;
   }
@@ -5459,8 +5780,8 @@ IRAS.closeDialog = closeDialog;
     const groups = {};
     nodes.filter(matches).forEach((n) => (groups[n.type] = groups[n.type] || []).push(n));
     const order = ["you", "device", "service", "project", "model", "preference"];
-    host.innerHTML = order.filter((t) => groups[t]).map((t) => `<div class="mem-group"><h3>${KIND[t]}${groups[t].length > 1 && t !== "you" ? "s" : ""}</h3>` +
-      groups[t].map((n) => `<button type="button" class="mem-item" data-go="${esc(n.id)}" aria-pressed="${selected === n}">${icon(KIND_ICON[t], "i-sm")}<div><strong>${esc(n.label)}</strong><span>${esc(n.detail || "")}</span></div></button>`).join("") + `</div>`).join("") || `<p class="muted">Nothing matches.</p>`;
+    host.innerHTML = order.filter((t) => groups[t]).map((t) => `<div class="mem-group"><h2>${KIND[t]}${groups[t].length > 1 && t !== "you" ? "s" : ""}</h2>` +
+      groups[t].map((n) => `<button type="button" class="mem-item" data-go="${esc(n.id)}" aria-pressed="${selected === n}">${icon(KIND_ICON[t], "i-sm")}<div><strong>${esc(n.label)}</strong>${t === "you" ? "" : ownerBadge(n.ns)}<span>${esc(n.detail || "")}</span></div></button>`).join("") + `</div>`).join("") || `<p class="muted">Nothing matches.</p>`;
   }
 
   function renderStats() {
@@ -5479,6 +5800,28 @@ IRAS.closeDialog = closeDialog;
     el.textContent = m.length ? `${m.length} ${m.length === 1 ? "memory matches" : "memories match"}: ${m.slice(0, 4).map((n) => n.label).join(", ")}${m.length > 4 ? "…" : ""}` : "Nothing in memory matches that.";
   }
 
+  /* ---------- the two choices: whose memory to save, and whose to show ---------- */
+  let whoseTouched = false;   // true once you pick it yourself, so a change of "Who is here" does not undo your pick
+  const optionExists = (sel, v) => Array.from(sel.options).some((o) => o.value === v);
+
+  function whoseHint() {
+    const v = $("#memWhose").value;
+    $("#memWhoseHint").textContent = ownerId(v) ? "Private: she uses it only when " + ownerName(v) + " is talking." : "Shared: she can use it for anyone.";
+  }
+  function pickWhose() {
+    const w = $("#memWhose"), id = IRAS.people.here();
+    w.value = id && IRAS.people.known(id) ? PERSON + id : "default";
+    whoseHint();
+  }
+  /* Rebuilds both lists of choices. Returns true when the "Show" choice had to fall back to All. */
+  function buildSelects() {
+    const f = $("#memFilter"), w = $("#memWhose"), fv = f.value, wv = w.value;
+    f.innerHTML = IRAS.people.options({ first: [["", "All memories"], ["default", "Shared memories"]], prefix: PERSON, label: (p) => p.name + "\u2019s memories", selected: fv });
+    w.innerHTML = IRAS.people.options({ first: [["default", "Shared (everyone)"]], prefix: PERSON, selected: wv });
+    if (whoseTouched && optionExists(w, wv)) { w.value = wv; whoseHint(); } else pickWhose();
+    return f.value !== fv;
+  }
+
   /* ---------- events ---------- */
   document.addEventListener("click", (e) => {
     if (IRAS.view() !== "memory") return;
@@ -5492,6 +5835,10 @@ IRAS.closeDialog = closeDialog;
     query = e.target.value.trim().toLowerCase(); setStatus(); renderList(); draw();
     clearTimeout(timer); timer = setTimeout(() => loadReal(e.target.value.trim()), 350);
   });
+  $("#memFilter").addEventListener("change", () => loadReal(query));
+  $("#memWhose").addEventListener("change", () => { whoseTouched = true; whoseHint(); });
+  bus.on("people", () => { const fellBack = buildSelects(); renderCard(); renderList(); if (fellBack) loadReal(query); });
+  bus.on("who", () => { if (!whoseTouched) pickWhose(); });
   $$("input[name='memView']").forEach((r) => r.addEventListener("change", () => {
     const list = r.value === "list";
     $("#graphWrap").hidden = list; $("#memList").hidden = !list;
@@ -5502,6 +5849,7 @@ IRAS.closeDialog = closeDialog;
   IRAS.initMemory = function () {
     readColors();
     nodes = [mk(YOU, 0, 1)]; edges = [];
+    buildSelects();
     renderStats(); renderCard(); renderList();
     $("#memAdd").addEventListener("click", addReal);
     $("#graphLegend").innerHTML = [["circle", "You, apps"], ["square", "Devices"], ["hex", "Projects"], ["diamond", "Preferences"]].map(([s, t]) => {
@@ -5509,7 +5857,7 @@ IRAS.closeDialog = closeDialog;
       return `<li><svg viewBox="0 0 16 16">${shapeSvg}</svg>${t}</li>`;
     }).join("");
     new ResizeObserver(() => { if (IRAS.view() === "memory") resize(); }).observe(wrap);
-    bus.on("view", (e) => { if (e.view === "memory") { readColors(); resize(); renderStats(); loadReal(query); if (!IRAS.env.reduceMotion) { alpha = .15; } loop(); } });
+    bus.on("view", (e) => { if (e.view === "memory") { readColors(); resize(); renderStats(); IRAS.people.load(); buildSelects(); loadReal(query); if (!IRAS.env.reduceMotion) { alpha = .15; } loop(); } });
     bus.on("appearance", () => { readColors(); draw(); });
   };
 })();
@@ -5526,6 +5874,8 @@ IRAS.closeDialog = closeDialog;
      POST   /v1/identity/voice/verify   { audio }         who is speaking
      DELETE /v1/identity/people/{id}/face               forget a face
      DELETE /v1/identity/people/{id}/voice              forget a voice
+     POST   /v1/identity/people/{id}/claim-memory       the old shared memories and facts become this person's
+     POST   /v1/identity/people/{id}/share-memory       ALL of this person's memories and facts become shared
 
    The camera and the microphone are only on while you teach or check, and only
    while you are on this screen. Pictures and recordings go to your server for one
@@ -5856,6 +6206,45 @@ IRAS.closeDialog = closeDialog;
       `<button type="button" class="btn-icon sm" ${attr}="${esc(x.person_id)}" aria-label="Forget ${esc(x.name)}" title="Forget">${icon("trash-2", "i-sm")}</button></li>`;
   }
 
+  /* ---------- each person's own memories ---------- */
+  let known = [], moving = false, ownMsg = "";   // ownMsg: what the last move did, until you leave the screen
+  const count = (n, one, many) => n + " " + (n === 1 ? one : many);
+
+  function drawOwn() {
+    $("#ownList").innerHTML = known.map((x) =>
+      `<li class="own-row"><strong class="grow">${esc(x.name)}</strong>` +
+      `<button type="button" class="btn sm" data-claim="${esc(x.person_id)}" aria-label="Make the old memories mine, for ${esc(x.name)}"${moving ? " disabled" : ""}>${icon("user", "i-sm")}<span>Make the old memories mine</span></button>` +
+      `<button type="button" class="btn sm" data-share="${esc(x.person_id)}" aria-label="Share all of their memories, for ${esc(x.name)}"${moving ? " disabled" : ""}>${icon("users", "i-sm")}<span>Share all of their memories</span></button></li>`).join("");
+  }
+
+  /* Both buttons move many memories at once, so each one asks first and says exactly what moves. */
+  async function moveMemories(id, action) {
+    const who = known.find((x) => x.person_id === id);
+    if (!who || moving) return;
+    const claim = action === "claim";
+    const ask = claim
+      ? "Give the old shared memories and facts to " + who.name + "?\n\nEvery shared memory and fact she has now will become " + who.name + "'s own. Other people, and guests, will no longer be able to use them. Her own settings stay as they are."
+      : "Share ALL of " + who.name + "'s memories with everyone?\n\nThis moves EVERY memory and fact of " + who.name + ": the old ones, and every one that was saved only for " + who.name + ". Everyone she knows, and guests, will be able to use them.";
+    if (!window.confirm(ask)) return;
+    moving = true; ownMsg = ""; drawOwn();
+    $("#ownHint").textContent = "Moving…";
+    try {
+      const r = await IRAS.api("/v1/identity/people/" + encodeURIComponent(id) + "/" + (claim ? "claim-memory" : "share-memory"), { method: "POST" });
+      const m = Number(r && r.memories) || 0, f = Number(r && r.facts) || 0;
+      const done = !m && !f
+        ? (claim ? "There was nothing shared to give to " + who.name + "." : who.name + " had no memories of their own to share.")
+        : claim ? who.name + " now has " + count(m, "memory", "memories") + " and " + count(f, "fact", "facts") + " of their own."
+          : count(m, "memory", "memories") + " and " + count(f, "fact", "facts") + " of " + who.name + " are shared again.";
+      ownMsg = done;
+      $("#ownHint").textContent = done;
+      toast(done, { icon: "check", timeout: 7000 });
+    } catch (e) {
+      ownMsg = "Could not move the memories. " + (e.message || "");
+      $("#ownHint").textContent = ownMsg;
+      toast("Could not move the memories. " + (e.message || ""), { icon: "cloud-off", timeout: 7000 });
+    } finally { moving = false; drawOwn(); }
+  }
+
   async function refresh() {
     try {
       const [s, p] = await Promise.all([IRAS.api("/v1/identity/status"), IRAS.api("/v1/identity/people")]);
@@ -5865,12 +6254,19 @@ IRAS.closeDialog = closeDialog;
       badge("#voiceBadge", withVoice.length);
       $("#faceHint").textContent = !s.available ? s.reason : s.models_ready ? "" : "The first picture downloads the face models (15 MB). It can take a minute.";
       $("#voiceHint").textContent = v.available === false ? v.reason : v.models_ready === false ? "The first recording downloads the voice model (26 MB). It can take a minute." : "";
+      known = people;
+      if (!moving) {
+        drawOwn();
+        $("#ownHint").textContent = people.length ? ownMsg : "She does not know anyone yet. Teach her a face or a voice above.";
+      }
       $("#faceList").innerHTML = withFace.map((x) => row(x, x.faces, "picture", "data-forget")).join("");
       $("#voiceList").innerHTML = withVoice.map((x) => row(x, x.voices, "recording", "data-forget-voice")).join("");
     } catch (e) {
       const m = e.message || "Cannot reach your server.";
       $("#faceHint").textContent = m;
       $("#voiceHint").textContent = m;
+      known = []; drawOwn();
+      $("#ownHint").textContent = m;
     }
   }
 
@@ -5888,6 +6284,11 @@ IRAS.closeDialog = closeDialog;
     $("#faceCheck").addEventListener("click", check);
     $("#voiceEnroll").addEventListener("click", teachVoice);
     $("#voiceCheck").addEventListener("click", checkVoice);
+    $("#ownList").addEventListener("click", (e) => {
+      const c = e.target.closest("[data-claim]"), s = e.target.closest("[data-share]");
+      if (c) moveMemories(c.dataset.claim, "claim");
+      else if (s) moveMemories(s.dataset.share, "share");
+    });
     $("#faceList").addEventListener("click", (e) => {
       const b = e.target.closest("[data-forget]");
       if (b) forget(b.dataset.forget, "face", "Forget this face? Every faceprint of them is deleted.");
@@ -5897,7 +6298,7 @@ IRAS.closeDialog = closeDialog;
       if (b) forget(b.dataset.forgetVoice, "voice", "Forget this voice? Every voiceprint of them is deleted.");
     });
     bus.on("view", (e) => {
-      if (e.view === "identity") { refresh(); return; }
+      if (e.view === "identity") { ownMsg = ""; refresh(); return; }
       if (stream) stopCam();
       if (stopRecording) stopRecording();
     });

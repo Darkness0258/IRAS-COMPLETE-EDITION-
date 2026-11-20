@@ -30,6 +30,15 @@
   const err = (e, what) => toast(what + " " + (e.message || ""), { icon: "cloud-off", timeout: 8000 });
   const empty = (t, s) => `<div class="empty surface">${icon("workflow")}<strong>${t}</strong><span>${s}</span></div>`;
 
+  /* ---------- whose it is ---------- */
+  const REMINDER = /^\[reminder(?::([A-Za-z0-9_-]{1,64}))?\][ \t]*/i;   // "[reminder] text", or "[reminder:<person id>] text"
+  const reminderOf = (prompt) => { const m = REMINDER.exec(String(prompt || "")); return m ? { owner: m[1] || "", text: String(prompt).slice(m[0].length) } : null; };
+  const SOMEONE = "Someone she no longer knows";
+  const whoName = (id) => IRAS.people.name(id) || SOMEONE;
+  const tag = (id, text) => `<span>${icon(id ? "user" : "users", "i-sm")}${esc(text)}</span>`;
+  /* A list is only redrawn when it changed, so a choice you are making is not wiped out every 5 seconds. */
+  const put = (el, html) => { if (el.__html !== html) { el.__html = html; el.innerHTML = html; } };
+
   /* ---------- reminders: read a time like "in 10 minutes", "at 5pm", "tomorrow at 9" ---------- */
   function parseWhen(input) {
     const s = String(input || "").toLowerCase().trim();
@@ -86,20 +95,20 @@
   const none = (t) => `<p class="muted" style="padding:12px">${t}</p>`;
 
   function renderSide() {
-    $("#routineList").innerHTML = sched.length ? sched.map((j) => {
-      const on = j.enabled && !j.paused, s = j.interval_seconds;
+    put($("#routineList"), sched.length ? sched.map((j) => {
+      const on = j.enabled && !j.paused, s = j.interval_seconds, rem = reminderOf(j.prompt);
       const every = s ? "Every " + (s >= 3600 ? Math.round(s / 360) / 10 + " h" : Math.max(1, Math.round(s / 60)) + " min") : "Once";
-      return `<div class="routine${on ? "" : " is-off"}"><div><div class="rt-name">${esc(j.name)}</div><div class="rt-desc">${esc(String(j.prompt).replace(/^\[reminder\]\s*/i, "Reminder: "))}</div></div><div class="rt-actions">${del("data-del-job", j.job_id, j.name)}${sw("data-job", j.job_id, j.name, on)}</div><div class="rt-meta"><span>${icon("clock", "i-sm")}${every}</span><span>${icon("history", "i-sm")}Last: ${esc(j.last_run ? when(j.last_run) : "not yet")}</span></div></div>`;
-    }).join("") : none("Nothing yet. Add a routine and she does it on her own.");
-    $("#goalList").innerHTML = goals.length ? goals.map((g) => {
+      return `<div class="routine${on ? "" : " is-off"}"><div><div class="rt-name">${esc(j.name)}</div><div class="rt-desc">${esc(rem ? "Reminder: " + rem.text : j.prompt)}</div></div><div class="rt-actions">${del("data-del-job", j.job_id, j.name)}${sw("data-job", j.job_id, j.name, on)}</div><div class="rt-meta"><span>${icon("clock", "i-sm")}${every}</span><span>${icon("history", "i-sm")}Last: ${esc(j.last_run ? when(j.last_run) : "not yet")}</span>${rem ? tag(rem.owner, "For " + (rem.owner ? whoName(rem.owner) : "everyone")) : ""}</div></div>`;
+    }).join("") : none("Nothing yet. Add a routine and she does it on her own."));
+    put($("#goalList"), goals.length ? goals.map((g) => {
       const pr = Number(g.progress) || 0, pc = Math.round(pr <= 1 ? pr * 100 : pr);
       return `<div class="routine"><div><div class="rt-name">${esc(g.title)}</div><div class="rt-desc">${esc(g.level || "goal")}, ${pc}% done</div></div></div>`;
-    }).join("") : none("No goals yet. Add one and she works toward it.");
-    $("#monitorList").innerHTML = mons.length ? mons.map((m) => {
+    }).join("") : none("No goals yet. Add one and she works toward it."));
+    put($("#monitorList"), mons.length ? mons.map((m) => {
       const on = m.enabled !== false && !m.paused;
       const health = m.last_healthy == null ? "not checked yet" : m.last_healthy ? "healthy" : "problem: " + String(m.last_error || "no answer").slice(0, 60);
       return `<div class="routine${on ? "" : " is-off"}"><div><div class="rt-name">${esc(m.name)}</div><div class="rt-desc">${esc(m.kind || "website")}, ${esc(health)}</div></div><div class="rt-actions"><button type="button" class="btn-icon sm" data-check-mon="${esc(m.monitor_id)}" aria-label="Check ${esc(m.name)} now" title="Check now">${icon("play", "i-sm")}</button>${del("data-del-mon", m.monitor_id, m.name)}${sw("data-mon", m.monitor_id, m.name, on)}</div></div>`;
-    }).join("") : none("Nothing watched yet. Add a website and she tells you if it breaks.");
+    }).join("") : none("Nothing watched yet. Add a website and she tells you if it breaks."));
     const on = sched.filter((j) => j.enabled && !j.paused).length;
     const start = new Date(); start.setHours(0, 0, 0, 0);
     const today = audit.items.filter((i) => i.ts >= start.getTime()).length;
@@ -114,7 +123,7 @@
   async function pullSide() {
     try {
       const [a, b, c] = await Promise.all([IRAS.api("/v1/v5/schedules"), IRAS.api("/v1/v5/goals"), IRAS.api("/v1/v5/monitors")]);
-      sched = (a.schedules || []).filter((j) => !(/^\[reminder\]/i.test(String(j.prompt)) && !j.enabled)); goals = b.goals || []; mons = c.monitors || [];
+      sched = (a.schedules || []).filter((j) => !(reminderOf(j.prompt) && !j.enabled)); goals = b.goals || []; mons = c.monitors || [];
     } catch (e) { /* the lists keep what they had */ }
     renderSide();
   }
@@ -128,16 +137,22 @@
   };
   function renderCal() {
     const el = $("#calendarList");
-    if (cal.reason) { el.innerHTML = none(esc(cal.reason)); return; }
-    if (!cal.feeds.length) { el.innerHTML = none("No calendar yet. Add your private iCal link and she reminds you before each event, out loud."); return; }
+    if (cal.reason) { put(el, none(esc(cal.reason))); return; }
+    if (!cal.feeds.length) { put(el, none("No calendar yet. Add your private iCal link and she reminds you before each event, out loud.")); return; }
+    const owned = cal.feeds.some((f) => f.owner) || cal.events.some((e) => e.owner);   // say whose events they are once there is more than one owner
     let last = "";
     const rows = cal.events.slice(0, 12).map((e) => {
       const d = atTime(e), day = dayLabel(d), head = day !== last ? `<div class="rt-desc" style="margin-top:8px"><strong>${esc(day)}</strong></div>` : "";
       last = day;
-      return head + `<div class="routine"><div><div class="rt-name">${esc(e.title)}</div><div class="rt-desc">${e.all_day ? "All day" : esc(d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}${e.location ? ", " + esc(e.location) : ""}</div></div></div>`;
+      return head + `<div class="routine"><div><div class="rt-name">${esc(e.title)}</div><div class="rt-desc">${e.all_day ? "All day" : esc(d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}${e.location ? ", " + esc(e.location) : ""}</div></div>${owned ? `<div class="rt-meta">${tag(e.owner, e.owner ? whoName(e.owner) : "Shared")}</div>` : ""}</div>`;
     }).join("");
-    const feeds = cal.feeds.map((f) => `<div class="routine"><div><div class="rt-name">${esc(f.name)}</div><div class="rt-desc">${esc(f.host)}, reminder ${f.lead_minutes} min before${f.last_error ? ". Problem: " + esc(String(f.last_error).slice(0, 80)) : ""}</div></div><div class="rt-actions">${del("data-del-cal", f.feed_id, f.name)}</div></div>`).join("");
-    el.innerHTML = (rows || none("Nothing coming up in the next 7 days.")) + `<div style="margin-top:10px">${feeds}</div>`;
+    const feeds = cal.feeds.map((f) => {
+      const owner = f.owner || "";
+      const opts = IRAS.people.options({ first: [["", "Everyone (shared)"]], selected: owner }) + (!owner || IRAS.people.known(owner) ? "" : `<option value="${esc(owner)}" selected>${SOMEONE}</option>`);
+      return `<div class="routine"><div><div class="rt-name">${esc(f.name)}</div><div class="rt-desc">${esc(f.host)}, reminder ${f.lead_minutes} min before${f.last_error ? ". Problem: " + esc(String(f.last_error).slice(0, 80)) : ""}</div></div><div class="rt-actions">${del("data-del-cal", f.feed_id, f.name)}</div>` +
+        `<div class="rt-meta"><label class="rt-owner"><span>Whose calendar?<span class="sr-only"> ${esc(f.name)}</span></span><select class="field" data-cal-owner="${esc(f.feed_id)}">${opts}</select></label></div></div>`;
+    }).join("");
+    put(el, (rows || none("Nothing coming up in the next 7 days.")) + `<div style="margin-top:10px">${feeds}</div>`);
   }
   async function pullCal() {
     try {
@@ -146,11 +161,78 @@
       renderCal();
     } catch (x) { /* an older server has no calendar yet: keep what is shown */ }
   }
-  const refresh = () => { pullRuns(); pullSide(); pullCal(); };
+  const refresh = () => { IRAS.people.load(); pullRuns(); pullSide(); pullCal(); };
 
   /* ---------- actions ---------- */
   const post = (path, body) => IRAS.api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
   const ask = (q, d) => { const v = window.prompt(q, d || ""); return v == null ? "" : v.trim(); };
+
+  /* ---------- the two small forms: a reminder, and a calendar ---------- */
+  let remindTouched = false, calTouched = false;   // true once you pick "who" yourself, so a change of "Who is here" does not undo it
+  const hereId = () => { const id = IRAS.people.here(); return IRAS.people.known(id) ? id : ""; };
+  const waitFor = (promise, ms) => Promise.race([promise, new Promise((r) => setTimeout(r, ms))]);
+
+  function remindWho() {
+    const sel = $("#remindFor");
+    sel.innerHTML = IRAS.people.options({ first: [["", "Everyone"]], selected: remindTouched ? sel.value : hereId() });
+    $("#remindForHint").textContent = sel.value ? "Private: only " + whoName(sel.value) + " sees and hears it. Everyone else only sees that a private reminder is due." : "Everyone sees and hears it.";
+  }
+  function calWho() {
+    const sel = $("#calWhose");
+    sel.innerHTML = IRAS.people.options({ first: [["", "Everyone's (shared)"]], selected: calTouched ? sel.value : hereId() });
+    $("#calWhoseHint").textContent = sel.value ? "Private: only " + whoName(sel.value) + " sees these events and hears the reminders." : "Shared: everyone sees these events and hears the reminders.";
+  }
+
+  async function openRemind() {
+    $("#remindWhat").value = ""; $("#remindWhen").value = "in 10 minutes"; $("#remindError").textContent = "";
+    remindTouched = false;
+    await waitFor(IRAS.people.load(), 1500);   // so the names are ready, but do not wait long
+    remindWho();
+    IRAS.openDialog($("#remindDlg"));
+    $("#remindWhat").focus();
+  }
+  async function openCal() {
+    $("#calUrl").value = ""; $("#calError").textContent = "";
+    calTouched = false;
+    await waitFor(IRAS.people.load(), 1500);
+    calWho();
+    IRAS.openDialog($("#calDlg"));
+    $("#calUrl").focus();
+  }
+
+  async function submitRemind(ev) {
+    ev.preventDefault();
+    const text = $("#remindWhat").value.trim(), owner = $("#remindFor").value, msg = $("#remindError");
+    if (!text) { msg.textContent = "Write what she should remind you about."; $("#remindWhat").focus(); return; }
+    const at = parseWhen($("#remindWhen").value);
+    if (!at) { msg.textContent = "I could not understand that time. Try: in 10 minutes, at 5pm, or tomorrow at 9."; $("#remindWhen").focus(); return; }
+    msg.textContent = "";
+    const go = $("#remindForm button[type=submit]"); go.disabled = true;
+    try {
+      await post("/v1/v5/schedules", { name: "Reminder: " + text.slice(0, 60), prompt: (owner ? "[reminder:" + owner + "] " : "[reminder] ") + text, next_run: at.toISOString().replace(/\.\d{3}Z$/, "+00:00") });
+      IRAS.closeDialog($("#remindDlg"));
+      toast("Okay. I will remind " + (owner ? whoName(owner) : "you") + " at " + fmtTime(at.getTime()) + ".", { icon: "check" });
+      pullSide();
+    } catch (e) { msg.textContent = "Could not set it. " + (e.message || ""); }
+    finally { go.disabled = false; }
+  }
+
+  async function submitCal(ev) {
+    ev.preventDefault();
+    const url = $("#calUrl").value.trim(), owner = $("#calWhose").value, msg = $("#calError");
+    if (!url) { msg.textContent = "Paste your calendar's secret iCal link first."; $("#calUrl").focus(); return; }
+    msg.textContent = "";
+    const go = $("#calForm button[type=submit]"); go.disabled = true;
+    toast("Reading your calendar…", { icon: "info", timeout: 3000 });
+    try {
+      const body = { url }; if (owner) body.owner = owner;
+      const r = await post("/v1/calendar/feeds", body);
+      IRAS.closeDialog($("#calDlg"));   // closing also empties the link box: the link is a secret
+      toast("Calendar added: " + r.upcoming + " events in the next 7 days. I will remind " + (owner ? whoName(owner) : "you") + " " + r.feed.lead_minutes + " minutes before each one.", { icon: "check", timeout: 9000 });
+      pullCal();
+    } catch (e) { msg.textContent = "Could not add it. " + (e.message || ""); }
+    finally { go.disabled = false; }
+  }
 
   IRAS.initAgents = function () {
     $("#agentTiles").innerHTML = AGENTS.map((a) => `
@@ -179,26 +261,26 @@
       if (mins > 0) body.interval_seconds = Math.round(mins * 60);
       try { await post("/v1/v5/schedules", body); toast("Routine added.", { icon: "check" }); pullSide(); } catch (e) { err(e, "Could not add it."); }
     });
-    $("#addReminder").addEventListener("click", async () => {
-      const text = ask("What should she remind you about?");
-      if (!text) return;
-      const at = parseWhen(ask("When? For example: in 10 minutes, at 5pm, tomorrow at 9.", "in 10 minutes"));
-      if (!at) { toast("I could not understand that time. Try: in 10 minutes, at 5pm, or tomorrow at 9.", { icon: "info", timeout: 8000 }); return; }
+    $("#addReminder").addEventListener("click", openRemind);
+    $("#addCalendar").addEventListener("click", openCal);
+    $("#remindForm").addEventListener("submit", submitRemind);
+    $("#calForm").addEventListener("submit", submitCal);
+    $("#remindFor").addEventListener("change", () => { remindTouched = true; remindWho(); });
+    $("#calWhose").addEventListener("change", () => { calTouched = true; calWho(); });
+    $("#remindCancel").addEventListener("click", () => IRAS.closeDialog($("#remindDlg")));
+    $("#remindClose").addEventListener("click", () => IRAS.closeDialog($("#remindDlg")));
+    $("#calCancel").addEventListener("click", () => IRAS.closeDialog($("#calDlg")));
+    $("#calClose").addEventListener("click", () => IRAS.closeDialog($("#calDlg")));
+    $("#calDlg").addEventListener("close", () => { $("#calUrl").value = ""; $("#calError").textContent = ""; });   // never keep the secret link in the page
+    $("#calendarList").addEventListener("change", async (e) => {
+      const sel = e.target.closest("[data-cal-owner]");
+      if (!sel) return;
+      const id = sel.dataset.calOwner, owner = sel.value, was = (cal.feeds.find((f) => f.feed_id === id) || {}).owner || "";
       try {
-        await post("/v1/v5/schedules", { name: "Reminder: " + text.slice(0, 60), prompt: "[reminder] " + text, next_run: at.toISOString().replace(/\.\d{3}Z$/, "+00:00") });
-        toast("Okay. I will remind you at " + fmtTime(at.getTime()) + ".", { icon: "check" });
-        pullSide();
-      } catch (e) { err(e, "Could not set it."); }
-    });
-    $("#addCalendar").addEventListener("click", async () => {
-      const url = ask("Paste your calendar's secret iCal link.\nGoogle Calendar: Settings, your calendar, Integrate calendar, \"Secret address in iCal format\".");
-      if (!url) return;
-      toast("Reading your calendar…", { icon: "info", timeout: 3000 });
-      try {
-        const r = await post("/v1/calendar/feeds", { url });
-        toast("Calendar added: " + r.upcoming + " events in the next 7 days. I will remind you " + r.feed.lead_minutes + " minutes before each one.", { icon: "check", timeout: 9000 });
-        pullCal();
-      } catch (e) { err(e, "Could not add it."); }
+        await post("/v1/calendar/feeds/" + encodeURIComponent(id) + "/owner", { owner });
+        toast(owner ? "Okay. It is now " + whoName(owner) + "\u2019s calendar." : "Okay. It is now a shared calendar.", { icon: "check" });
+      } catch (x) { sel.value = was; err(x, "Could not change it."); }
+      pullCal();
     });
     $("#calendarList").addEventListener("click", async (e) => {
       const b = e.target.closest("[data-del-cal]");
@@ -245,6 +327,11 @@
 
     bus.on("view", (e) => { visible = e.view === "agents"; if (visible) { lastSig = ""; refresh(); } });
     bus.on("audit:add", () => { if (visible) renderSide(); });
+    bus.on("people", () => {
+      if ($("#remindDlg").open) remindWho();
+      if ($("#calDlg").open) calWho();
+      if (visible) { renderSide(); renderCal(); }
+    });
     setInterval(() => { if (visible && !document.hidden) refresh(); }, 5000);
   };
 })();

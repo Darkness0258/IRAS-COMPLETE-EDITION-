@@ -2,7 +2,7 @@
         <header class="view-head">
           <div>
             <h1 class="title" id="memoryTitle">Memory</h1>
-            <p>What IRAS remembers about you, saved on your server. You can add or remove anything.</p>
+            <p>What IRAS remembers, saved on your server. Each memory is shared, or it belongs to one person. You can add or remove anything.</p>
           </div>
           <div class="seg" role="radiogroup" aria-label="How to look at memory">
             <label><input type="radio" name="memView" value="graph" checked><span>{{i:share-2 sm}}Map</span></label>
@@ -14,7 +14,13 @@
 
         <div class="memory-grid">
           <div class="mem-main">
-            <label class="search-field mem-search">{{i:search sm}}<input id="memSearch" type="search" placeholder="Ask your memory, for example: music" aria-label="Search memory" autocomplete="off"></label>
+            <div class="mem-tools">
+              <label class="search-field mem-search">{{i:search sm}}<input id="memSearch" type="search" placeholder="Ask your memory, for example: music" aria-label="Search memory" autocomplete="off"></label>
+              <div class="mem-filter">
+                <label class="label" for="memFilter">Show</label>
+                <select class="field" id="memFilter"><option value="">All memories</option><option value="default">Shared memories</option></select>
+              </div>
+            </div>
             <p class="muted mem-status" id="memStatus" role="status" aria-live="polite"></p>
 
             <div class="graph-wrap surface" id="graphWrap">
@@ -31,6 +37,11 @@
               <p class="muted">Write a fact or a habit. IRAS keeps it and uses it in later chats.</p>
               <label class="label" for="memNew">What should IRAS remember?</label>
               <textarea class="field" id="memNew" rows="3" maxlength="2000" placeholder="For example: I prefer short answers in the evening."></textarea>
+              <div>
+                <label class="label" for="memWhose">Whose memory?</label>
+                <select class="field" id="memWhose"><option value="default">Shared (everyone)</option></select>
+                <p class="hint" id="memWhoseHint">Shared: she can use it for anyone.</p>
+              </div>
               <div class="fact-actions"><button type="button" class="btn sm primary" id="memAdd">{{i:check sm}}<span>Save to memory</span></button></div>
             </section>
             <section class="surface mem-card" id="nodeCard" aria-live="polite" aria-labelledby="nodeTitle"></section>
