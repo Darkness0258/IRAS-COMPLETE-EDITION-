@@ -9,7 +9,8 @@
 
    A private reminder is titled "Reminder for <name>". Its text is shown and
    spoken only when Who is here is that person, or nobody. For anyone else,
-   or a guest, the screen shows only "A private reminder for <name> is due".
+   or a guest, the screen shows only "A private reminder for <name> is due"
+   (or "3 private reminders for <name> are due" when several wait).
    The text of that reminder is never kept here: only its id, so it is shown in
    full the next time the right person is here.
    ========================================================================== */
@@ -35,8 +36,8 @@
   }
   const hiddenFrom = (n) => { const o = ownerOf(n); return !!o && !mayRead(o); };
 
-  function showPrivate(name) {
-    const line = "A private reminder for " + name + " is due";
+  function showPrivate(name, count) {
+    const line = count > 1 ? count + " private reminders for " + name + " are due" : "A private reminder for " + name + " is due";
     audit.add({ kind: "system", status: "done", title: line, detail: "", tags: ["her own", "private"], payload: { private: true } });
     toast(line, { icon: "shield", timeout: 9000 });   // not spoken, and no text
   }
@@ -56,18 +57,24 @@
       const r = await fetch(base() + "/v1/v5/notifications", { headers: Object.assign({ "X-Device-ID": "web" }, token() ? { Authorization: "Bearer " + token() } : {}) });
       if (!r.ok) return;
       const list = (await r.json()).notifications || [];
-      const fresh = [], hidden = [];
+      // In the order the server gave them: a notice to show in full, or one line for the private reminders of one person.
+      const todo = [], lines = new Map();
       list.forEach((n) => {
         if (!n || !n.notification_id || n.read) return;
-        if (hiddenFrom(n)) { if (!masked.has(n.notification_id)) hidden.push({ id: n.notification_id, name: ownerOf(n) }); return; }
-        if (!seen.has(n.notification_id)) fresh.push(n);
+        if (hiddenFrom(n)) {
+          if (masked.has(n.notification_id)) return;
+          const name = ownerOf(n), key = norm(name);
+          if (!lines.has(key)) { const line = { name, ids: [] }; lines.set(key, line); todo.push(line); }
+          lines.get(key).ids.push(n.notification_id);
+          return;
+        }
+        if (!seen.has(n.notification_id)) todo.push({ n });
       });
       // Everything counts as seen, except a private reminder that this person may not read yet.
       list.forEach((n) => { if (n && n.notification_id && !hiddenFrom(n)) seen.add(n.notification_id); });
-      hidden.forEach((h) => masked.add(h.id));
-      const most = first ? 3 : 5;
-      fresh.slice(0, most).reverse().forEach(show);
-      hidden.slice(0, most).reverse().forEach((h) => showPrivate(h.name));
+      todo.forEach((t) => { if (t.ids) t.ids.forEach((id) => masked.add(id)); });
+      // The limit counts lines, so an old backlog never floods the screen.
+      todo.slice(0, first ? 3 : 5).reverse().forEach((t) => (t.n ? show(t.n) : showPrivate(t.name, t.ids.length)));
       first = false;
     } catch (e) { /* the next check tries again */ }
   }

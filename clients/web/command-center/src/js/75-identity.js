@@ -358,7 +358,7 @@
     if (!who || moving) return;
     const claim = action === "claim";
     const ask = claim
-      ? "Give the old shared memories and facts to " + who.name + "?\n\nEvery shared memory and fact she has now will become " + who.name + "'s own. Other people, and guests, will no longer be able to use them. Her own settings stay as they are."
+      ? "Give the old memories and facts to " + who.name + "?\n\nThese are the ones saved without a person, before she knew who was talking. They will become " + who.name + "'s own. Other people, and guests, will no longer be able to use them. Her own settings stay as they are."
       : "Share ALL of " + who.name + "'s memories with everyone?\n\nThis moves EVERY memory and fact of " + who.name + ": the old ones, and every one that was saved only for " + who.name + ". Everyone she knows, and guests, will be able to use them.";
     if (!window.confirm(ask)) return;
     moving = true; ownMsg = ""; drawOwn();
@@ -390,6 +390,7 @@
       $("#faceHint").textContent = !s.available ? s.reason : s.models_ready ? "" : "The first picture downloads the face models (15 MB). It can take a minute.";
       $("#voiceHint").textContent = v.available === false ? v.reason : v.models_ready === false ? "The first recording downloads the voice model (26 MB). It can take a minute." : "";
       known = people;
+      IRAS.people.use(people);   // the other screens see a new or forgotten person at once
       if (!moving) {
         drawOwn();
         $("#ownHint").textContent = people.length ? ownMsg : "She does not know anyone yet. Teach her a face or a voice above.";

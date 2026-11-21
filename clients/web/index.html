@@ -2262,7 +2262,7 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
               <textarea class="field" id="memNew" rows="3" maxlength="2000" placeholder="For example: I prefer short answers in the evening."></textarea>
               <div>
                 <label class="label" for="memWhose">Whose memory?</label>
-                <select class="field" id="memWhose"><option value="default">Shared (everyone)</option></select>
+                <select class="field" id="memWhose" aria-describedby="memWhoseHint"><option value="default">Shared (everyone)</option></select>
                 <p class="hint" id="memWhoseHint">Shared: she can use it for anyone.</p>
               </div>
               <div class="fact-actions"><button type="button" class="btn sm primary" id="memAdd"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-check"/></svg><span>Save to memory</span></button></div>
@@ -3759,6 +3759,7 @@ IRAS.closeDialog = closeDialog;
      GET /v1/identity/people     { people: [{ person_id, name, faces, voices }] }
 
      IRAS.people.load(force)   Promise of the list. It asks the server at most every 30 seconds.
+     IRAS.people.use(rows)     a screen that just asked the server for the people hands the answer in, so the rest are up to date at once
      IRAS.people.all()         the list we have right now
      IRAS.people.name(id)      the name for a person id, or ""
      IRAS.people.known(id)     true when she knows that person
@@ -3778,16 +3779,18 @@ IRAS.closeDialog = closeDialog;
 
   const same = (a, b) => a.length === b.length && a.every((p, i) => p.person_id === b[i].person_id && p.name === b[i].name);
 
+  function use(rows) {
+    const next = (rows || []).map((p) => ({ person_id: String(p.person_id), name: String(p.name || "") }));
+    at = Date.now();
+    if (!same(list, next)) { list = next; bus.emit("people", { count: list.length }); }
+    return list;
+  }
+
   function load(force) {
     if (pending) return pending;
     if (!force && at && Date.now() - at < TTL) return Promise.resolve(list);
     pending = IRAS.api("/v1/identity/people")
-      .then((r) => {
-        const next = ((r && r.people) || []).map((p) => ({ person_id: String(p.person_id), name: String(p.name || "") }));
-        at = Date.now();
-        if (!same(list, next)) { list = next; bus.emit("people", { count: list.length }); }
-        return list;
-      })
+      .then((r) => use(r && r.people))
       .catch(() => list)   // an older server, or no connection: keep what we had
       .then((l) => { pending = null; return l; });
     return pending;
@@ -3806,7 +3809,7 @@ IRAS.closeDialog = closeDialog;
     return rows.map(([v, t]) => `<option value="${esc(v)}"${v === o.selected ? " selected" : ""}>${esc(t)}</option>`).join("");
   }
 
-  IRAS.people = { load, all: () => list, name: (id) => (find(id) || {}).name || "", known: (id) => !!find(id), here, options };
+  IRAS.people = { load, use, all: () => list, name: (id) => (find(id) || {}).name || "", known: (id) => !!find(id), here, options };
 })();
 
 /* ---- 37-server.js ---- */
@@ -4153,7 +4156,8 @@ IRAS.closeDialog = closeDialog;
 
    A private reminder is titled "Reminder for <name>". Its text is shown and
    spoken only when Who is here is that person, or nobody. For anyone else,
-   or a guest, the screen shows only "A private reminder for <name> is due".
+   or a guest, the screen shows only "A private reminder for <name> is due"
+   (or "3 private reminders for <name> are due" when several wait).
    The text of that reminder is never kept here: only its id, so it is shown in
    full the next time the right person is here.
    ========================================================================== */
@@ -4179,8 +4183,8 @@ IRAS.closeDialog = closeDialog;
   }
   const hiddenFrom = (n) => { const o = ownerOf(n); return !!o && !mayRead(o); };
 
-  function showPrivate(name) {
-    const line = "A private reminder for " + name + " is due";
+  function showPrivate(name, count) {
+    const line = count > 1 ? count + " private reminders for " + name + " are due" : "A private reminder for " + name + " is due";
     audit.add({ kind: "system", status: "done", title: line, detail: "", tags: ["her own", "private"], payload: { private: true } });
     toast(line, { icon: "shield", timeout: 9000 });   // not spoken, and no text
   }
@@ -4200,18 +4204,24 @@ IRAS.closeDialog = closeDialog;
       const r = await fetch(base() + "/v1/v5/notifications", { headers: Object.assign({ "X-Device-ID": "web" }, token() ? { Authorization: "Bearer " + token() } : {}) });
       if (!r.ok) return;
       const list = (await r.json()).notifications || [];
-      const fresh = [], hidden = [];
+      // In the order the server gave them: a notice to show in full, or one line for the private reminders of one person.
+      const todo = [], lines = new Map();
       list.forEach((n) => {
         if (!n || !n.notification_id || n.read) return;
-        if (hiddenFrom(n)) { if (!masked.has(n.notification_id)) hidden.push({ id: n.notification_id, name: ownerOf(n) }); return; }
-        if (!seen.has(n.notification_id)) fresh.push(n);
+        if (hiddenFrom(n)) {
+          if (masked.has(n.notification_id)) return;
+          const name = ownerOf(n), key = norm(name);
+          if (!lines.has(key)) { const line = { name, ids: [] }; lines.set(key, line); todo.push(line); }
+          lines.get(key).ids.push(n.notification_id);
+          return;
+        }
+        if (!seen.has(n.notification_id)) todo.push({ n });
       });
       // Everything counts as seen, except a private reminder that this person may not read yet.
       list.forEach((n) => { if (n && n.notification_id && !hiddenFrom(n)) seen.add(n.notification_id); });
-      hidden.forEach((h) => masked.add(h.id));
-      const most = first ? 3 : 5;
-      fresh.slice(0, most).reverse().forEach(show);
-      hidden.slice(0, most).reverse().forEach((h) => showPrivate(h.name));
+      todo.forEach((t) => { if (t.ids) t.ids.forEach((id) => masked.add(id)); });
+      // The limit counts lines, so an old backlog never floods the screen.
+      todo.slice(0, first ? 3 : 5).reverse().forEach((t) => (t.n ? show(t.n) : showPrivate(t.name, t.ids.length)));
       first = false;
     } catch (e) { /* the next check tries again */ }
   }
@@ -6223,7 +6233,7 @@ IRAS.closeDialog = closeDialog;
     if (!who || moving) return;
     const claim = action === "claim";
     const ask = claim
-      ? "Give the old shared memories and facts to " + who.name + "?\n\nEvery shared memory and fact she has now will become " + who.name + "'s own. Other people, and guests, will no longer be able to use them. Her own settings stay as they are."
+      ? "Give the old memories and facts to " + who.name + "?\n\nThese are the ones saved without a person, before she knew who was talking. They will become " + who.name + "'s own. Other people, and guests, will no longer be able to use them. Her own settings stay as they are."
       : "Share ALL of " + who.name + "'s memories with everyone?\n\nThis moves EVERY memory and fact of " + who.name + ": the old ones, and every one that was saved only for " + who.name + ". Everyone she knows, and guests, will be able to use them.";
     if (!window.confirm(ask)) return;
     moving = true; ownMsg = ""; drawOwn();
@@ -6255,6 +6265,7 @@ IRAS.closeDialog = closeDialog;
       $("#faceHint").textContent = !s.available ? s.reason : s.models_ready ? "" : "The first picture downloads the face models (15 MB). It can take a minute.";
       $("#voiceHint").textContent = v.available === false ? v.reason : v.models_ready === false ? "The first recording downloads the voice model (26 MB). It can take a minute." : "";
       known = people;
+      IRAS.people.use(people);   // the other screens see a new or forgotten person at once
       if (!moving) {
         drawOwn();
         $("#ownHint").textContent = people.length ? ownMsg : "She does not know anyone yet. Teach her a face or a voice above.";

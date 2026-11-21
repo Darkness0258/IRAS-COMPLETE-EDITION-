@@ -72,6 +72,7 @@ src/js/                    00-core (events, state machine) ... 90-app (start up)
 src/assets/ src/fonts/     icons (Lucide) and fonts (Sora, Instrument Sans, JetBrains Mono)
 tools/contrast.py          measures contrast for all four looks
 qa/flows.py  qa/a11y.py    browser tests (need: pip install playwright, and for a11y: npm i axe-core)
+qa/browser-test.cjs  qa/test_server.py    real-browser test of the per-person screens (how to run: UPDATE-NOTES.md)
 ```
 
 ## Checks that were run
