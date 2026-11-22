@@ -19,6 +19,8 @@ MAX_SAMPLES = 12
 VOICE_THRESHOLD = float(os.getenv("IRAS_VOICE_THRESHOLD", "0.50"))  # cosine similarity to a person's average voiceprint
 VOICE_MARGIN = 0.06  # the best person must beat the next one by this much
 VOICE_SAME = float(os.getenv("IRAS_VOICE_SAME", "0.30"))  # a new teaching clip must sound at least this much like the saved voice
+VOICE_OTHER = float(os.getenv("IRAS_VOICE_OTHER", "0.30"))  # under this against EVERY known voice: "someone she does not know"
+OTHER_SPEECH = 2.0  # seconds of real speech needed before she says "that is nobody I know" (the same as any check needs)
 MAX_VOICE_SAMPLES = 12
 
 
@@ -75,6 +77,29 @@ def decide_voice(vector, samples: list[tuple[str, Any]], names: dict[str, str], 
     for person_id, other in samples:
         groups.setdefault(person_id, []).append(other)
     return _choose({pid: voice_score(vector, vecs) for pid, vecs in groups.items()}, names, threshold, VOICE_MARGIN)
+
+
+def classify_voice(result: dict, speech: float, other: float = VOICE_OTHER, min_speech: float = OTHER_SPEECH) -> str:
+    """One word for what a voice check found. The screen uses it while you talk to her.
+
+    match    a clear match (the same test as the "Who is speaking?" button)
+    other    enough speech, and it sounds like nobody she knows (the best score is under `other`)
+    unsure   in between, or too little speech to say "nobody I know"
+    nobody   she knows no voice yet
+
+    `result` is what decide_voice gave; `speech` is the seconds of real speech in the clip.
+    A clip with less speech than `min_speech` can never say "other". Even so, one "other" is not proof:
+    when someone else talks at the same time as you, your own voice can score low, so the screen waits
+    for two in a row before it stops using a person's name.
+    """
+    if result.get("match"):
+        return "match"
+    closest = result.get("closest")
+    if closest is None:
+        return "nobody"
+    if float(closest.get("score", 1.0)) < other and speech >= min_speech:
+        return "other"
+    return "unsure"
 
 
 def check_liveness(turns: list[float], min_turn: float = MIN_TURN) -> dict:

@@ -13,6 +13,9 @@
   POST   /v1/identity/people/{person_id}/claim-memory   old shared memories become this person's
   POST   /v1/identity/people/{person_id}/share-memory   this person's memories become shared again
 
+`/v1/identity/voice/verify` also answers `verdict`: match, other, unsure, nobody or unheard (see
+store.classify_voice). The screen reads it while you talk to her; nothing else about the answer changed.
+
 `image` is a JPEG or PNG as base64 or a data URL. `audio` is a short WAV (16 bit)
 as base64 or a data URL. Pictures and recordings are looked at and thrown away.
 Only the faceprint (512 numbers) or voiceprint (256 numbers) of an enrolled person
@@ -189,12 +192,13 @@ def register_identity_routes(app, authorize: Callable[[str | None], Any], get_db
             failure(exc)
         heard = {"speech": info["speech"], "seconds": info["seconds"]}
         if vector is None:
-            return {"heard": False, "match": None, "closest": None, **heard, "message": info["problem"]}
+            return {"heard": False, "match": None, "closest": None, **heard, "verdict": "unheard", "message": info["problem"]}
         result = ids.decide_voice(vector, store().voice_samples(), store().names())
         message = ""
         if result["match"] is None:
             message = "I do not know your voice yet." if result["closest"] is None else "I am not sure who that is."
-        return {"heard": True, "match": result["match"], "closest": result["closest"], **heard, "message": message}
+        return {"heard": True, "match": result["match"], "closest": result["closest"], **heard,
+                "verdict": ids.classify_voice(result, info["speech"]), "message": message}
 
     def move_memory(person_id: str, action: str):
         if memory_ops is None:
