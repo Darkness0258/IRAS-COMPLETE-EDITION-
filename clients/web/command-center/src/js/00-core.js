@@ -61,6 +61,7 @@ const DEFAULTS = {
   wake: "IRAS",
   realMic: true,
   speakReplies: true,
+  autoWho: null,          // check whose voice it is while you talk: null = automatic (on for a computer, off for a phone) | true | false
 };
 const settings = Object.assign({}, DEFAULTS, store.get(SETTINGS_KEY, {}));
 const saveSettings = () => store.set(SETTINGS_KEY, settings);

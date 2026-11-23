@@ -6,7 +6,10 @@
    It opens the real page in a real Chrome (puppeteer-core with @sparticuz/chromium),
    against the test server in qa/test_server.py, and checks the Memory, Identity and
    Agents screens, the private reminder notices, phone widths (360 to 412 px),
-   accessibility (axe-core) and a fake microphone file.
+   accessibility (axe-core) and a fake microphone file. The "Voice check" sections test the new voice check
+   while she listens: a fake speech recognizer, Chrome's fake microphone and a scripted server answer, so every
+   case can be tried (a clear match, another person, "nobody I know", a slow server, Stop, guest mode, a microphone
+   that gives no sound or cannot be shared, the Android app, a phone's browser). Try only those: QA_ONLY="voice check".
 
    1. Tools, in a folder OUTSIDE the project (so the page tests never read them):
         mkdir ~/iras-qa-tools && cd ~/iras-qa-tools
@@ -121,7 +124,7 @@ function makeMicFile(file) {
 const DESKTOP = { width: 1280, height: 900 };
 const PHONES = [{ width: 360, height: 740 }, { width: 390, height: 844 }, { width: 412, height: 915 }];
 
-async function openPage(browser, size, theme = "light", who = null, fakeNotices = false) {
+async function openPage(browser, size, theme = "light", who = null, fakeNotices = false, before = []) {
   const ctx = await browser.createBrowserContext();
   try { await ctx.overridePermissions(BASE, ["microphone", "camera"]); } catch (e) { /* the fake-device flags cover it */ }
   const page = await ctx.newPage();
@@ -163,6 +166,7 @@ async function openPage(browser, size, theme = "light", who = null, fakeNotices 
       m.addedNodes.forEach((n) => { if (n.nodeType === 1) { const t = (n.textContent || "").trim(); if (t) window.__toasts.push(t); } });
     })).observe(document, { childList: true, subtree: true });
   }, BASE, TOKEN, theme, who ? { person_id: who.person_id, name: who.name } : null);
+  for (const fn of [].concat(before)) await page.evaluateOnNewDocument(fn);   // for example a fake speech recognizer (see fakeSpeech)
   await page.goto(BASE + "/", { waitUntil: "load" });
   const live = await until(() => page.evaluate(() => typeof IRAS !== "undefined" && IRAS.live && IRAS.live.ok === true), 20000);
   if (!live) throw new Error("the page never reached the test server");
@@ -214,6 +218,112 @@ async function axeRun(page, label, expect = []) {
 const noSideways = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 const insideScreen = (page, sel) => page.$eval(sel, (e) => { const r = e.getBoundingClientRect(); return r.left >= 0 && r.right <= window.innerWidth + 1 && r.top >= 0 && r.bottom <= window.innerHeight + 1; });
 
+/* ---------- the voice check while she listens: a fake speech recognizer, a watched microphone, a server we can script ---------- */
+function fakeSpeech() {   // runs inside the page, before it loads: nothing is really listened to, the test says what she "heard"
+  window.__sr = { starts: 0, stops: 0, last: null };
+  class FakeSpeech {
+    constructor() { window.__sr.last = this; this.on = false; }
+    start() { window.__sr.starts++; this.on = true; setTimeout(() => this.onstart && this.onstart(), 20); }
+    stop() { window.__sr.stops++; this.finish(); }
+    abort() { this.finish(); }
+    finish() { if (!this.on) return; this.on = false; setTimeout(() => this.onend && this.onend(), 20); }
+    say(text) { const r = [{ transcript: text }]; r.isFinal = true; this.onresult && this.onresult({ resultIndex: 0, results: [r] }); }
+  }
+  window.SpeechRecognition = FakeSpeech;
+}
+function watchedMic() {   // runs inside the page: every microphone stream is written down, and the test can make it silent or busy
+  window.__streams = []; window.__mic = "real"; window.__gum = 0;
+  const md = navigator.mediaDevices, real = md.getUserMedia.bind(md);
+  md.getUserMedia = async (c) => {
+    window.__gum++;
+    if (window.__mic === "busy") throw new DOMException("The microphone is in use.", "NotReadableError");
+    if (window.__mic === "silent") { const dest = new AudioContext().createMediaStreamDestination(); window.__streams.push(dest.stream); return dest.stream; }
+    const s = await real(c); window.__streams.push(s); return s;
+  };
+}
+function androidApp() {   // runs inside the page: it looks like the Android app, which listens with the phone's own speech recognizer
+  window.IRASNative = { canListen: () => true, listen() {}, stop() {}, reload() {}, openClassic() {} };
+}
+function phoneBrowser() {   // runs inside the page: a phone's browser says so in its name
+  Object.defineProperty(navigator, "userAgent", { get: () => "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36" });
+}
+
+function parseWav(url) {   // what the server would receive: a 16-bit mono WAV in a data URL
+  const m = /^data:audio\/wav;base64,(.+)$/.exec(url || "");
+  if (!m) return null;
+  const b = Buffer.from(m[1], "base64");
+  if (b.length < 45 || b.toString("ascii", 0, 4) !== "RIFF" || b.toString("ascii", 8, 12) !== "WAVE") return null;
+  const ch = b.readUInt16LE(22), rate = b.readUInt32LE(24), bits = b.readUInt16LE(34), bytes = b.readUInt32LE(40);
+  let peak = 0;
+  for (let i = 44; i + 1 < b.length; i += 2) peak = Math.max(peak, Math.abs(b.readInt16LE(i)) / 32768);
+  return { ch, rate, bits, seconds: bytes / (rate * ch * (bits / 8)), peak, bytes: b.length };
+}
+
+/* Watches the voice-check call and the chat call of one page, and answers them from a script.
+   The list of people comes from the test (with how many voices each has). Everything else goes to the real server. */
+async function watchVoice(page, people) {
+  const seen = { verify: [], chat: [] };
+  const plan = { verify: [] };   // answers, used one by one: { body, delay }
+  await page.setRequestInterception(true);
+  page.on("request", async (r) => {
+    const p = new URL(r.url()).pathname;
+    if (r.method() === "GET" && p === "/v1/identity/people") return r.respond({ status: 200, contentType: "application/json", body: JSON.stringify({ people }) });
+    if (r.method() === "POST" && p === "/v1/identity/voice/verify") {
+      const body = JSON.parse(r.postData() || "{}");
+      body._auth = /^Bearer .+/.test(String(r.headers().authorization || ""));
+      seen.verify.push(body);
+      const next = plan.verify.shift() || { body: { heard: false, match: null, closest: null, speech: 0, seconds: 0, verdict: "unheard", message: "no answer planned" } };
+      if (next.delay) await sleep(next.delay);
+      return r.respond({ status: 200, contentType: "application/json", body: JSON.stringify(next.body) });
+    }
+    if (r.method() === "POST" && p === "/v1/chat/stream") {
+      seen.chat.push(JSON.parse(r.postData() || "{}"));
+      return r.respond({ status: 200, contentType: "text/event-stream", body: "event: start\ndata: {\"thread_id\":\"qa\"}\n\nevent: token\ndata: {\"text\":\"Okay.\"}\n\nevent: done\ndata: {}\n\n" });
+    }
+    return r.continue();
+  });
+  await until(() => page.evaluate(() => IRAS.live.ok === true), 10000);   // she does nothing until the server is connected
+  /* The page may already be loading the real list (then a new load is handed that same answer), so ask until it holds ours. */
+  const voices = people.reduce((n, x) => n + x.voices, 0);
+  const got = await until(async () => {
+    await page.evaluate(() => IRAS.people.load(true));
+    return page.evaluate((n, count) => IRAS.people.all().length === count && IRAS.people.all().reduce((a, x) => a + x.voices, 0) === n, voices, people.length);
+  }, 10000, 150);
+  if (!got) throw new Error("the page never received the scripted list of people");
+  return { seen, plan };
+}
+
+const answerFor = (verdict, p, score = 0.8) => ({
+  heard: verdict !== "unheard", speech: verdict === "unheard" ? 1.1 : 3.1, seconds: 3.3, verdict, message: "",
+  match: verdict === "match" ? { person_id: p.person_id, name: p.name, score } : null,
+  closest: verdict === "unheard" || !p ? null : { person_id: p.person_id, name: p.name, score: verdict === "match" ? score : verdict === "other" ? 0.12 : 0.41 },
+});
+const whoNow = (page) => page.evaluate(() => { const w = IRAS.who.current(); return w ? { kind: w.kind, id: w.person_id || "", name: w.name || "", via: w.via || "" } : null; });
+const settleUi = (page) => until(() => page.evaluate(() => document.body.dataset.uiState === "idle"), 15000, 100);
+
+/* One talk: she starts to listen, the person talks for talkMs, the fake recognizer "hears" the words, and the chat goes out. */
+async function voiceTurn(page, kit, o = {}) {
+  kit.plan.verify.length = 0;   // an answer that was planned but never asked for must not leak into this turn
+  if (o.answer) kit.plan.verify.push({ body: o.answer, delay: o.delay || 0 });
+  if (o.answers) o.answers.forEach((a) => kit.plan.verify.push(a));
+  await settleUi(page);
+  const was = { verify: kit.seen.verify.length, chat: kit.seen.chat.length, gum: await page.evaluate(() => window.__gum) };
+  await page.evaluate(() => IRAS.voice.toggle());
+  await sleep(o.talkMs || 2600);
+  const whileTalking = kit.seen.verify.length - was.verify;
+  await page.evaluate((t) => { window.__sr.last.say(t); window.__sr.last.stop(); }, o.say || "what is on my calendar today");
+  const t0 = Date.now();
+  const sent = await until(() => kit.seen.chat.length > was.chat, o.limit || 12000, 40);
+  const waited = Date.now() - t0;
+  return {
+    sent, waited, whileTalking,
+    asked: kit.seen.verify.length - was.verify,
+    gum: (await page.evaluate(() => window.__gum)) - was.gum,
+    chat: kit.seen.chat[kit.seen.chat.length - 1] || null,
+    verify: kit.seen.verify[kit.seen.verify.length - 1] || null,
+  };
+}
+
 /* ==========================================================================
    The run
    ========================================================================== */
@@ -229,6 +339,12 @@ const insideScreen = (page, sel) => page.$eval(sel, (e) => { const r = e.getBoun
   /* Test people and memories. "shared" is the name she uses when she saves something for the household. */
   const alice = await makePerson("QA Alice");
   const bob = await makePerson("QA Bob");
+  let carol = null;   // made when the voice sections need her
+  const voicePeople = () => [
+    { person_id: alice.person_id, name: alice.name, faces: 0, voices: 3 },
+    { person_id: bob.person_id, name: bob.name, faces: 0, voices: 2 },
+    { person_id: carol.person_id, name: carol.name, faces: 1, voices: 0 },   // her face is known, her voice is not
+  ];
   await makeMemory("QA shared note: the house wifi is slow", "default");
   await makeMemory("QA household note: bins go out on Tuesday", "shared");
   await makeMemory("QA Alice likes jasmine tea", "person:" + alice.person_id);
@@ -574,6 +690,215 @@ const insideScreen = (page, sel) => page.$eval(sel, (e) => { const r = e.getBoun
     const modelProblem = /download|model|network|connect|offline|reach/i.test(said || "");
     if (said && modelProblem && !noSound) console.log("SKIP Voice ID answer from the server needs the voice model, which could not be loaded here: " + String(said).slice(0, 160));
     else check("Voice ID: the recording is sent and the server answers (not 'no sound')", !!said && !noSound, said);
+    await ctx.close();
+  });
+
+  /* --------------------------------------------- Voice check while she listens */
+  await section("Voice check while she listens", async () => {
+    carol = carol || (await makePerson("QA Carol"));
+    const { page, ctx } = await openPage(browser, DESKTOP, "light", null, false, [watchedMic, fakeSpeech]);
+    const kit = await watchVoice(page, voicePeople());
+    const state = () => page.evaluate(() => IRAS.autoid.state());
+    const idle = () => until(async () => !(await state()).asking, 12000, 100);
+    const said = () => toasts(page);
+
+    const s0 = await state();
+    check("the voice check is on by itself on a computer, and it can work here", s0.enabled === true && s0.available.ok === true, JSON.stringify(s0.available));
+
+    /* a clear match */
+    await nobody(page);
+    let t = await voiceTurn(page, kit, { answer: answerFor("match", alice, 0.83) });
+    const wav = parseWav(t.verify && t.verify.audio);
+    check("she asks the server while you talk, and the chat is not held up for long", !!t.sent && t.asked === 1 && t.waited < 2500, JSON.stringify({ sent: !!t.sent, asked: t.asked, waited: t.waited }));
+    check("the recording is a small 16 kHz mono WAV with real sound in it", !!wav && wav.ch === 1 && wav.rate === 16000 && wav.bits === 16 && wav.seconds >= 1.8 && wav.seconds < 4.5 && wav.peak > 0.05, JSON.stringify(wav));
+    check("it is sent with the access token", !!t.verify && t.verify._auth === true);
+    await until(async () => ((await whoNow(page)) || {}).id === alice.person_id, 4000);
+    let w = await whoNow(page);
+    check("a clear match sets Who is here to that person, by voice", !!w && w.kind === "person" && w.id === alice.person_id && w.via === "voice", JSON.stringify(w));
+    check("the chat that followed already carried that person and the score", !!t.chat && !!t.chat.speaker && t.chat.speaker.person_id === alice.person_id && t.chat.speaker.via === "voice" && t.chat.speaker.score === 0.83, JSON.stringify(t.chat && t.chat.speaker));
+    check("a message says she knows the voice", (await said()).some((x) => /I know your voice, QA Alice/.test(x)));
+    check("the pill shows the name and the word voice", /QA Alice\s*voice/.test(await page.$eval("[data-who] .who-pill", (e) => e.innerText.replace(/\s+/g, " ").trim())));
+    check("the microphone is let go and the header chip is back", await page.evaluate(() => window.__streams.length === 1 && window.__streams.every((s) => s.getTracks().every((x) => x.readyState === "ended")) && (typeof S === "undefined" || S.mic === "off")));
+    check("Activity has a line that says what she heard", await page.evaluate(() => { const r = IRAS.audit.items.find((i) => i.title === "Checked who is speaking"); return !!r && /QA Alice/.test(r.detail) && /83%/.test(r.detail); }));
+
+    /* a long talk: she asks before you stop */
+    t = await voiceTurn(page, kit, { answer: answerFor("match", alice, 0.8), talkMs: 4800 });
+    check("in a longer talk she asks once while you are still talking, and not again at the end", t.whileTalking === 1 && t.asked === 1, JSON.stringify({ whileTalking: t.whileTalking, asked: t.asked }));
+    check("when the answer is already there, the chat goes out at once", !!t.sent && t.waited < 1200, t.waited);
+
+    /* another person */
+    t = await voiceTurn(page, kit, { answer: answerFor("match", bob, 0.77) });
+    w = await whoNow(page);
+    check("another person's voice switches Who is here before the reply is made", !!w && w.id === bob.person_id && w.via === "voice" && !!t.chat.speaker && t.chat.speaker.person_id === bob.person_id, JSON.stringify({ w, speaker: t.chat && t.chat.speaker }));
+    check("and she says so", (await said()).some((x) => /I hear QA Bob now, not QA Alice/.test(x)));
+
+    /* "nobody I know" */
+    t = await voiceTurn(page, kit, { answer: answerFor("other", bob) });
+    w = await whoNow(page);
+    let st = await state();
+    check("one \"nobody I know\" changes nothing (someone else may just be talking)", !!w && w.id === bob.person_id && st.strikes === 1 && !!t.chat.speaker && t.chat.speaker.person_id === bob.person_id, JSON.stringify({ w, strikes: st.strikes }));
+    t = await voiceTurn(page, kit, { answer: answerFor("other", bob) });
+    w = await whoNow(page);
+    check("two in a row make her stop using the name", w === null, JSON.stringify(w));
+    check("...before the reply is made: that chat goes out with no name", !!t.sent && t.chat.speaker === undefined, JSON.stringify(t.chat && t.chat.speaker));
+    check("...and she says why", (await said()).some((x) => /did not sound like QA Bob, twice in a row/.test(x)));
+
+    await setWho(page, carol);   // her face is known, her voice is not
+    await voiceTurn(page, kit, { answer: answerFor("other", bob) });
+    await voiceTurn(page, kit, { answer: answerFor("other", bob) });
+    w = await whoNow(page);
+    check("a person whose voice she never learned is not dropped because of a strange voice", !!w && w.id === carol.person_id, JSON.stringify(w));
+
+    await setWho(page, alice);
+    await voiceTurn(page, kit, { answer: answerFor("other", bob) });
+    await voiceTurn(page, kit, { answer: answerFor("match", alice, 0.8) });
+    await voiceTurn(page, kit, { answer: answerFor("other", bob) });
+    w = await whoNow(page);
+    st = await state();
+    check("a match in between starts the count again", !!w && w.id === alice.person_id && st.strikes === 1, JSON.stringify({ w, strikes: st.strikes }));
+
+    await voiceTurn(page, kit, { answer: answerFor("unsure", alice) });
+    await voiceTurn(page, kit, { answer: answerFor("unheard") });
+    w = await whoNow(page);
+    check("\"not sure\" and \"too little speech\" change nothing", !!w && w.id === alice.person_id, JSON.stringify(w));
+
+    const older = answerFor("match", bob, 0.7); delete older.verdict;   // an older server does not say the word
+    await voiceTurn(page, kit, { answer: older });
+    w = await whoNow(page);
+    check("an answer from an older server (no verdict word) still works", !!w && w.id === bob.person_id, JSON.stringify(w));
+
+    await setWho(page, alice);
+    t = await voiceTurn(page, kit, { talkMs: 4800, answers: [{ body: answerFor("unheard") }, { body: answerFor("match", bob, 0.7) }] });
+    w = await whoNow(page);
+    check("if the early clip had too little speech, she asks once more at the end", t.whileTalking === 1 && t.asked === 2 && !!w && w.id === bob.person_id, JSON.stringify({ whileTalking: t.whileTalking, asked: t.asked, w }));
+
+    /* guest mode */
+    await guestOn(page);
+    t = await voiceTurn(page, kit, { answer: answerFor("match", alice, 0.9) });
+    w = await whoNow(page);
+    check("in guest mode she does not even record, and a voice never ends guest mode", !!t.sent && t.asked === 0 && t.gum === 0 && !!w && w.kind === "guest", JSON.stringify({ asked: t.asked, gum: t.gum, w }));
+    await nobody(page);
+
+    /* a slow server */
+    t = await voiceTurn(page, kit, { answer: answerFor("match", alice, 0.8), delay: 5000 });
+    w = await whoNow(page);
+    check("a slow server holds her up for about 2 seconds at most", !!t.sent && t.waited >= 1500 && t.waited < 2900, t.waited);
+    check("the chat that went out did not wait for the answer", w === null && t.chat.speaker === undefined, JSON.stringify({ w, speaker: t.chat && t.chat.speaker }));
+    check("when the slow answer comes, it is used for the next turn", !!(await until(async () => ((await whoNow(page)) || {}).id === alice.person_id, 9000)));
+
+    await idle();
+    await nobody(page);
+    await voiceTurn(page, kit, { answer: answerFor("match", bob, 0.8), delay: 4000 });
+    await setWho(page, carol);   // you pick someone while the check is still out
+    await idle();
+    w = await whoNow(page);
+    check("if you pick a person while the check is out, your choice is kept", !!w && w.id === carol.person_id && w.via === "chosen", JSON.stringify(w));
+
+    /* Stop while she is checking */
+    kit.plan.verify.length = 0; kit.plan.verify.push({ body: answerFor("match", alice, 0.8), delay: 4000 });
+    await settleUi(page);
+    const before = kit.seen.chat.length;
+    await page.evaluate(() => IRAS.voice.toggle());
+    await sleep(2600);
+    await page.evaluate(() => { window.__sr.last.say("stop this one"); window.__sr.last.stop(); });
+    await sleep(300);
+    await page.evaluate(() => IRAS.stopAll());
+    await sleep(3000);
+    check("if you press Stop while she is checking, nothing is sent", kit.seen.chat.length === before, kit.seen.chat.length - before);
+    await idle();
+
+    check("no microphone is left open at the end", await page.evaluate(() => window.__streams.every((s) => s.getTracks().every((x) => x.readyState === "ended")) && !IRAS.autoid.state().recording));
+    await ctx.close();
+  });
+
+  await section("Voice check: the switch in Settings", async () => {
+    carol = carol || (await makePerson("QA Carol"));
+    const { page, ctx } = await openPage(browser, DESKTOP, "light", null, false, [watchedMic, fakeSpeech]);
+    const kit = await watchVoice(page, voicePeople());
+    await go(page, "settings");
+    const row = await page.$eval("#setAutoWho", (e) => ({ checked: e.checked, hint: document.querySelector("#autoWhoHint").textContent }));
+    check("Settings has the switch, on, with a plain sentence", row.checked === true && /While you talk to her, she checks whose voice it is/.test(row.hint), JSON.stringify(row));
+    await axeRun(page, "Settings (desktop)");
+    await page.evaluate(() => document.querySelector("#setAutoWho").click());
+    const off = await page.evaluate(() => ({ v: IRAS.settings.autoWho, hint: document.querySelector("#autoWhoHint").textContent, checked: document.querySelector("#setAutoWho").checked }));
+    check("turning it off is saved and the sentence says so", off.v === false && off.checked === false && /^Off\./.test(off.hint), JSON.stringify(off));
+    const t = await voiceTurn(page, kit, { answer: answerFor("match", alice) });
+    check("with the switch off she does not record or ask", !!t.sent && t.asked === 0 && t.gum === 0, JSON.stringify({ asked: t.asked, gum: t.gum }));
+    await page.evaluate(() => document.querySelector("#setAutoWho").click());
+    const on = await page.evaluate(() => ({ v: IRAS.settings.autoWho, hint: document.querySelector("#autoWhoHint").textContent }));
+    check("turning it on again works", on.v === true && /^On\./.test(on.hint), JSON.stringify(on));
+    await ctx.close();
+  });
+
+  await section("Voice check: nobody has a taught voice", async () => {
+    const { page, ctx } = await openPage(browser, DESKTOP, "light", null, false, [watchedMic, fakeSpeech]);
+    const kit = await watchVoice(page, [{ person_id: alice.person_id, name: alice.name, faces: 1, voices: 0 }]);
+    const t = await voiceTurn(page, kit, { answer: answerFor("match", alice) });
+    check("with no taught voice she does not record, and the chat is not held up", !!t.sent && t.asked === 0 && t.gum === 0 && t.waited < 1000, JSON.stringify({ asked: t.asked, gum: t.gum, waited: t.waited }));
+    check("the sentence says to teach a voice first", /Teach her a voice/.test(await page.evaluate(() => IRAS.autoid.hint())));
+    await ctx.close();
+  });
+
+  await section("Voice check: a microphone that cannot be shared", async () => {
+    carol = carol || (await makePerson("QA Carol"));
+    /* a microphone that gives no sound */
+    let { page, ctx } = await openPage(browser, DESKTOP, "light", null, false, [watchedMic, fakeSpeech]);
+    let kit = await watchVoice(page, voicePeople());
+    await page.evaluate(() => { window.__mic = "silent"; });
+    let t1 = await voiceTurn(page, kit, {}), t2 = await voiceTurn(page, kit, {});
+    let st = await page.evaluate(() => IRAS.autoid.state());
+    check("a microphone that gives no sound twice in a row turns the check off, and she says so", !!t1.sent && !!t2.sent && !!st.off && (await toasts(page)).some((x) => /turned the voice check off/.test(x)), JSON.stringify({ off: st.off }));
+    check("...and voice chat itself is not held up", t1.waited < 1000 && t2.waited < 1000, JSON.stringify([t1.waited, t2.waited]));
+    const t3 = await voiceTurn(page, kit, {});
+    check("...and she stops trying", t3.gum === 0, t3.gum);
+    check("the sentence in Settings says it cannot work now", /cannot work now/.test(await page.evaluate(() => IRAS.autoid.hint())));
+    await ctx.close();
+
+    /* a microphone that speech recognition holds alone */
+    ({ page, ctx } = await openPage(browser, DESKTOP, "light", null, false, [watchedMic, fakeSpeech]));
+    kit = await watchVoice(page, voicePeople());
+    await page.evaluate(() => { window.__mic = "busy"; });
+    t1 = await voiceTurn(page, kit, {}); t2 = await voiceTurn(page, kit, {});
+    st = await page.evaluate(() => IRAS.autoid.state());
+    check("a microphone that cannot be shared turns the check off after two tries", !!t1.sent && !!t2.sent && /cannot be shared with speech recognition/.test(st.off), JSON.stringify({ off: st.off }));
+    check("...and voice chat itself is not held up", t1.waited < 1000 && t2.waited < 1000, JSON.stringify([t1.waited, t2.waited]));
+    await ctx.close();
+
+    /* listening stops while the check records */
+    ({ page, ctx } = await openPage(browser, DESKTOP, "light", null, false, [watchedMic, fakeSpeech]));
+    kit = await watchVoice(page, voicePeople());
+    await page.evaluate(() => IRAS.voice.toggle());
+    await until(async () => (await page.evaluate(() => IRAS.autoid.state())).streaming, 8000);
+    await page.evaluate(() => window.__sr.last.onerror({ error: "audio-capture" }));
+    st = await page.evaluate(() => IRAS.autoid.state());
+    check("if listening fails while the check records, the check turns itself off and lets go of the microphone", !!st.off && st.recording === false && await page.evaluate(() => window.__streams.every((s) => s.getTracks().every((x) => x.readyState === "ended"))), JSON.stringify({ off: st.off, recording: st.recording }));
+    await page.evaluate(() => window.__sr.last.stop());
+    await settleUi(page);
+    await ctx.close();
+  });
+
+  await section("Voice check: the Android app", async () => {
+    const { page, ctx } = await openPage(browser, DESKTOP, "light", null, false, [watchedMic, fakeSpeech, androidApp]);
+    const a = await page.evaluate(() => IRAS.autoid.available());
+    check("inside the Android app the check says it cannot work, and why", a.ok === false && /Android app/.test(a.why) && /phone's own speech recognizer/.test(a.why), JSON.stringify(a));
+    await page.evaluate(() => IRAS.voice.toggle());   // the app's own listening starts; the page records nothing
+    await sleep(800);
+    check("the page opens no microphone of its own in the app", (await page.evaluate(() => window.__gum)) === 0);
+    check("the sentence in Settings says so", /cannot work now/.test(await page.evaluate(() => IRAS.autoid.hint())));
+    await ctx.close();
+  });
+
+  await section("Voice check: a phone browser", async () => {
+    const { page, ctx } = await openPage(browser, PHONES[0], "light", null, false, [watchedMic, fakeSpeech, phoneBrowser]);
+    const s = await page.evaluate(() => ({ on: IRAS.autoid.enabled(), setting: IRAS.settings.autoWho, hint: IRAS.autoid.hint() }));
+    check("in a phone's browser the check starts off (on some phones listening and recording together do not work)", s.on === false && s.setting === null && /^Off\./.test(s.hint), JSON.stringify(s));
+    await go(page, "settings");
+    await page.$eval("#setAutoWho", (e) => e.scrollIntoView({ block: "center" }));
+    check("360 px Settings: nothing sticks out sideways", await noSideways(page));
+    check("360 px Settings: the switch is inside the screen and shows off", await page.$eval("#setAutoWho", (e) => { const r = e.closest(".switch").getBoundingClientRect(); return r.left >= 0 && r.right <= window.innerWidth + 1 && !e.checked; }));
+    await axeRun(page, "Settings (360px)");
+    await page.evaluate(() => document.querySelector("#setAutoWho").click());
+    check("a person can switch it on", await page.evaluate(() => IRAS.autoid.enabled() === true && IRAS.settings.autoWho === true));
     await ctx.close();
   });
 

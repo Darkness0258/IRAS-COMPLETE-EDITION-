@@ -22,6 +22,14 @@
     $("#server").value = settings.server || "";
     $("#token").value = store.sget("iras-api-token", "");
     $("#liveFields").hidden = settings.source !== "live";
+    autoWho();
+  }
+
+  function autoWho() {   // the switch for the voice check while she listens, and one sentence on how it is doing
+    const el = $("#setAutoWho");
+    if (!el) return;
+    el.checked = IRAS.autoid ? IRAS.autoid.enabled() : false;
+    $("#autoWhoHint").textContent = IRAS.autoid ? IRAS.autoid.hint() : "This page could not start it.";
   }
 
   IRAS.initSettings = function () {
@@ -44,6 +52,9 @@
       setSetting("realMic", e.target.checked);
       if (!e.target.checked && IRAS.audio.on) IRAS.audio.stop();
     });
+    $("#setAutoWho").addEventListener("change", (e) => setSetting("autoWho", e.target.checked));
+    bus.on("people", autoWho);
+    bus.on("view", (e) => { if (e.view === "settings") autoWho(); });
 
     radios("source").forEach((r) => r.addEventListener("change", () => {
       setSetting("source", r.value);

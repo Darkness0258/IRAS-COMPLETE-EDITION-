@@ -8,6 +8,8 @@
      IRAS.people.all()         the list we have right now
      IRAS.people.name(id)      the name for a person id, or ""
      IRAS.people.known(id)     true when she knows that person
+     IRAS.people.voices(id)    how many voice recordings she has of that person (0 when none)
+     IRAS.people.withVoice()   how many people have a taught voice
      IRAS.people.here()        the id of the person who is here now (Who is here), or ""
      IRAS.people.options(o)    <option> tags for a select
                                o.first     [[value, label], ...] choices that come before the people
@@ -22,10 +24,10 @@
   const TTL = 30000;
   let list = [], at = 0, pending = null;
 
-  const same = (a, b) => a.length === b.length && a.every((p, i) => p.person_id === b[i].person_id && p.name === b[i].name);
+  const same = (a, b) => a.length === b.length && a.every((p, i) => p.person_id === b[i].person_id && p.name === b[i].name && p.voices === b[i].voices);
 
   function use(rows) {
-    const next = (rows || []).map((p) => ({ person_id: String(p.person_id), name: String(p.name || "") }));
+    const next = (rows || []).map((p) => ({ person_id: String(p.person_id), name: String(p.name || ""), voices: Math.max(0, Number(p.voices) || 0) }));
     at = Date.now();
     if (!same(list, next)) { list = next; bus.emit("people", { count: list.length }); }
     return list;
@@ -54,5 +56,9 @@
     return rows.map(([v, t]) => `<option value="${esc(v)}"${v === o.selected ? " selected" : ""}>${esc(t)}</option>`).join("");
   }
 
-  IRAS.people = { load, use, all: () => list, name: (id) => (find(id) || {}).name || "", known: (id) => !!find(id), here, options };
+  IRAS.people = {
+    load, use, all: () => list, name: (id) => (find(id) || {}).name || "", known: (id) => !!find(id), here, options,
+    voices: (id) => (find(id) || {}).voices || 0,
+    withVoice: () => list.filter((p) => p.voices > 0).length,
+  };
 })();

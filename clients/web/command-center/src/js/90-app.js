@@ -109,7 +109,7 @@
     document.documentElement.dataset.hidden = document.hidden ? "1" : "0";
     applyAppearance(true);
     IRAS.initHome();
-    ["initChat", "initAgents", "initActivity", "initMemory", "initIdentity", "initWho", "initPc", "initSettings", "initCheck", "initLive"].forEach((fn) => { try { if (IRAS[fn]) IRAS[fn](); } catch (e) { console.error("[IRAS] " + fn + " failed", e); } });
+    ["initChat", "initAgents", "initActivity", "initMemory", "initIdentity", "initWho", "initAutoId", "initPc", "initSettings", "initCheck", "initLive"].forEach((fn) => { try { if (IRAS[fn]) IRAS[fn](); } catch (e) { console.error("[IRAS] " + fn + " failed", e); } });
     routeFromHash(true);
     IRAS.initOrb();
     document.body.dataset.ready = "1";

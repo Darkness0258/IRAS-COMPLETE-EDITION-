@@ -105,7 +105,8 @@
       const s = await identity(ctx);
       if (!s.voice) return warn("The server does not know Voice ID yet.", "Deploy the latest update.");
       if (!s.voice.available) return fail("Not available. " + (s.voice.reason || ""), "It needs numpy and onnxruntime on the server. Look at the Render build log.");
-      return s.voice.models_ready ? ok("Ready.") : warn("Ready, but the voice model is not downloaded yet.", "The first recording downloads about 26 MB. After each Render restart it downloads again.");
+      const during = IRAS.autoid ? " Voice check while you talk: " + IRAS.autoid.hint() : "";
+      return s.voice.models_ready ? ok("Ready." + during) : warn("Ready, but the voice model is not downloaded yet.", "The first recording downloads about 26 MB. After each Render restart it downloads again.");
     } },
 
     { id: "calendar", name: "Calendar", needsToken: true, run: async () => {

@@ -23,12 +23,18 @@
   const native = () => { try { return !!(window.IRASNative && window.IRASNative.canListen()); } catch (e) { return false; } };
   let nativeOn = false;
 
+  let stops = 0;
+  bus.on("cancel", () => { stops++; });
+
   function finishHeard() {
+    const check = IRAS.autoid ? IRAS.autoid.end(!!said) : null;   // lets go of the extra recording; the voice check may need a moment
     if (said) {
-      S.heard = said; S.heardVia = "voice";
+      const text = said, at = stops;
+      S.heard = text; S.heardVia = "voice";
       begin(true);
-      bus.emit("speech_end", { text: said });
-      IRAS.live.send(said, { via: "voice" });
+      bus.emit("speech_end", { text });
+      if (!check) { IRAS.live.send(text, { via: "voice" }); return; }
+      check.then(() => { if (stops === at) IRAS.live.send(text, { via: "voice" }); });   // a Stop in the meantime wins
     } else if (S.ui === "listening") bus.emit("cancel");
   }
 
@@ -63,11 +69,13 @@
       bus.emit("partial_transcript", { text: said, final: fin });
     };
     rec.onerror = (ev) => {
+      if (IRAS.autoid) IRAS.autoid.listenFailed(ev.error);
       if (ev.error === "not-allowed" || ev.error === "service-not-allowed") toast("The microphone is blocked. Allow it for this site, then try again.", { icon: "mic-off", timeout: 8000 });
       else if (ev.error !== "no-speech" && ev.error !== "aborted") toast("I could not hear you (" + ev.error + ").", { icon: "mic-off" });
     };
     rec.onend = () => { rec = null; finishHeard(); };
-    try { rec.start(); } catch (e) { rec = null; bus.emit("cancel"); }
+    try { rec.start(); } catch (e) { rec = null; bus.emit("cancel"); return; }
+    if (IRAS.autoid) IRAS.autoid.begin();   // still inside your tap: she also checks whose voice it is while you talk
   };
 
   /* ---------- speaking: a queue of sentences ---------- */
