@@ -7,6 +7,7 @@ left alone, the microphone is always let go, and a slow server never holds her u
 The real behaviour is tried in a real browser by clients/web/command-center/qa/browser-test.cjs
 (the "Voice check" sections). The server's side is in test_voice_listen_along.py.
 """
+import math
 import re
 from pathlib import Path
 
@@ -34,7 +35,7 @@ VOICE = src("38-voice.js")
 def number(name: str) -> float:
     m = re.search(rf"const {name} = ([0-9.]+(?: \* [0-9]+)*)", AUTO)
     assert m, name
-    return float(eval(m.group(1)))  # a plain number or a product such as 10 * 60 * 1000
+    return math.prod(float(part) for part in m.group(1).split(" * "))  # a plain number or a product such as 10 * 60 * 1000
 
 
 # ---------- it is part of the page ----------
@@ -55,7 +56,7 @@ def test_sound_and_answers_are_never_stored_anywhere():
     for bad in ("localStorage", "sessionStorage", "indexedDB", "store.set", "store.sset", "rawSet", "document.cookie", "caches."):
         assert bad not in AUTO_CODE, bad
     assert "OPENROUTER" not in AUTO and "iras-api-token" not in AUTO   # no key and no token in this file
-    assert "chunks = []" in AUTO_CODE and number("KEEP_MS") <= 30000   # the sound in memory is dropped after a moment
+    assert AUTO_CODE.count("chunks = []") >= 3 and "KEEP_MS" not in AUTO_CODE   # the sound in memory is dropped as soon as it is sent
 
 
 def test_sound_is_sent_only_as_a_small_wav_and_only_a_few_seconds_of_it():

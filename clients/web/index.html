@@ -4215,7 +4215,6 @@ IRAS.closeDialog = closeDialog;
   const WAIT_MS = 1800;      // the longest she makes you wait for the answer
   const QUIET = 0.004;       // under this the microphone heard nothing (the same line as the Voice ID screen)
   const LOUD = 0.012;        // a block louder than this counts as voice
-  const KEEP_MS = 20000;     // sound left in memory is dropped after this
   const STRIKES = 2;         // "nobody I know" this many times in a row before she stops using a name
   const STRIKE_MS = 10 * 60 * 1000;   // ...and an old "nobody I know" is forgotten after this
   const PAUSE_MS = 2 * 60 * 1000;     // after a server problem she does not try again for this long
@@ -4479,16 +4478,18 @@ IRAS.closeDialog = closeDialog;
     if (!heardSomething) { my.chunks = []; return null; }   // nothing was said: the sound is dropped
     if (my.peak < QUIET) {   // she was listening, but this page's recording got no sound at all
       my.chunks = [];
-      quietTurns++;
-      if (quietTurns >= 2) turnOff("The microphone gave no sound to the check while she was listening.", true);
+      if (my.stream) {   // the microphone did open (when it never opened, that is told by refused(), not here)
+        quietTurns++;
+        if (quietTurns >= 2) turnOff("The microphone gave no sound to the check while she was listening.", true);
+      }
       return null;
     }
     quietTurns = 0;
     let wait = null;
     if (job && job.my === my) wait = job;                       // the early question is still out
     else if (my.asked === 0 || my.unheard) wait = ask(my);      // not asked yet, or the early clip had too little speech
-    setTimeout(() => { my.chunks = []; }, KEEP_MS);
-    if (!wait) { my.chunks = []; return null; }
+    my.chunks = [];   // the sound now lives only in the question that was sent; nothing is kept here
+    if (!wait) return null;
     const left = Math.max(250, WAIT_MS - (performance.now() - wait.t0));
     return new Promise((resolve) => {
       let over = false;

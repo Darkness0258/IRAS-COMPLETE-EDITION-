@@ -278,7 +278,7 @@ async function watchVoice(page, people) {
     }
     if (r.method() === "POST" && p === "/v1/chat/stream") {
       seen.chat.push(JSON.parse(r.postData() || "{}"));
-      return r.respond({ status: 200, contentType: "text/event-stream", body: "event: start\ndata: {\"thread_id\":\"qa\"}\n\nevent: token\ndata: {\"text\":\"Okay.\"}\n\nevent: done\ndata: {}\n\n" });
+      return r.respond({ status: 200, contentType: "text/event-stream", body: "event: start\ndata: {\"thread_id\":\"qa\"}\n\nevent: done\ndata: {}\n\n" });   // a reply with no words: there is nothing to read out loud
     }
     return r.continue();
   });
