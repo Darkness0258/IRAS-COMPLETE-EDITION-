@@ -266,7 +266,8 @@ def test_both_chat_endpoints_pass_the_hint_along():
 
     text = (Path(__file__).resolve().parents[1] / "src" / "iras" / "cloud_api.py").read_text(encoding="utf-8")
     assert "with _cloud_thread_scope(cloud_thread_id):" not in text  # every chat scope must carry the hint
-    assert text.count("with _cloud_thread_scope(cloud_thread_id, speaker_hint):") == 3
+    assert text.count("with _cloud_thread_scope(cloud_thread_id, speaker_hint") == 3  # all three still carry the hint
+    assert text.count("with _cloud_thread_scope(cloud_thread_id, speaker_hint, body.right_now):") == 3  # and what the screen asked for in "Right now"
     assert text.count("speaker_hint = _speaker_hint(body)") == 2
     assert text.count('"speaker": _speaker_audit(speaker_hint),') == 2
 

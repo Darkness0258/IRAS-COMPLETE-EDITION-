@@ -118,6 +118,9 @@ class IRASAgent:
         # Optional hint about who is talking (a known person, or a guest). The cloud server sets it for
         # one request and puts it back afterwards, like context_messages_override. See iras.identity.context.
         self.speaker_context = None
+        # Optional lines about what is going on around her right now (time of day, next calendar event, reminders
+        # due) for the person who is here. Set for one request and put back afterwards. See iras.right_now.
+        self.awareness_context = None
         self.last_metrics = {}
         self._last_device_action = None
         self._last_quick_code = None
@@ -194,6 +197,10 @@ class IRASAgent:
         speaker = getattr(self, "speaker_context", None)
         if speaker and speaker.get("message"):
             msgs.append({"role": "system", "content": str(speaker["message"])})
+
+        awareness = getattr(self, "awareness_context", None)
+        if awareness:
+            msgs.append({"role": "system", "content": str(awareness)})
 
         facts = (
             self.memory.all_facts(

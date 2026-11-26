@@ -107,6 +107,7 @@ from iras.v5 import build_v5_runtime
 from iras.agenda.routes import register_agenda_routes
 from iras.identity import scope as people_scope
 from iras.identity.context import hint as build_speaker_hint, resolve as resolve_speaker
+from iras.right_now import message_for as right_now_message, register_right_now_routes
 from iras.identity.routes import register_identity_routes
 from iras.identity.store import IdentityStore
 from iras.voice.gemini_tts import (
@@ -206,6 +207,9 @@ class ChatIn(BaseModel):
     # Optional hint from the web screen about who is talking: {"person_id", "via", "score"} or {"guest": true}.
     # It is checked by iras.identity.context. It is a hint, never a login.
     speaker: dict | None = Field(default=None)
+    # Optional: the screen asks for the "Right now" lines in her prompt and says its time zone: {"tz", "offset"}.
+    # Left out when the screen's switch is off. The server reads the clock, calendars and reminders itself. See iras.right_now.
+    right_now: dict | None = Field(default=None)
 
 
 class ChatOut(BaseModel):
@@ -1040,10 +1044,24 @@ def _speaker_audit(hint: dict | None) -> dict | None:
     return {"kind": hint.get("kind"), "person_id": hint.get("person_id"), "via": hint.get("via")}
 
 
+def _right_now_message(raw: dict | None, speaker: dict | None) -> str | None:
+    """Her "Right now" lines for this request, or None. It never raises: chat must work without it."""
+    global _identity_store_cache
+    if not isinstance(raw, dict):
+        return None
+    try:
+        if _identity_store_cache is None:
+            _identity_store_cache = IdentityStore(v5_runtime.db)
+        return right_now_message(raw, speaker, v5_runtime, _identity_store_cache)
+    except Exception:
+        return None
+
+
 @contextmanager
-def _cloud_thread_scope(thread_id: str, speaker: dict | None = None):
+def _cloud_thread_scope(thread_id: str, speaker: dict | None = None, right_now: dict | None = None):
     previous = getattr(runtime.agent, "context_messages_override", None)
     previous_speaker = getattr(runtime.agent, "speaker_context", None)
+    previous_awareness = getattr(runtime.agent, "awareness_context", None)
     rows = cloud_state.messages(thread_id, limit=max(2, int(getattr(runtime.agent, "context_message_limit", 12))))
     runtime.agent.context_messages_override = [
         {"role": str(row.get("role") or "assistant"), "content": str(row.get("content") or "")}
@@ -1051,6 +1069,9 @@ def _cloud_thread_scope(thread_id: str, speaker: dict | None = None):
         if str(row.get("role") or "") in {"user", "assistant"} and str(row.get("content") or "")
     ]
     runtime.agent.speaker_context = speaker
+    # What is going on around her (time of day, next event, reminders due), for the person who is here.
+    # It is worked out here, inside the request, after the screen has had its first answer.
+    runtime.agent.awareness_context = _right_now_message(right_now, speaker)
     previous_scope = people_scope.set_current(people_scope.from_hint(speaker))  # whose memories she may use
     try:
         yield
@@ -1058,6 +1079,7 @@ def _cloud_thread_scope(thread_id: str, speaker: dict | None = None):
         people_scope.set_current(previous_scope)
         runtime.agent.context_messages_override = previous
         runtime.agent.speaker_context = previous_speaker
+        runtime.agent.awareness_context = previous_awareness
 
 
 def _multitask_context(
@@ -3153,7 +3175,7 @@ def chat(
                 metrics = direct["metrics"]
             else:
                 with agent_lock:
-                    with _cloud_thread_scope(cloud_thread_id, speaker_hint):
+                    with _cloud_thread_scope(cloud_thread_id, speaker_hint, body.right_now):
                         with _remote_permission_scope(remote_session):
                             with _master_agent_execution_scope(remote_session, runtime.agent):
                                 with _cloud_agent_provider_scope(remote_session, device_id, runtime.agent):
@@ -3911,7 +3933,7 @@ def chat_stream(
                 # lock, copy metrics, then release the lock BEFORE yielding SSE
                 # data so a slow/aborted client cannot pin the agent.
                 try:
-                    with _cloud_thread_scope(cloud_thread_id, speaker_hint):
+                    with _cloud_thread_scope(cloud_thread_id, speaker_hint, body.right_now):
                         with _remote_permission_scope(remote_session):
                             with _master_agent_execution_scope(remote_session, runtime.agent):
                                 with _cloud_agent_provider_scope(remote_session, device_id, runtime.agent):
@@ -3936,7 +3958,7 @@ def chat_stream(
             else:
                 # Ordinary no-tool conversation keeps true token streaming.
                 try:
-                    with _cloud_thread_scope(cloud_thread_id, speaker_hint):
+                    with _cloud_thread_scope(cloud_thread_id, speaker_hint, body.right_now):
                         with _remote_permission_scope(remote_session):
                             with _master_agent_execution_scope(remote_session, runtime.agent):
                                 with _cloud_agent_provider_scope(remote_session, device_id, runtime.agent):
@@ -5201,6 +5223,7 @@ class _MemoryOps:
 
 register_identity_routes(app, _authorized, lambda: v5_runtime.db, memory_ops=_MemoryOps())
 register_agenda_routes(app, _authorized, lambda: v5_runtime)
+register_right_now_routes(app, _authorized, lambda: v5_runtime)
 
 if web_dir:
     app.mount(

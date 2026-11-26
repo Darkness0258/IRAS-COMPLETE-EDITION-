@@ -122,6 +122,26 @@
       return ok("Read " + (e.events || []).length + " " + ((e.events || []).length === 1 ? "event" : "events") + " in the next 7 days from " + feeds.length + " " + (feeds.length === 1 ? "calendar" : "calendars") + ".");
     } },
 
+    { id: "rightnow", name: "Right now", needsToken: true, run: async () => {
+      if (!(IRAS.rightNow && IRAS.rightNow.enabled())) return skip("It is switched off in Settings (Right now). Switch it on to see the card and to give her these facts.");
+      let f;
+      try { f = await timed(IRAS.api("/v1/right-now?" + IRAS.rightNow.query()), 20000); }
+      catch (e) {
+        if (/not found|404/i.test(String((e && e.message) || ""))) return fail("The server does not have Right now yet.", "Push the new version to GitHub and let Render redeploy. Then check again.");
+        throw e;
+      }
+      if (!f || !f.clock) return warn("The server could not read this device's time zone, so she has no time of day.", "Reload the page and check again.");
+      const guest = f.who && f.who.kind === "guest";
+      const as = guest ? "a guest (only the time of day is given)" : f.who && f.who.kind === "person" ? "the person who is here" : "nobody in particular (shared things only)";
+      const cal = f.calendar || {}, rem = f.reminders || {};
+      if (!guest && (cal.state === "slow" || cal.state === "unavailable")) return warn("The calendar did not answer, so she cannot say what is next.", "Look at the Calendar line above.");
+      if (!guest && rem.state === "unavailable") return warn("The reminders could not be read.", "Look at the Render logs.");
+      const n = (rem.items || []).length + Number(rem.more || 0);
+      const ev = guest ? "" : cal.state === "none" ? " No calendar is linked." : cal.event ? " The next event was found." : " No event in the next 7 days.";
+      const rm = guest ? "" : n ? " " + n + (n === 1 ? " reminder is" : " reminders are") + " due soon." : " No reminder is due soon.";
+      return ok("Works, as " + as + "." + ev + rm);
+    } },
+
     { id: "pc", name: "Your PC", needsToken: true, run: async () => {
       const r = await IRAS.api("/v1/devices");
       const online = ((r && r.devices) || []).filter((d) => d.online);

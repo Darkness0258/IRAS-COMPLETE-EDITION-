@@ -1788,6 +1788,80 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
 .ask-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 
 /* ==========================================================================
+   Right now: the card on Home with the time of day, who is here, the next
+   calendar event and the reminders that are due.
+   A computer shows the card above Live activity. A phone shows one line, and the
+   card opens above the message box when you press the arrow.
+   Only the accent colour is used here: amber and red stay for authority.
+   ========================================================================== */
+
+.home-side { display: flex; flex-direction: column; gap: var(--s-4); min-height: 0; min-width: 0; }
+@media (min-width: 900px) { .home-side > .live { flex: 1 1 auto; } }   /* on a phone the Live panel keeps its own one-line size */
+
+.rn { display: grid; gap: var(--s-2); padding: var(--s-4) var(--s-5); border-radius: var(--r-xl); min-width: 0; }
+.rn-head { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
+.rn-summary, .rn-toggle { display: none; }
+
+.rn-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.rn-row { padding: 8px 0; border-top: 1px solid var(--line); }
+.rn-row:first-child { border-top: 0; padding-top: 2px; }
+.rn-row, .rn-hit { display: grid; grid-template-columns: 28px minmax(0, 1fr); column-gap: 10px; align-items: start; }
+
+.rn-hit { grid-column: 1 / -1; width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: var(--r-sm); }
+.rn-hit:hover .rn-main { text-decoration: underline; text-underline-offset: 3px; }
+.rn-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.rn-ic { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); }
+.rn-ic .i { width: 16px; height: 16px; }
+.rn-txt { display: grid; gap: 1px; min-width: 0; }
+.rn-label { font-size: var(--fs-12); color: var(--muted); }
+.rn-main { font-size: var(--fs-15); font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.rn-main.is-lines { display: grid; gap: 4px; font-weight: 400; }
+.rn-line { display: block; }
+.rn-what { font-weight: 600; }
+.rn-when, .rn-more { color: var(--muted); font-size: var(--fs-13); font-weight: 400; }
+.rn-when { white-space: nowrap; }
+.rn-tag { display: inline-block; padding: 0 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: var(--fs-12); white-space: nowrap; }
+.rn-sub { font-size: var(--fs-13); color: var(--muted); overflow-wrap: anywhere; }
+.rn-sub .link-btn { padding: 0; font-size: var(--fs-13); }
+
+/* a short window: the small captions stay for screen readers, and the date goes, so Live activity keeps its room */
+@media (min-width: 900px) and (max-height: 800px) {
+  .home-side { gap: var(--s-3); }
+  .rn { padding: var(--s-3) var(--s-4); }
+  .rn-row { padding: 5px 0; }
+  .rn-label { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .rn-row.is-time .rn-sub { display: none; }
+}
+
+/* a phone: one line, and the card opens above the message box */
+@media (max-width: 899px) {
+  .home-side { display: contents; }
+  .rn { order: 2; flex: none; gap: 0; padding: 6px 8px 6px 16px; }
+  .rn-head { min-height: 40px; }
+  .rn-head .h3 { font-size: var(--fs-15); flex: none; }
+  .rn-summary { display: block; flex: 1; min-width: 0; margin: 0; color: var(--muted); font-size: var(--fs-13); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rn-toggle { display: inline-grid; flex: none; }
+  .rn-list { display: none; }
+  .rn.is-open { position: fixed; z-index: 40; left: 12px; right: 12px; bottom: calc(160px + var(--safe-b)); gap: var(--s-2); padding: var(--s-4); max-height: calc(100dvh - var(--topbar-h) - var(--safe-t) - 190px - var(--safe-b)); overflow-y: auto; background: var(--surface-solid); box-shadow: var(--shadow-2); }   /* solid: what is behind it must not show through */
+  .rn.is-open .rn-list { display: grid; }
+  .rn.is-open .rn-summary { display: none; }
+  .rn.is-open .rn-head { justify-content: space-between; }
+}
+
+/* a short phone has no height to spare (the orb would slide under the top bar): the row is hidden, and a small clock
+   button in the Live activity row opens the same card as a sheet */
+.live-rn { display: none; }
+@media (max-width: 899px) and (max-height: 799px) {
+  .rn:not(.is-open) { display: none; }
+  .live-rn { display: inline-grid; flex: none; }
+}
+
+@media (min-width: 900px) {
+  body[data-ready]:not(.intro-done) .rn { animation: rise 800ms var(--ease) 160ms both; }
+}
+
+/* ==========================================================================
    Check everything (Settings)
    ========================================================================== */
 
@@ -2114,29 +2188,41 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
           <div class="composer-wrap" data-composer="home"></div>
         </div>
 
-        <aside class="live glass" id="livePanel" aria-label="Live activity">
-          <header class="live-head">
-            <div class="live-title">
-              <span class="live-dot on" aria-hidden="true"></span>
-              <div class="live-title-text">
-                <h2 class="h3">Live activity</h2>
-                <p class="live-latest" id="liveLatest"></p>
+        <div class="home-side">
+          <section class="rn surface" id="rightNow" aria-labelledby="rnTitle" aria-busy="false" hidden>
+            <header class="rn-head">
+              <h2 class="h3" id="rnTitle">Right now</h2>
+              <p class="rn-summary" id="rnSummary"></p>
+              <button class="rn-toggle btn-icon sm" id="rnToggle" type="button" aria-expanded="false" aria-controls="rnBody" aria-label="Show more of Right now"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-chevron-up"/></svg></button>
+            </header>
+            <ul class="rn-list" id="rnBody"></ul>
+          </section>
+
+          <aside class="live glass" id="livePanel" aria-label="Live activity">
+            <header class="live-head">
+              <div class="live-title">
+                <span class="live-dot on" aria-hidden="true"></span>
+                <div class="live-title-text">
+                  <h2 class="h3">Live activity</h2>
+                  <p class="live-latest" id="liveLatest"></p>
+                </div>
               </div>
-            </div>
+              <button class="live-rn btn-icon sm" id="rnOpen" type="button" aria-expanded="false" aria-controls="rightNow" aria-label="Right now" hidden><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg></button>
             <button class="live-toggle btn-icon sm" id="liveToggle" type="button" aria-expanded="false" aria-controls="liveList" aria-label="Show more live activity"><svg class="i i-sm" aria-hidden="true" focusable="false"><use href="#i-chevron-up"/></svg></button>
-            <div class="seg sm" role="radiogroup" aria-label="Filter live activity">
-              <label><input type="radio" name="liveFilter" value="all" checked><span>All</span></label>
-              <label><input type="radio" name="liveFilter" value="tool"><span>Actions</span></label>
-              <label><input type="radio" name="liveFilter" value="agent"><span>Agents</span></label>
-            </div>
-          </header>
-          <div class="live-pinned" id="livePinned" hidden></div>
-          <ul class="live-list" id="liveList" tabindex="0" aria-label="Latest actions"></ul>
-          <footer class="live-foot">
-            <span class="muted" id="liveCount">Showing the latest actions</span>
-            <a class="link-btn" href="#/activity">Open audit log</a>
-          </footer>
-        </aside>
+              <div class="seg sm" role="radiogroup" aria-label="Filter live activity">
+                <label><input type="radio" name="liveFilter" value="all" checked><span>All</span></label>
+                <label><input type="radio" name="liveFilter" value="tool"><span>Actions</span></label>
+                <label><input type="radio" name="liveFilter" value="agent"><span>Agents</span></label>
+              </div>
+            </header>
+            <div class="live-pinned" id="livePinned" hidden></div>
+            <ul class="live-list" id="liveList" tabindex="0" aria-label="Latest actions"></ul>
+            <footer class="live-foot">
+              <span class="muted" id="liveCount">Showing the latest actions</span>
+              <a class="link-btn" href="#/activity">Open audit log</a>
+            </footer>
+          </aside>
+        </div>
       </section>
 
       <section class="view chat" data-view="chat" id="view-chat" hidden aria-labelledby="chatTitle">
@@ -2565,6 +2651,14 @@ body[data-ready]:not(.intro-done) .rail, body[data-ready]:not(.intro-done) .topb
             </div>
           </section>
 
+          <section class="set-card surface" aria-labelledby="setRightNowTitle">
+            <h2 class="h3" id="setRightNowTitle">Right now</h2>
+            <div class="set-row">
+              <div class="set-text"><label class="label" for="setRightNow">Tell her what is going on around her</label><p class="hint" id="rightNowHint">A card on Home, and the same facts for her with each message: the time of day, who is here, the next calendar event and the reminders that are due. Only for the person who is here. A guest gets the time of day and nothing else. Off means no card, and she gets none of it.</p></div>
+              <label class="switch"><input type="checkbox" role="switch" id="setRightNow" aria-describedby="rightNowHint"><span class="track"></span></label>
+            </div>
+          </section>
+
           <section class="set-card surface" aria-labelledby="setConn">
             <h2 class="h3" id="setConn">Connection</h2>
             <div id="liveFields">
@@ -2836,6 +2930,7 @@ const DEFAULTS = {
   realMic: true,
   speakReplies: true,
   autoWho: null,          // check whose voice it is while you talk: null = automatic (on for a computer, off for a phone) | true | false
+  rightNow: true,         // the "Right now" card on Home, and the same facts for her with each message (time of day, who is here, next event, reminders due)
 };
 const settings = Object.assign({}, DEFAULTS, store.get(SETTINGS_KEY, {}));
 const saveSettings = () => store.set(SETTINGS_KEY, settings);
@@ -3682,7 +3777,7 @@ IRAS.closeDialog = closeDialog;
       const res = await fetch(b + "/v1/chat/stream", {
         method: "POST",
         headers: headers({ "Content-Type": "application/json", Accept: "text/event-stream" }),
-        body: JSON.stringify({ message: text, device_id: "web", client_id: clientId(), thread_id: threadId(), turn_id: uid("turn"), speaker: IRAS.who ? IRAS.who.forChat() : undefined }),
+        body: JSON.stringify({ message: text, device_id: "web", client_id: clientId(), thread_id: threadId(), turn_id: uid("turn"), speaker: IRAS.who ? IRAS.who.forChat() : undefined, right_now: IRAS.rightNow ? IRAS.rightNow.forChat() : undefined }),
         signal: ctrl.signal,
       });
       if (!res.ok || !res.body) throw new Error(res.status === 401 || res.status === 403 ? "The server refused the access token." : `The server answered ${res.status}.`);
@@ -6769,7 +6864,7 @@ IRAS.closeDialog = closeDialog;
       return `<button class="who-pill is-guest" type="button" data-who-open aria-haspopup="dialog" title="Guest mode. Your private things stay private until you clear it.">${icon("shield", "i-sm")}<span>A guest is here</span></button>`;
     }
     const mins = Math.max(1, Math.ceil((HOLD - (Date.now() - s.at)) / 60000));
-    return `<button class="who-pill is-person" type="button" data-who-open aria-haspopup="dialog" title="She remembers this for about ${mins} more minutes." aria-label="Talking as ${esc(s.name)}, ${HOW[s.via] || "picked"}. Change who is here.">${icon(ICON[s.via] || "user", "i-sm")}<span>${esc(s.name)}</span><small>${HOW[s.via] || "picked"}</small></button>`;
+    return `<button class="who-pill is-person" type="button" data-who-open aria-haspopup="dialog" title="She remembers this for about ${mins} more minutes." aria-label="${esc(s.name)} ${HOW[s.via] || "picked"}, talking now. Change who is here.">${icon(ICON[s.via] || "user", "i-sm")}<span>${esc(s.name)}</span> <small>${HOW[s.via] || "picked"}</small></button>`;
   }
 
   /* Rebuilt only when what it says changes, so a click or the keyboard focus is never lost to a timer.
@@ -7381,6 +7476,227 @@ IRAS.closeDialog = closeDialog;
   };
 })();
 
+/* ---- 78-rightnow.js ---- */
+/* ==========================================================================
+   Right now: what is going on around her, for the person who is here.
+
+     GET /v1/right-now?person_id=&via=&guest=&tz=&offset=     the facts (see src/iras/right_now.py)
+
+   One set of facts. This card shows them on Home, and the chat sends her the same request
+   with each message ({ tz, offset }), so the server writes her lines from the same facts.
+   The switch is in Settings: off means no card, and she gets nothing.
+
+     IRAS.rightNow.enabled()    true unless the switch is off
+     IRAS.rightNow.forChat()    what the chat adds to a message: { tz, offset }, or undefined when the switch is off
+     IRAS.rightNow.refresh(f)   ask the server now (f = true skips the short wait)
+
+   The facts belong to one person. The server only answers for who we ask about, and this card
+   never shows facts that were asked for somebody else: after Who is here changes, the private
+   rows say "Checking" until the answer for the new person arrives.
+   ========================================================================== */
+"use strict";
+
+(function () {
+  const FRESH = 15000;   // asked again no sooner than this, when Home is shown again
+  const EVERY = 60000;   // while Home is on screen, it asks the server this often
+  const TICK = 20000;    // and it redraws this often, so "in 12 min" stays right between answers
+  const HOW = { face: "known by face", voice: "known by voice", chosen: "picked by hand" };
+
+  let facts = null, askedFor = "", failed = false, at = 0, pending = null, again = false, open = false;
+  let link = "";   // how the link to the server is doing: "" (not tried yet), "syncing", "synced" or "offline"
+
+  /* ---------- what the page knows without the server ---------- */
+  const enabled = () => settings.rightNow !== false;
+  const zone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) { return ""; } };
+  const offset = () => String(-new Date().getTimezoneOffset());   // minutes east of UTC
+  const forChat = () => (enabled() ? { tz: zone(), offset: Number(offset()) } : undefined);
+  const connected = () => settings.source === "live" && !!String(settings.server || "").trim() && !!(IRAS.live && IRAS.live.ok);
+  const anyone = () => !!(IRAS.people && IRAS.people.all().length);
+
+  /* who is here, as a short key: facts asked for one person are never shown for another */
+  function key() {
+    const w = IRAS.who && IRAS.who.current();
+    return !w ? "none" : w.kind === "guest" ? "guest" : "p:" + String(w.person_id || "");
+  }
+
+  function query() {
+    const w = IRAS.who && IRAS.who.forChat();
+    const p = new URLSearchParams();
+    if (w && w.guest) p.set("guest", "1");
+    else if (w && w.person_id) { p.set("person_id", w.person_id); p.set("via", w.via || "chosen"); }
+    const z = zone();
+    if (z) p.set("tz", z);
+    p.set("offset", offset());
+    return p.toString();
+  }
+
+  /* ---------- words ---------- */
+  const part = (h) => (h >= 5 && h < 12 ? "Morning" : h >= 12 && h < 17 ? "Afternoon" : h >= 17 && h < 21 ? "Evening" : "Night");
+  const clockText = (d) => d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const dateText = (d) => d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+  function dayText(d, now) {
+    const a = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const b = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const gap = Math.round((b - a) / 864e5);
+    return gap === 0 ? "" : gap === 1 ? "tomorrow" : d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+  }
+  function inText(ms) {
+    const m = Math.floor(ms / 6e4);
+    if (m <= 0) return "now";
+    if (m < 60) return "in " + m + " min";
+    const h = Math.floor(m / 60), r = m % 60;
+    if (h < 24) return "in " + h + " h" + (r ? " " + r + " min" : "");
+    const d = Math.floor(h / 24);
+    return "in " + d + (d === 1 ? " day" : " days");
+  }
+  const when = (iso, now) => {
+    const d = new Date(iso);
+    if (isNaN(d)) return { rel: "", clock: "" };
+    const day = dayText(d, now);
+    return { rel: inText(d - now), clock: clockText(d) + (day ? " " + day : "") };
+  };
+
+  /* ---------- the rows ---------- */
+  const text = (main, sub) => ({ main: esc(main), sub: sub ? esc(sub) : "" });
+
+  function timeRow(now) {
+    return { kind: "time", ic: now.getHours() >= 5 && now.getHours() < 18 ? "sun" : "moon", label: "Time", main: esc(part(now.getHours()) + " · " + clockText(now)), sub: esc(dateText(now)) };
+  }
+
+  function whoRow() {
+    const w = IRAS.who && IRAS.who.current();
+    if (w && w.kind === "guest") return { kind: "who", ic: "shield", label: "Who is here", main: "A guest", sub: "Your private things stay hidden", who: true };
+    if (w && w.kind === "person") return { kind: "who", ic: "user", label: "Who is here", main: esc(w.name || "Someone"), sub: esc(HOW[w.via] || ""), who: true };
+    return { kind: "who", ic: "users", label: "Who is here", main: "No one picked", sub: anyone() ? "Showing what is shared with everyone" : "Tap to say who is here", who: true };
+  }
+
+  /* the two rows that come from the server */
+  function state(kind) {
+    const w = IRAS.who && IRAS.who.current();
+    if (w && w.kind === "guest") return { text: text("Hidden for a guest") };
+    if (!connected()) {   // still trying (start-up) is not the same as not connected
+      const trying = settings.source === "live" && !!String(settings.server || "").trim() && (link === "" || link === "syncing");
+      return trying ? { text: text("Checking…"), busy: true } : { text: text("Not connected", "Connect to your server in Settings.") };
+    }
+    if (failed) return { text: text("Could not load this", "It will try again in a minute.") };
+    if (!facts || askedFor !== key()) return { text: text("Checking…"), busy: true };
+    return { facts: facts[kind] || {} };
+  }
+
+  function eventRow(now) {
+    const row = { kind: "event", ic: "calendar", label: "Next event" };
+    const s = state("calendar");
+    if (!s.facts) return Object.assign(row, s.text || {}, { ic: s.text && s.text.main === "Hidden for a guest" ? "lock" : row.ic });
+    const c = s.facts;
+    if (c.state === "none") return Object.assign(row, { main: "No calendar yet", sub: '<a class="link-btn" href="#/agents">Add one</a>' });
+    if (c.state === "slow" || c.state === "unavailable") return Object.assign(row, text("Could not read the calendar", "It will try again."));
+    if (!c.event) return Object.assign(row, text("Nothing in the next 7 days"));
+    const t = when(c.event.start, now);
+    return Object.assign(row, { main: esc(c.event.title), sub: esc([t.rel, t.clock].filter(Boolean).join(" · ")) });
+  }
+
+  function remindersRow(now) {
+    const row = { kind: "reminders", ic: "bell", label: "Reminders due" };
+    const s = state("reminders");
+    if (!s.facts) return Object.assign(row, s.text || {}, { ic: s.text && s.text.main === "Hidden for a guest" ? "lock" : row.ic });
+    const r = s.facts;
+    if (r.state === "unavailable") return Object.assign(row, text("Could not read the reminders", "It will try again."));
+    const items = r.items || [];
+    if (!items.length) return Object.assign(row, text("Nothing due in the next " + Number(r.hours || 4) + " hours"));
+    const lines = items.map((i) => {
+      const t = when(i.due, now);
+      const tag = anyone() && i.for === "everyone" ? ' <span class="rn-tag">for everyone</span>' : "";
+      return `<span class="rn-line"><span class="rn-what">${esc(i.text)}</span> <span class="rn-when">${esc(t.rel)}</span>${tag}</span>`;
+    });
+    if (r.more) lines.push(`<span class="rn-line rn-more">and ${Number(r.more)} more</span>`);
+    return Object.assign(row, { main: lines.join(""), lines: true });
+  }
+
+  /* one short line for a phone, where the card is folded */
+  function summary(now) {
+    const w = IRAS.who && IRAS.who.current();
+    const base = part(now.getHours()) + " · " + clockText(now);
+    if (!connected() || failed || !facts || askedFor !== key() || (w && w.kind === "guest")) return base;
+    const first = ((facts.reminders || {}).items || [])[0];
+    if (first) return first.text + " · " + when(first.due, now).rel;
+    const ev = (facts.calendar || {}).event;
+    if (ev) return ev.title + " · " + when(ev.start, now).rel;
+    return base;
+  }
+
+  const rowHtml = (r) => {
+    const inner = `<span class="rn-ic">${icon(r.ic)}</span><span class="rn-txt"><span class="rn-label">${esc(r.label)}</span><span class="rn-main${r.lines ? " is-lines" : ""}">${r.main || ""}</span>${r.sub ? `<span class="rn-sub">${r.sub}</span>` : ""}</span>`;
+    return r.who
+      ? `<li class="rn-row is-${r.kind}"><button class="rn-hit" type="button" data-who-open aria-haspopup="dialog">${inner}</button></li>`
+      : `<li class="rn-row is-${r.kind}">${inner}</li>`;
+  };
+
+  function render() {
+    const el = $("#rightNow");
+    if (!el) return;
+    el.hidden = !enabled();
+    const opener = $("#rnOpen");
+    if (opener) opener.hidden = !enabled();
+    if (!enabled()) { if (open) fold(false); return; }
+    const now = new Date();
+    const rows = [timeRow(now), whoRow(), eventRow(now), remindersRow(now)];
+    el.setAttribute("aria-busy", pending ? "true" : "false");
+    $("#rnBody").innerHTML = rows.map(rowHtml).join("");
+    $("#rnSummary").textContent = summary(now);
+  }
+
+  /* ---------- asking the server ---------- */
+  function refresh(force) {
+    if (!enabled()) return Promise.resolve();
+    if (!connected()) { facts = null; failed = false; render(); return Promise.resolve(); }
+    if (pending) { again = true; return pending; }
+    if (!force && facts && askedFor === key() && Date.now() - at < FRESH) return Promise.resolve();
+    const mine = key();
+    pending = IRAS.api("/v1/right-now?" + query())
+      .then((j) => { facts = j; askedFor = mine; failed = false; at = Date.now(); })
+      .catch(() => { facts = null; failed = true; at = Date.now(); })   // an older server has no such route: the card still shows the time and who
+      .then(() => { pending = null; render(); if (again) { again = false; refresh(true); } });
+    render();
+    return pending;
+  }
+
+  /* ---------- the folded card on a phone ---------- */
+  function fold(on) {
+    const el = $("#rightNow"), btn = $("#rnToggle"), opener = $("#rnOpen");
+    if (!el || !btn) return;
+    open = !!on;
+    if (opener) opener.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) { const lt = $("#liveToggle"); if (lt && lt.getAttribute("aria-expanded") === "true") lt.click(); }   // one sheet at a time
+    el.classList.toggle("is-open", open);
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    btn.setAttribute("aria-label", open ? "Show less of Right now" : "Show more of Right now");
+    $("svg use", btn).setAttribute("href", open ? "#i-chevron-down" : "#i-chevron-up");
+  }
+
+  IRAS.rightNow = { enabled, forChat, refresh, render, query };
+
+  IRAS.initRightNow = function () {
+    $("#rnToggle").addEventListener("click", () => fold(!open));
+    $("#rnOpen").addEventListener("click", (e) => { e.stopPropagation(); fold(!open); if (open) $("#rnToggle").focus(); });
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape" || !open) return;
+      const opener = $("#rnOpen"), short = opener && opener.offsetParent !== null;
+      fold(false);
+      (short ? opener : $("#rnToggle")).focus();   // back to the button that opened it
+    });
+    document.addEventListener("click", (e) => { if (open && !e.target.closest("#rightNow, #rnOpen")) fold(false); });
+    bus.on("who", () => { render(); refresh(true); });
+    bus.on("people", render);
+    bus.on("sync", (e) => { link = e.state || ""; render(); refresh(true); });
+    bus.on("view", (e) => { if (e.view === "home") { render(); refresh(); } else if (open) fold(false); });
+    bus.on("setting", (e) => { if (e.key === "rightNow" || e.key === "source" || e.key === "server") { render(); refresh(true); } });
+    setInterval(() => { if (!document.hidden && IRAS.view() === "home") render(); }, TICK);
+    setInterval(() => { if (!document.hidden && IRAS.view() === "home") refresh(); }, EVERY);
+    render();
+    refresh();
+  };
+})();
+
 /* ---- 80-settings.js ---- */
 /* ==========================================================================
    Settings
@@ -7403,6 +7719,7 @@ IRAS.closeDialog = closeDialog;
     $("#wake").value = settings.wake;
     $("#setSpeak").checked = !!settings.speakReplies;
     $("#setRealMic").checked = !!settings.realMic;
+    $("#setRightNow").checked = settings.rightNow !== false;
     $("#server").value = settings.server || "";
     $("#token").value = store.sget("iras-api-token", "");
     $("#liveFields").hidden = settings.source !== "live";
@@ -7437,6 +7754,10 @@ IRAS.closeDialog = closeDialog;
       if (!e.target.checked && IRAS.audio.on) IRAS.audio.stop();
     });
     $("#setAutoWho").addEventListener("change", (e) => setSetting("autoWho", e.target.checked));
+    $("#setRightNow").addEventListener("change", (e) => {
+      setSetting("rightNow", e.target.checked);
+      toast(e.target.checked ? "Right now is on." : "Right now is off. No card, and she gets none of these facts.", { icon: "clock" });
+    });
     bus.on("people", autoWho);
     bus.on("view", (e) => { if (e.view === "settings") autoWho(); });
 
@@ -7616,6 +7937,26 @@ IRAS.closeDialog = closeDialog;
       if (problems.length) return warn("Could not read your calendar: " + String(problems[0].message || problems[0]).slice(0, 160), "Use the private iCal address from your calendar's settings, not the page link. Then add it again.");
       if (bad) return warn("The last sync of " + (bad.name || "a calendar") + " failed: " + String(bad.last_error).slice(0, 140), "Press sync in Agents, Calendar. If it keeps failing, add the link again.");
       return ok("Read " + (e.events || []).length + " " + ((e.events || []).length === 1 ? "event" : "events") + " in the next 7 days from " + feeds.length + " " + (feeds.length === 1 ? "calendar" : "calendars") + ".");
+    } },
+
+    { id: "rightnow", name: "Right now", needsToken: true, run: async () => {
+      if (!(IRAS.rightNow && IRAS.rightNow.enabled())) return skip("It is switched off in Settings (Right now). Switch it on to see the card and to give her these facts.");
+      let f;
+      try { f = await timed(IRAS.api("/v1/right-now?" + IRAS.rightNow.query()), 20000); }
+      catch (e) {
+        if (/not found|404/i.test(String((e && e.message) || ""))) return fail("The server does not have Right now yet.", "Push the new version to GitHub and let Render redeploy. Then check again.");
+        throw e;
+      }
+      if (!f || !f.clock) return warn("The server could not read this device's time zone, so she has no time of day.", "Reload the page and check again.");
+      const guest = f.who && f.who.kind === "guest";
+      const as = guest ? "a guest (only the time of day is given)" : f.who && f.who.kind === "person" ? "the person who is here" : "nobody in particular (shared things only)";
+      const cal = f.calendar || {}, rem = f.reminders || {};
+      if (!guest && (cal.state === "slow" || cal.state === "unavailable")) return warn("The calendar did not answer, so she cannot say what is next.", "Look at the Calendar line above.");
+      if (!guest && rem.state === "unavailable") return warn("The reminders could not be read.", "Look at the Render logs.");
+      const n = (rem.items || []).length + Number(rem.more || 0);
+      const ev = guest ? "" : cal.state === "none" ? " No calendar is linked." : cal.event ? " The next event was found." : " No event in the next 7 days.";
+      const rm = guest ? "" : n ? " " + n + (n === 1 ? " reminder is" : " reminders are") + " due soon." : " No reminder is due soon.";
+      return ok("Works, as " + as + "." + ev + rm);
     } },
 
     { id: "pc", name: "Your PC", needsToken: true, run: async () => {
@@ -7850,7 +8191,7 @@ IRAS.closeDialog = closeDialog;
     document.documentElement.dataset.hidden = document.hidden ? "1" : "0";
     applyAppearance(true);
     IRAS.initHome();
-    ["initChat", "initAgents", "initActivity", "initMemory", "initIdentity", "initWho", "initAutoId", "initPc", "initSettings", "initCheck", "initLive"].forEach((fn) => { try { if (IRAS[fn]) IRAS[fn](); } catch (e) { console.error("[IRAS] " + fn + " failed", e); } });
+    ["initChat", "initAgents", "initActivity", "initMemory", "initIdentity", "initWho", "initRightNow", "initAutoId", "initPc", "initSettings", "initCheck", "initLive"].forEach((fn) => { try { if (IRAS[fn]) IRAS[fn](); } catch (e) { console.error("[IRAS] " + fn + " failed", e); } });
     routeFromHash(true);
     IRAS.initOrb();
     document.body.dataset.ready = "1";

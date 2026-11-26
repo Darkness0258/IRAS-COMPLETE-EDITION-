@@ -118,6 +118,15 @@ class AgendaService:
     def feeds(self) -> list[dict]:
         return [self._safe(r) for r in self._rows()]
 
+    def feed_count(self, owners: tuple[str, ...]) -> int:
+        """How many calendars belong to these owners (\"\" is the shared ones). It never opens a calendar link."""
+        return sum(1 for row in self._rows() if (row.get("owner") or "") in owners)
+
+    def reminder_job_ids(self) -> set[str]:
+        """The scheduled jobs the calendar made for its events (a reminder before each one)."""
+        rows = self.db.execute("SELECT job_id FROM agenda_reminders", fetch="all") or []
+        return {str(dict(row)["job_id"]) for row in rows}
+
     def _bytes(self, row: dict, force: bool = False) -> bytes:
         cached = self._cache.get(row["feed_id"])
         if cached and not force and time.monotonic() - cached[0] < CACHE_SECONDS:

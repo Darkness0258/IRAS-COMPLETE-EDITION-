@@ -62,7 +62,7 @@
       return `<button class="who-pill is-guest" type="button" data-who-open aria-haspopup="dialog" title="Guest mode. Your private things stay private until you clear it.">${icon("shield", "i-sm")}<span>A guest is here</span></button>`;
     }
     const mins = Math.max(1, Math.ceil((HOLD - (Date.now() - s.at)) / 60000));
-    return `<button class="who-pill is-person" type="button" data-who-open aria-haspopup="dialog" title="She remembers this for about ${mins} more minutes." aria-label="Talking as ${esc(s.name)}, ${HOW[s.via] || "picked"}. Change who is here.">${icon(ICON[s.via] || "user", "i-sm")}<span>${esc(s.name)}</span><small>${HOW[s.via] || "picked"}</small></button>`;
+    return `<button class="who-pill is-person" type="button" data-who-open aria-haspopup="dialog" title="She remembers this for about ${mins} more minutes." aria-label="${esc(s.name)} ${HOW[s.via] || "picked"}, talking now. Change who is here.">${icon(ICON[s.via] || "user", "i-sm")}<span>${esc(s.name)}</span> <small>${HOW[s.via] || "picked"}</small></button>`;
   }
 
   /* Rebuilt only when what it says changes, so a click or the keyboard focus is never lost to a timer.

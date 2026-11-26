@@ -19,6 +19,7 @@
     $("#wake").value = settings.wake;
     $("#setSpeak").checked = !!settings.speakReplies;
     $("#setRealMic").checked = !!settings.realMic;
+    $("#setRightNow").checked = settings.rightNow !== false;
     $("#server").value = settings.server || "";
     $("#token").value = store.sget("iras-api-token", "");
     $("#liveFields").hidden = settings.source !== "live";
@@ -53,6 +54,10 @@
       if (!e.target.checked && IRAS.audio.on) IRAS.audio.stop();
     });
     $("#setAutoWho").addEventListener("change", (e) => setSetting("autoWho", e.target.checked));
+    $("#setRightNow").addEventListener("change", (e) => {
+      setSetting("rightNow", e.target.checked);
+      toast(e.target.checked ? "Right now is on." : "Right now is off. No card, and she gets none of these facts.", { icon: "clock" });
+    });
     bus.on("people", autoWho);
     bus.on("view", (e) => { if (e.view === "settings") autoWho(); });
 

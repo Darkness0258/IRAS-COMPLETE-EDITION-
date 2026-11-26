@@ -6,6 +6,30 @@
 3. Render rebuilds (the first build is longer, it installs the Face ID and calendar packages). Then open the site and press Ctrl+F5.
 4. This push does not start the Android or Windows builds, because nothing in them changed. The phone and PC apps show the same screen, so they get the new screens as soon as Render is live.
 
+## Right now (new, update 8): she knows what is going on around her
+- **What it does:** for the person who is here, she now knows the time of day, who is here, the next calendar event and the reminders that are due. You see it on a **"Right now" card on Home**, and she gets **the same facts** with each message you send. It is the first small piece of "she knows each person better".
+- **The card has four rows:**
+  - **Time:** for example "Afternoon · 4:19 PM", with the date. It is the clock of the device you look at.
+  - **Who is here:** the name, and how she knows (face, voice, or picked by hand). Press the row to change who is here.
+  - **Next event:** the next event that has not started yet, from that person's calendars and the shared ones, looking 7 days ahead. It says when ("in 25 min · 4:45 PM"). With no calendar at all it says so and offers "Add one". An event that is already running, and all-day events, are not shown (see below).
+  - **Reminders due:** reminders that are due now, late (up to one day), or due in the next **4 hours**. Up to three are listed, and it says how many more there are. The reminder that the calendar makes by itself before each event is not listed twice.
+- **Who sees what** (the same rule as memory):
+  - **A person:** the shared things and their own. Never anyone else's.
+  - **Nobody picked:** only the shared things.
+  - **A guest:** only the time of day. For a guest the server does not even read the calendar or the reminders. The card says "Hidden for a guest".
+  - When the person changes, the card **at once** stops showing the old person's things ("Checking…") until the answer for the new person has come. A test checks this.
+- **What she is given:** a few lines (about 600 letters at most), right after the "who is talking" message. The **server** writes them from its own clock, calendars and reminders. The screen sends only its time zone, so the screen cannot put its own sentences into her instructions. Event titles and reminder texts are cleaned, cut short and put in quotes, and she is told they are data, not instructions. She is told to use them only when they help (for example when you ask "what is next?"), not to read them out on every turn, and that they never unlock an approval. If a calendar does not answer in 1.5 seconds she does not wait: she is told "not available right now, do not guess".
+- **Please know:** with the switch on, the title of your next event and the text of your due reminders go to the AI model inside the message, in the same way her remembered facts do. A guest's calendar and reminders never do.
+- **The off switch:** Settings, **Right now**, "Tell her what is going on around her". It is on by itself. Off means: no card, the server is not asked, and your messages carry nothing about it. Like the other screen settings it belongs to this window or app.
+- **On a phone** there is no height to spare, so:
+  - on a tall phone (about 800 px or more) the card is **one line** above Live activity. It shows the most useful thing, for example your next reminder. Press the arrow to open the whole card.
+  - on a shorter phone there is **no extra line** (the orb would slide under the top bar). A small **clock button** in the Live activity row opens the card instead. Escape closes it.
+- **Check everything** (Settings) has a new line, **Right now**. It asks the server the same question as the card. It says OK, "look at this" (for example when a calendar does not answer in time) or "problem" (the server is too old to have Right now). It is skipped when the switch is off. The line only says words and counts, never an event title or a reminder text, because the report you copy is pasted to me.
+- **A small fix on the way:** the "who is here" pill on Home read out a different text than the one you see, which a screen reader or voice control could not match. Now they match. It looks the same.
+- **Change the 4 hours:** on Render, add `IRAS_RIGHT_NOW_REMINDER_HOURS` (for example `2` or `12`; allowed from 0.25 to 72).
+- **Not in this piece, on purpose:** an event that is already running; all-day events; events more than 7 days away; showing another person's reminder as "a private reminder". The card asks again every minute, when you come back to Home, and when who is here changes. A reminder you just added shows within a minute, or when you come back to Home.
+- **Server side:** new `GET /v1/right-now` (needs the token like the others). The chat accepts an optional `right_now` field (`tz` and `offset`). Older screens do not send it and nothing changes for them.
+
 ## Voice check while you talk (new, update 7)
 - **What it does:** when you talk to her in voice chat, she now checks whose voice it is **by herself**. You do not press "Who is speaking?". If she knows the voice, **Who is here** changes to that person (it says "voice"), and the reply already uses that person's own memory, calendar and reminders. It needs at least one taught voice (Identity, Voice ID).
 - **How:** while she listens, the page also records the same few seconds (the browser's speech recognition does not give out the sound). It sends them once to your server, to the same address the "Who is speaking?" button uses. The sound is dropped right after. Nothing is saved. The microphone is let go the moment you stop talking, and the header "Mic" chip shows it while it is on.

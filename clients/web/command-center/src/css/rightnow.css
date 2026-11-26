@@ -1,0 +1,73 @@
+/* ==========================================================================
+   Right now: the card on Home with the time of day, who is here, the next
+   calendar event and the reminders that are due.
+   A computer shows the card above Live activity. A phone shows one line, and the
+   card opens above the message box when you press the arrow.
+   Only the accent colour is used here: amber and red stay for authority.
+   ========================================================================== */
+
+.home-side { display: flex; flex-direction: column; gap: var(--s-4); min-height: 0; min-width: 0; }
+@media (min-width: 900px) { .home-side > .live { flex: 1 1 auto; } }   /* on a phone the Live panel keeps its own one-line size */
+
+.rn { display: grid; gap: var(--s-2); padding: var(--s-4) var(--s-5); border-radius: var(--r-xl); min-width: 0; }
+.rn-head { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
+.rn-summary, .rn-toggle { display: none; }
+
+.rn-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.rn-row { padding: 8px 0; border-top: 1px solid var(--line); }
+.rn-row:first-child { border-top: 0; padding-top: 2px; }
+.rn-row, .rn-hit { display: grid; grid-template-columns: 28px minmax(0, 1fr); column-gap: 10px; align-items: start; }
+
+.rn-hit { grid-column: 1 / -1; width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: var(--r-sm); }
+.rn-hit:hover .rn-main { text-decoration: underline; text-underline-offset: 3px; }
+.rn-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.rn-ic { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); }
+.rn-ic .i { width: 16px; height: 16px; }
+.rn-txt { display: grid; gap: 1px; min-width: 0; }
+.rn-label { font-size: var(--fs-12); color: var(--muted); }
+.rn-main { font-size: var(--fs-15); font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.rn-main.is-lines { display: grid; gap: 4px; font-weight: 400; }
+.rn-line { display: block; }
+.rn-what { font-weight: 600; }
+.rn-when, .rn-more { color: var(--muted); font-size: var(--fs-13); font-weight: 400; }
+.rn-when { white-space: nowrap; }
+.rn-tag { display: inline-block; padding: 0 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: var(--fs-12); white-space: nowrap; }
+.rn-sub { font-size: var(--fs-13); color: var(--muted); overflow-wrap: anywhere; }
+.rn-sub .link-btn { padding: 0; font-size: var(--fs-13); }
+
+/* a short window: the small captions stay for screen readers, and the date goes, so Live activity keeps its room */
+@media (min-width: 900px) and (max-height: 800px) {
+  .home-side { gap: var(--s-3); }
+  .rn { padding: var(--s-3) var(--s-4); }
+  .rn-row { padding: 5px 0; }
+  .rn-label { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .rn-row.is-time .rn-sub { display: none; }
+}
+
+/* a phone: one line, and the card opens above the message box */
+@media (max-width: 899px) {
+  .home-side { display: contents; }
+  .rn { order: 2; flex: none; gap: 0; padding: 6px 8px 6px 16px; }
+  .rn-head { min-height: 40px; }
+  .rn-head .h3 { font-size: var(--fs-15); flex: none; }
+  .rn-summary { display: block; flex: 1; min-width: 0; margin: 0; color: var(--muted); font-size: var(--fs-13); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rn-toggle { display: inline-grid; flex: none; }
+  .rn-list { display: none; }
+  .rn.is-open { position: fixed; z-index: 40; left: 12px; right: 12px; bottom: calc(160px + var(--safe-b)); gap: var(--s-2); padding: var(--s-4); max-height: calc(100dvh - var(--topbar-h) - var(--safe-t) - 190px - var(--safe-b)); overflow-y: auto; background: var(--surface-solid); box-shadow: var(--shadow-2); }   /* solid: what is behind it must not show through */
+  .rn.is-open .rn-list { display: grid; }
+  .rn.is-open .rn-summary { display: none; }
+  .rn.is-open .rn-head { justify-content: space-between; }
+}
+
+/* a short phone has no height to spare (the orb would slide under the top bar): the row is hidden, and a small clock
+   button in the Live activity row opens the same card as a sheet */
+.live-rn { display: none; }
+@media (max-width: 899px) and (max-height: 799px) {
+  .rn:not(.is-open) { display: none; }
+  .live-rn { display: inline-grid; flex: none; }
+}
+
+@media (min-width: 900px) {
+  body[data-ready]:not(.intro-done) .rn { animation: rise 800ms var(--ease) 160ms both; }
+}

@@ -47,27 +47,39 @@
           <div class="composer-wrap" data-composer="home"></div>
         </div>
 
-        <aside class="live glass" id="livePanel" aria-label="Live activity">
-          <header class="live-head">
-            <div class="live-title">
-              <span class="live-dot on" aria-hidden="true"></span>
-              <div class="live-title-text">
-                <h2 class="h3">Live activity</h2>
-                <p class="live-latest" id="liveLatest"></p>
+        <div class="home-side">
+          <section class="rn surface" id="rightNow" aria-labelledby="rnTitle" aria-busy="false" hidden>
+            <header class="rn-head">
+              <h2 class="h3" id="rnTitle">Right now</h2>
+              <p class="rn-summary" id="rnSummary"></p>
+              <button class="rn-toggle btn-icon sm" id="rnToggle" type="button" aria-expanded="false" aria-controls="rnBody" aria-label="Show more of Right now">{{i:chevron-up sm}}</button>
+            </header>
+            <ul class="rn-list" id="rnBody"></ul>
+          </section>
+
+          <aside class="live glass" id="livePanel" aria-label="Live activity">
+            <header class="live-head">
+              <div class="live-title">
+                <span class="live-dot on" aria-hidden="true"></span>
+                <div class="live-title-text">
+                  <h2 class="h3">Live activity</h2>
+                  <p class="live-latest" id="liveLatest"></p>
+                </div>
               </div>
-            </div>
+              <button class="live-rn btn-icon sm" id="rnOpen" type="button" aria-expanded="false" aria-controls="rightNow" aria-label="Right now" hidden>{{i:clock sm}}</button>
             <button class="live-toggle btn-icon sm" id="liveToggle" type="button" aria-expanded="false" aria-controls="liveList" aria-label="Show more live activity">{{i:chevron-up sm}}</button>
-            <div class="seg sm" role="radiogroup" aria-label="Filter live activity">
-              <label><input type="radio" name="liveFilter" value="all" checked><span>All</span></label>
-              <label><input type="radio" name="liveFilter" value="tool"><span>Actions</span></label>
-              <label><input type="radio" name="liveFilter" value="agent"><span>Agents</span></label>
-            </div>
-          </header>
-          <div class="live-pinned" id="livePinned" hidden></div>
-          <ul class="live-list" id="liveList" tabindex="0" aria-label="Latest actions"></ul>
-          <footer class="live-foot">
-            <span class="muted" id="liveCount">Showing the latest actions</span>
-            <a class="link-btn" href="#/activity">Open audit log</a>
-          </footer>
-        </aside>
+              <div class="seg sm" role="radiogroup" aria-label="Filter live activity">
+                <label><input type="radio" name="liveFilter" value="all" checked><span>All</span></label>
+                <label><input type="radio" name="liveFilter" value="tool"><span>Actions</span></label>
+                <label><input type="radio" name="liveFilter" value="agent"><span>Agents</span></label>
+              </div>
+            </header>
+            <div class="live-pinned" id="livePinned" hidden></div>
+            <ul class="live-list" id="liveList" tabindex="0" aria-label="Latest actions"></ul>
+            <footer class="live-foot">
+              <span class="muted" id="liveCount">Showing the latest actions</span>
+              <a class="link-btn" href="#/activity">Open audit log</a>
+            </footer>
+          </aside>
+        </div>
       </section>

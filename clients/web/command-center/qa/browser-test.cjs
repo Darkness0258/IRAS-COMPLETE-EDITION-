@@ -293,6 +293,26 @@ async function watchVoice(page, people) {
   return { seen, plan };
 }
 
+/* Records the chat messages one page sends and answers each with an empty reply. Everything else goes to the real server. */
+async function watchChat(page) {
+  const sent = [];
+  await page.setRequestInterception(true);
+  page.on("request", (r) => {
+    if (r.method() === "POST" && new URL(r.url()).pathname === "/v1/chat/stream") {
+      sent.push(JSON.parse(r.postData() || "{}"));
+      return r.respond({ status: 200, contentType: "text/event-stream", body: "event: start\ndata: {\"thread_id\":\"qa\"}\n\nevent: done\ndata: {}\n\n" });
+    }
+    return r.continue();
+  });
+  return sent;
+}
+/* The four rows of the Right now card, as text: { time, who, event, reminders } */
+const cardRows = (page) => page.evaluate(() => {
+  const rows = {};
+  document.querySelectorAll("#rnBody .rn-row").forEach((li) => { rows[li.className.replace(/.*is-/, "")] = li.innerText.replace(/\s+/g, " ").trim(); });
+  return rows;
+});
+
 const answerFor = (verdict, p, score = 0.8) => ({
   heard: verdict !== "unheard", speech: verdict === "unheard" ? 1.1 : 3.1, seconds: 3.3, verdict, message: "",
   match: verdict === "match" ? { person_id: p.person_id, name: p.name, score } : null,
@@ -465,7 +485,8 @@ async function voiceTurn(page, kit, o = {}) {
     const moved1 = await until(async () => (await mems("person:" + alice.person_id)).length === 0);
     const afterShare = (await mems("default")).length;
     check("answering Yes shares them all", moved1 && afterShare === before.shared + before.alice, "shared now " + afterShare + ", expected " + (before.shared + before.alice));
-    check("the screen tells you how many moved", /memor/.test(await innerText(page, "#ownHint")), await innerText(page, "#ownHint"));
+    const movedHint = await until(async () => /memor/.test(await innerText(page, "#ownHint")), 6000, 100);   // the text appears a moment after the server has moved them
+    check("the screen tells you how many moved", !!movedHint, await innerText(page, "#ownHint"));
 
     /* Claim: the old memories become Bob's */
     asked = nextDialog(page, false);
@@ -902,6 +923,108 @@ async function voiceTurn(page, kit, o = {}) {
     await ctx.close();
   });
 
+  /* ------------------------------------------------------------ Right now */
+  await section("Right now: the card, the switch and what she is given", async () => {
+    /* The first checks need a server with no calendar and no reminder at all (earlier sections leave some behind). */
+    for (const f of await feeds()) if (/^QA/.test(f.name)) await api("DELETE", "/v1/calendar/feeds/" + encodeURIComponent(f.feed_id));
+    for (const j of await jobs()) if (/QA/.test(j.name + " " + j.prompt)) await api("DELETE", "/v1/v5/schedules/" + encodeURIComponent(j.job_id));
+    const at = (min) => new Date(Date.now() + min * 60000).toISOString().replace(/\.\d{3}Z$/, "+00:00");
+    const remind = (prefix, text, min) => api("POST", "/v1/v5/schedules", { name: "Reminder: QA " + text, prompt: prefix + " QA " + text, next_run: at(min) });
+    const { page, ctx } = await openPage(browser, DESKTOP, "light", null);
+    const sent = await watchChat(page);
+    const row = async (k) => (await cardRows(page))[k] || "";
+    const shows = (k, re) => until(async () => re.test(await row(k)), 12000, 150);
+
+    /* nothing is set up yet */
+    check("the card is on Home, with its heading", await page.$eval("#rightNow", (e) => e.offsetParent !== null && /^Right now/.test(e.innerText)));
+    const t0 = await cardRows(page);
+    check("it always has the time of day and the clock", /(Morning|Afternoon|Evening|Night) · \d{1,2}:\d{2}/.test(t0.time || ""), t0.time);
+    check("with nobody picked it says so and says what it shows", /No one picked/.test(t0.who || "") && /shared with everyone/.test(t0.who || ""), t0.who);
+    await shows("event", /No calendar yet/);
+    check("no calendar at all: it says so and offers to add one", /No calendar yet/.test(await row("event")) && (await page.$eval("#rnBody .rn-row.is-event a", (a) => a.getAttribute("href"))) === "#/agents" && (await feeds()).length === 0, await row("event"));
+    check("no reminders: it says so", /Nothing due in the next 4 hours/.test(await row("reminders")), await row("reminders"));
+
+    /* each person's own things */
+    await api("POST", "/v1/calendar/feeds", { url: "https://example.com/qa-rightnow-shared.ics", name: "QA Right now shared" });
+    await api("POST", "/v1/calendar/feeds", { url: "https://example.com/qa-rightnow-alice.ics", name: "QA Right now Alice", owner: alice.person_id });
+    await remind("[reminder]", "RN bins", 50);
+    await remind("[reminder:" + alice.person_id + "]", "RN call mum", 45);
+    await remind("[reminder:" + bob.person_id + "]", "RN surprise", 55);
+    await page.evaluate(() => IRAS.rightNow.refresh(true));
+    await shows("event", /QA Dentist/);
+    let r = await row("reminders");
+    check("nobody picked: only the shared reminder, not Alice's or Bob's", /QA RN bins/.test(r) && !/RN call mum/.test(r) && !/RN surprise/.test(r), r);
+    check("the next event shows when it starts", /QA Dentist.* in \d+ h \d+ min/.test(await row("event")), await row("event"));
+
+    await setWho(page, alice);
+    await shows("reminders", /RN call mum/);
+    r = await row("reminders");
+    check("Alice: her own reminder first, then the shared one, never Bob's", /QA RN call mum.*QA RN bins/.test(r) && !/RN surprise/.test(r), r);
+    check("the shared one says it is for everyone (people are taught here)", /QA RN bins.*for everyone/.test(r) && !/RN call mum[^Q]*for everyone/.test(r), r);
+    check("she is named, with how she was known", /QA Alice/.test(await row("who")) && /picked by hand/.test(await row("who")), await row("who"));
+
+    /* the card never shows one person's things for another person, not even for a moment */
+    const gap = await page.evaluate((b) => {
+      IRAS.who.set(b, "chosen");   // the card is redrawn right away; the answer for Bob has not come yet
+      return document.querySelector("#rnBody").innerText.replace(/\s+/g, " ");
+    }, { person_id: bob.person_id, name: bob.name });
+    check("after the person changes, the old person's things are gone at once", !/RN call mum/.test(gap) && !/QA Dentist/.test(gap) && /Checking/.test(gap), gap);
+    await shows("reminders", /RN surprise/);
+    r = await row("reminders");
+    check("Bob: his own reminder and the shared one, not Alice's", /QA RN surprise/.test(r) && /QA RN bins/.test(r) && !/RN call mum/.test(r), r);
+
+    const guestGap = await page.evaluate(() => { IRAS.who.guest(); return document.querySelector("#rnBody").innerText.replace(/\s+/g, " "); });
+    check("a guest: only the time. The private rows are hidden, in the same moment", /A guest/.test(guestGap) && (guestGap.match(/Hidden for a guest/g) || []).length === 2 && !/RN surprise|RN bins|QA Dentist/.test(guestGap), guestGap);
+    await sleep(1500);
+    check("...and they stay hidden after the server has answered", !/RN surprise|RN bins|QA Dentist/.test(await page.$eval("#rightNow", (e) => e.innerText)));
+    await shot(page, "right-now-guest");
+    await nobody(page);
+    await shows("reminders", /RN bins/);
+    check("nobody again: shared things only", !/RN call mum|RN surprise/.test(await row("reminders")));
+
+    /* her thinking gets the same request, and only while the switch is on */
+    await setWho(page, alice);
+    await shows("reminders", /RN call mum/);
+    await shot(page, "right-now-alice");
+    await axeRun(page, "Home with Right now (Alice)");
+    await page.evaluate(() => IRAS.run("QA hello"));
+    await until(() => sent.length === 1, 6000);
+    const m1 = sent[0] || {};
+    check("the chat carries the time zone and the clock offset, and who is here", !!m1.right_now && typeof m1.right_now.tz === "string" && m1.right_now.tz.length > 2 && Number.isInteger(m1.right_now.offset) && !!m1.speaker && m1.speaker.person_id === alice.person_id, JSON.stringify({ right_now: m1.right_now, speaker: m1.speaker && m1.speaker.person_id }));
+    check("it sends no event or reminder text (the server reads those itself)", !/RN call mum|QA Dentist/.test(JSON.stringify(m1)), JSON.stringify(m1).slice(0, 200));
+    await sleep(700);
+
+    await go(page, "settings");
+    check("Settings has a Right now switch, with a name, and it is on by itself", await page.$eval("#setRightNow", (e) => e.checked === true && e.getAttribute("role") === "switch" && !!document.querySelector("label[for='setRightNow']") && /Tell her what is going on around her/.test(document.querySelector("label[for='setRightNow']").innerText)));
+    await page.evaluate(() => IRAS.check.run());
+    await until(() => page.$eval('#checkList [data-check="rightnow"]', (e) => e.dataset.state !== "wait"), 40000, 300);
+    const rc = await page.$eval('#checkList [data-check="rightnow"]', (e) => ({ state: e.dataset.state, text: e.innerText.replace(/\s+/g, " ") }));
+    check("Check everything has a Right now line: it works, and it names no event or reminder", rc.state === "ok" && /Right now.*Works, as the person who is here/.test(rc.text) && /reminders are due soon/.test(rc.text) && !/QA Dentist|RN call mum|RN bins/.test(rc.text), JSON.stringify(rc));
+    await page.evaluate(() => document.querySelector("#setRightNow").click());
+    await sleep(400);
+    check("switched off: the setting is saved, and she says what it means", await page.evaluate(() => IRAS.settings.rightNow === false && IRAS.rightNow.enabled() === false && IRAS.rightNow.forChat() === undefined) && /Right now is off/.test((await toasts(page)).join(" ")), JSON.stringify(await toasts(page)));
+    await go(page, "home");
+    check("switched off: the card is gone from Home", await page.$eval("#rightNow", (e) => e.offsetParent === null));
+    await page.evaluate(() => IRAS.check.run());
+    await until(() => page.$eval('#checkList [data-check="rightnow"]', (e) => e.dataset.state !== "wait"), 40000, 300);
+    check("switched off: the Right now line says so and is skipped", await page.$eval('#checkList [data-check="rightnow"]', (e) => e.dataset.state === "skip" && /switched off in Settings/.test(e.innerText)));
+    await go(page, "home");
+    await page.evaluate(() => IRAS.run("QA hello again"));
+    await until(() => sent.length === 2, 6000);
+    check("switched off: the chat goes out with no Right now request at all", !!sent[1] && sent[1].right_now === undefined && !!sent[1].speaker, JSON.stringify(sent[1] && sent[1].right_now));
+    await sleep(700);
+    await go(page, "settings");
+    await page.evaluate(() => document.querySelector("#setRightNow").click());
+    await sleep(300);
+    await go(page, "home");
+    await shows("reminders", /RN call mum/);
+    check("switched on again: the card is back with Alice's things", await page.$eval("#rightNow", (e) => e.offsetParent !== null));
+    await page.evaluate(() => IRAS.run("QA hello a third time"));
+    await until(() => sent.length === 3, 6000);
+    check("switched on again: the chat carries the request again", !!sent[2] && !!sent[2].right_now && typeof sent[2].right_now.tz === "string", JSON.stringify(sent[2] && sent[2].right_now));
+    await ctx.close();
+  });
+
   /* ------------------------------------------------------------ Phone widths */
   for (const size of PHONES) {
     await section("Phone " + size.width + " px wide", async () => {
@@ -943,6 +1066,30 @@ async function voiceTurn(page, kit, o = {}) {
       await page.keyboard.press("Escape");
       await sleep(200);
       await axeRun(page, "Agents (" + tag + ")");
+
+      /* Home: a tall phone has the one-line card, a short phone has a clock button in the Live activity row instead */
+      await go(page, "home");
+      await until(() => page.evaluate(() => /RN call mum/.test(document.querySelector("#rnBody").textContent)), 12000);
+      check(tag + " Home: nothing sticks out sideways", await noSideways(page));
+      const tall = size.height >= 800;
+      const shown = (sel) => page.$eval(sel, (e) => e.offsetParent !== null || getComputedStyle(e).position === "fixed");
+      if (tall) {
+        check(tag + " Home: the card is one line, inside the screen, and shows Alice's next reminder", (await shown("#rightNow")) && (await insideScreen(page, "#rightNow")) && /QA RN call mum/.test(await innerText(page, "#rnSummary")), await innerText(page, "#rnSummary"));
+        check(tag + " Home: the clock button is not needed here", !(await shown("#rnOpen")));
+        await tap(page, "#rnToggle");
+      } else {
+        check(tag + " Home: the card row is hidden (no height to spare), and a clock button is inside the screen", !(await shown("#rightNow")) && (await shown("#rnOpen")) && (await insideScreen(page, "#rnOpen")));
+        await tap(page, "#rnOpen");
+      }
+      await page.waitForSelector("#rightNow.is-open");
+      await sleep(200);
+      check(tag + " Home: the opened card is inside the screen and shows all four rows", (await insideScreen(page, "#rightNow")) && (await page.$$eval("#rnBody .rn-row", (l) => l.length)) === 4 && /QA Dentist/.test(await innerText(page, "#rnBody")));
+      check(tag + " Home: opening it is told to screen readers", await page.$eval(tall ? "#rnToggle" : "#rnOpen", (e) => e.getAttribute("aria-expanded") === "true"));
+      await shot(page, "right-now-open-" + tag);
+      await axeRun(page, "Home with Right now open (" + tag + ")");
+      await page.keyboard.press("Escape");
+      await sleep(200);
+      check(tag + " Home: Escape closes it and puts focus back on the button that opened it", await page.evaluate((id) => !document.querySelector("#rightNow").classList.contains("is-open") && document.activeElement && document.activeElement.id === id, tall ? "rnToggle" : "rnOpen"));
       await ctx.close();
     });
   }
@@ -962,6 +1109,12 @@ async function voiceTurn(page, kit, o = {}) {
     await page.waitForSelector("#remindDlg[open]");
     await axeRun(page, "Remind me form (dark)");
     await shot(page, "remind-dark");
+    await page.keyboard.press("Escape");
+    await go(page, "home");
+    await setWho(page, alice);
+    await until(() => page.evaluate(() => /RN call mum/.test(document.querySelector("#rnBody").textContent)), 12000);
+    await shot(page, "right-now-dark");
+    await axeRun(page, "Home with Right now (dark)");
     await ctx.close();
   });
 

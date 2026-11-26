@@ -62,6 +62,7 @@ const DEFAULTS = {
   realMic: true,
   speakReplies: true,
   autoWho: null,          // check whose voice it is while you talk: null = automatic (on for a computer, off for a phone) | true | false
+  rightNow: true,         // the "Right now" card on Home, and the same facts for her with each message (time of day, who is here, next event, reminders due)
 };
 const settings = Object.assign({}, DEFAULTS, store.get(SETTINGS_KEY, {}));
 const saveSettings = () => store.set(SETTINGS_KEY, settings);
